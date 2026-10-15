@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to save or print.
 
-**Status:** test build 0.3.
+**Status:** test build 0.4.
 
 ## Install
 

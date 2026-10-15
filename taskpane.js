@@ -5,8 +5,10 @@
  * add-in API and combined here with pdf-lib, PDF.js and UTIF.js. Nothing is uploaded.
  */
 
-const VERSION = '0.3.0';
-const SMALL_INLINE_BYTES = 50 * 1024; // inline images smaller than this are logos/icons
+const VERSION = '0.4.0';
+const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
+const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
+const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
 const MAX_IMAGE_SIDE = 2400;          // photos are scaled to this before going into a PDF
 const LOCKED_PDF_DPI = 200;           // locked PDFs are copied in as page images at this quality
 const PRINT_DPI = 150;
@@ -332,7 +334,8 @@ async function loadThreadNow(token) {
         log(`Skipped a draft: ${pick.subject || '(no subject)'}`);
         continue;
       }
-      if (pick.hasAttachment === false) continue;
+      // No skipping on hasAttachment: classic Outlook reports false when the only
+      // attachments are pictures pasted into the body.
       setSummary(`Reading email ${i + 1} of ${selected.length}…`);
       let item;
       try {
@@ -343,7 +346,7 @@ async function loadThreadNow(token) {
         continue;
       }
       try {
-        failed += await readAttachments(item, found, token);
+        failed += await readAttachments(item, found, token, `Email ${i + 1} (paperclip: ${pick.hasAttachment === false ? 'no' : pick.hasAttachment ? 'yes' : '?'})`);
       } finally {
         try {
           await call((done) => item.unloadAsync(done));
@@ -356,7 +359,7 @@ async function loadThreadNow(token) {
   } else if (mailbox.item) {
     messages = 1;
     if (mailbox.item.subject) subjects.push(mailbox.item.subject);
-    failed += await readAttachments(mailbox.item, found, token);
+    failed += await readAttachments(mailbox.item, found, token, 'Open email');
     log(`Read the open email${selected.length > 1 ? ' (multi-select not available here)' : ''}`);
   } else {
     state.files = [];
@@ -372,7 +375,7 @@ async function loadThreadNow(token) {
   if (token !== state.loadToken) return;
   files.forEach((file, index) => {
     file.id = index;
-    file.smallLogo = file.inline && (file.kind === 'Image' || file.kind === 'TIFF') && file.size < SMALL_INLINE_BYTES;
+    file.smallLogo = looksLikeLogo(file);
   });
 
   state.files = files;
@@ -419,8 +422,59 @@ function pageNote(file) {
   return `${pagesLabel([...file.pageChoice])} of ${file.pages} picked`;
 }
 
+/**
+ * Signature logos and icons: small pictures in the email body. Judged by pixel size, so a
+ * photo of a mostly white page (which can be a very small file) still counts as a photo.
+ */
+function looksLikeLogo(file) {
+  if (!file.inline || (file.kind !== 'Image' && file.kind !== 'TIFF')) return false;
+  const dims = file.kind === 'Image' && file.bytes ? imageSize(file.bytes) : null;
+  if (dims) {
+    file.dims = dims;
+    return Math.max(dims[0], dims[1]) <= LOGO_MAX_SIDE || Math.min(dims[0], dims[1]) <= LOGO_THIN_SIDE;
+  }
+  return file.size < SMALL_INLINE_BYTES;
+}
+
+/** [width, height] from a PNG, GIF, JPEG, BMP or WebP header, or null. */
+function imageSize(b) {
+  if (!b || b.length < 30) return null;
+  const be16 = (i) => (b[i] << 8) | b[i + 1];
+  const le16 = (i) => b[i] | (b[i + 1] << 8);
+  const be32 = (i) => b[i] * 0x1000000 + ((b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]);
+  const le32s = (i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24);
+  const ok = (w, h) => (w > 0 && h > 0 ? [w, h] : null);
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return ok(be32(16), be32(20)); // PNG
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return ok(le16(6), le16(8)); // GIF
+  if (b[0] === 0x42 && b[1] === 0x4d) return ok(Math.abs(le32s(18)), Math.abs(le32s(22))); // BMP
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45) { // WebP
+    const chunk = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    if (chunk === 'VP8X') return ok(1 + (b[24] | (b[25] << 8) | (b[26] << 16)), 1 + (b[27] | (b[28] << 8) | (b[29] << 16)));
+    if (chunk === 'VP8 ') return ok(le16(26) & 0x3fff, le16(28) & 0x3fff);
+    if (chunk === 'VP8L') {
+      const bits = le32s(21);
+      return ok(1 + (bits & 0x3fff), 1 + ((bits >> 14) & 0x3fff));
+    }
+    return null;
+  }
+  if (b[0] === 0xff && b[1] === 0xd8) { // JPEG: find the frame header
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i += 1; continue; }
+      const marker = b[i + 1];
+      if (marker === 0xff) { i += 1; continue; }
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { i += 2; continue; }
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return ok(be16(i + 7), be16(i + 5));
+      }
+      i += 2 + be16(i + 2);
+    }
+  }
+  return null;
+}
+
 /** Reads one email's attachments into `found`. Returns how many couldn't be read. */
-async function readAttachments(item, found, token) {
+async function readAttachments(item, found, token, label) {
   let failed = 0;
   const from = item.from ? (item.from.displayName || item.from.emailAddress || '') : '';
   const date = item.dateTimeCreated ? new Date(item.dateTimeCreated) : null;
@@ -432,7 +486,10 @@ async function readAttachments(item, found, token) {
       attachments = [];
     }
   }
-  for (const att of attachments || []) {
+  const list = attachments || [];
+  const inBody = list.filter((att) => att.isInline).length;
+  log(`${label || 'Email'}: Outlook listed ${plural(list.length, 'attachment')}${inBody ? ` (${inBody} in the body)` : ''}`);
+  for (const att of list) {
     if (token !== state.loadToken) return failed;
     const file = {
       name: att.name || 'attachment',
