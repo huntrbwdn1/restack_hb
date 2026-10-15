@@ -262,3 +262,4 @@ input[type="checkbox"]:disabled { cursor: default; }
 .stop-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .stop-pick:disabled { opacity: .5; cursor: default; }
 .nowrap { white-space: nowrap; }
+.check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }

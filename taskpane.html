@@ -9,8 +9,8 @@
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.8.0">
-  <script type="module" src="taskpane.js?v=0.8.0"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.8.1">
+  <script type="module" src="taskpane.js?v=0.8.1"></script>
 </head>
 <body>
   <div id="app">
@@ -204,6 +204,10 @@
           <ul id="team-list" class="tpl-list"></ul>
           <div id="team-admin" class="tpl-actions" hidden>
             <button id="team-new" class="btn" type="button">New team template</button>
+            <label class="check-row">
+              <input type="checkbox" id="team-rep-templates">
+              <span>Reps can make their own templates</span>
+            </label>
             <div class="publish-box">
               <p id="publish-text" class="hint"></p>
               <div class="btn-row">
@@ -241,7 +245,7 @@
             </div>
           </div>
         </section>
-        <section class="tpl-section">
+        <section id="mine-section" class="tpl-section">
           <div class="tpl-head">
             <h2>My templates</h2>
             <span class="muted small">Only you see these</span>

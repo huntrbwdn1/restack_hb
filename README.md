@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to email or save.
 
-**Status:** test build 0.8.
+**Status:** test build 0.8.1.
 
 ## Install
 
@@ -14,7 +14,7 @@ Open this repository's GitHub Pages site (the address shown under **Settings →
 - Pick individual files, or Select all. Nothing is checked until you pick.
 - Previews PDFs, photos and multi-page fax scans (TIFF) in the side panel.
 - Combines PDFs, photos and scans into one PDF, then emails it or saves it under a name you type.
-- Email templates: team templates managed by one admin plus each person's own. Every email asks for the load number, names the PDF after it, fills in the recipients and message, and uses the subject "<load> POD(s)".
+- Email templates: team templates managed by one admin. Reps can add their own only once the admin allows it. Every email asks for the load number, names the PDF after it, fills in the recipients and message, and uses the subject "<load> POD(s)".
 - Multi-stop: one PDF per stop, named load-1, load-2…, whatever their size. Each checked file gets a stop number, and a PDF holding several stops can be split by picking a stop for each page in the preview.
 - Accessorials: tick Detention (shipper or receiver, IN, APPT, OUT, hours requested), Lumper (total) or Other (type, total) when creating the email, and they're listed in the message.
 - Pick individual pages of a PDF in the preview, for example the POD but not the rate confirmation sent in the same file.

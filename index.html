@@ -34,7 +34,7 @@
       <img src="icon-128.png" alt="">
       <div>
         <h1>Thread Attachments for Outlook</h1>
-        <span class="tag">Test build 0.8</span>
+        <span class="tag">Test build 0.8.1</span>
       </div>
     </header>
     <p class="lead">See every attachment in an email thread in one list, preview them, and combine the ones you pick into a single PDF to email or save.</p>
@@ -70,7 +70,7 @@
       <li>For a load with more than one stop, tick <strong>Multi-stop</strong>. Each file you check gets a stop number (change it if it's wrong, or to put two photos in one stop). If one PDF holds several stops, open its preview and pick a stop for each page. You get one PDF per stop, named <code>3645493-1</code>, <code>3645493-2</code> and so on, whatever their size. A stop's POD that comes in later can go out on its own as <code>-2</code>.</li>
       <li>Choose <strong>Email ▾</strong> and pick a template (or <strong>Blank email</strong>). Type the load number, and tick <strong>Detention</strong>, <strong>Lumper</strong> or <strong>Other</strong> to add those details to the message. <strong>Create email</strong> names the PDF after the load and opens a new email with the recipients and message filled in. The subject is always the load number and POD(s), like <code>3645493 POD(s)</code>. If your team admin has set up automatic attaching, the PDF is already attached; otherwise click <strong>Attach PDF</strong> on the new email's ribbon. To keep a copy instead, choose <strong>Save PDF…</strong> and type a name.</li>
     </ol>
-    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet. Besides the team templates, anyone can add their own under <strong>Email ▾ → Manage templates</strong>. A template (and Save PDF) can split PDFs over a size you choose into <code>3645493-1</code>, <code>3645493-2</code> and so on.</p>
+    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet. Only the team admin makes templates to start with. To let reps add their own too, the admin ticks <strong>Reps can make their own templates</strong> under <strong>Email ▾ → Manage templates</strong> and publishes. A template (and Save PDF) can split PDFs over a size you choose into <code>3645493-1</code>, <code>3645493-2</code> and so on.</p>
 
     <h2>Privacy</h2>
     <p>The add-in runs inside Outlook. Attachments are read and combined on your computer. If your team admin turns on automatic attaching, PDFs made with <strong>Email</strong> are uploaded to the admin's own Azure function so Outlook can download them into the new email; those links stop working after an hour and the files are then deleted. Team templates and settings are stored on this site encrypted with your team's key, which only your install file contains. Personal templates are saved in each person's Outlook account.</p>

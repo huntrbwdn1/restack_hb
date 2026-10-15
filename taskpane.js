@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -1925,7 +1925,7 @@ function renderEmailMenu() {
   const ready = !state.busy && !nothing;
   if (nothing) menu.append(el('div', 'menu-note', 'Check the files to send first.'));
   const teamList = teamTemplates();
-  const mine = state.myTemplates;
+  const mine = canMakeOwn() ? state.myTemplates : []; // a rep's own templates stay saved, just unused, while it's off
   if (teamList.length) {
     menu.append(el('div', 'menu-group', 'Team'));
     for (const t of teamList) menu.append(menuItem(t.name, recipientsText(t) || 'No recipients set', () => startEmail(t), !ready));
@@ -1936,7 +1936,7 @@ function renderEmailMenu() {
   }
   if (teamList.length || mine.length) menu.append(el('div', 'menu-sep'));
   menu.append(menuItem('Blank email', 'Just the PDF, no recipients', () => startEmail(null), !ready));
-  menu.append(menuItem(teamList.length || mine.length ? 'Manage templates…' : 'Create a template…', '', openTemplates, false));
+  if (canMakeOwn()) menu.append(menuItem(teamList.length || mine.length ? 'Manage templates…' : 'Create a template…', '', openTemplates, false));
 }
 
 function menuItem(title, sub, action, disabled) {
@@ -2256,7 +2256,7 @@ function cleanAzure(value) {
 }
 
 function teamAzure() {
-  const source = (isAdmin() && team.draft) || team.published;
+  const source = teamSettings();
   return source ? source.azure || null : null;
 }
 
@@ -2402,6 +2402,7 @@ function cleanTeam(data) {
     admins: Array.isArray(data && data.admins) ? data.admins.map((a) => String(a).toLowerCase().trim()).filter(Boolean) : [],
     templates: cleanTemplates(data && data.templates),
     azure: cleanAzure(data && data.azure),
+    repTemplates: !!(data && data.repTemplates), // reps may make their own templates (off to start)
   };
 }
 
@@ -2458,6 +2459,18 @@ function isAdmin() {
   return team.status === 'ok' && !!team.me && team.published.admins.includes(team.me);
 }
 
+/** The team settings in force for this person: the admin's unpublished changes, else what's published. */
+function teamSettings() {
+  return (isAdmin() && team.draft) || team.published || null;
+}
+
+/** Making your own templates: always for the admin; for reps only once the admin turns it on. */
+function canMakeOwn() {
+  if (isAdmin()) return true;
+  const settings = teamSettings();
+  return !!(settings && settings.repTemplates);
+}
+
 function teamTemplates() {
   if (isAdmin() && team.draft) return team.draft.templates;
   return team.published ? team.published.templates : [];
@@ -2490,6 +2503,7 @@ let deleteArmed = 0;
 
 function openTemplates() {
   closeEmailMenu(false);
+  if (!canMakeOwn()) return;
   editing = null;
   $('templates').hidden = false;
   renderTemplateSheet();
@@ -2525,8 +2539,23 @@ function renderTemplateSheet() {
   if (admin) renderPublishBox();
   $('azure-section').hidden = !admin;
   if (admin) renderAzureBox();
+  if (admin) $('team-rep-templates').checked = !!(teamSettings() && teamSettings().repTemplates);
+  $('mine-section').hidden = !canMakeOwn();
   fillTemplateList($('mine-list'), state.myTemplates, 'mine');
   $('mine-empty').hidden = state.myTemplates.length > 0;
+}
+
+/** The admin's switch for letting reps make their own templates. Published with the team templates. */
+async function onRepTemplatesToggle(on) {
+  try {
+    await saveTeamDraft({ repTemplates: on });
+  } catch (error) {
+    $('team-rep-templates').checked = !on;
+    renderPublishBox(`Couldn't save it: ${error.message}`);
+    return;
+  }
+  log(`Team: reps ${on ? 'can' : "can't"} make their own templates (not published yet)`);
+  renderPublishBox();
 }
 
 function fillTemplateList(list, templates, scope) {
@@ -2602,7 +2631,8 @@ async function saveTeamDraft(changes) {
   const admins = base && base.admins.length ? base.admins : [team.me].filter(Boolean);
   const templates = changes.templates || (base ? base.templates : []);
   const azure = 'azure' in changes ? changes.azure : (base ? base.azure || null : null);
-  const draft = { v: 1, updated: Date.now(), by: team.me, admins, templates, azure };
+  const repTemplates = 'repTemplates' in changes ? !!changes.repTemplates : !!(base && base.repTemplates);
+  const draft = { v: 1, updated: Date.now(), by: team.me, admins, templates, azure, repTemplates };
   await writeRoaming(DRAFT_KEY, draft);
   team.draft = draft;
   team.justPublished = false;
@@ -2683,7 +2713,7 @@ async function onPublish() {
     return;
   }
   const admins = source.admins.length ? source.admins : [team.me];
-  const payload = { v: 1, updated: source.updated || Date.now(), by: team.me, admins, templates: source.templates, azure: source.azure || null };
+  const payload = { v: 1, updated: source.updated || Date.now(), by: team.me, admins, templates: source.templates, azure: source.azure || null, repTemplates: !!source.repTemplates };
   downloadText(await encryptTeam(payload, team.key), TEAM_FILE, 'application/json');
   team.justPublished = true;
   log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)`);
@@ -2983,6 +3013,7 @@ function wireReadUi() {
   $('team-new').addEventListener('click', () => editTemplate('team', null));
   $('mine-new').addEventListener('click', () => editTemplate('mine', null));
   $('team-publish').addEventListener('click', () => onPublish().catch(fail));
+  $('team-rep-templates').addEventListener('change', (event) => onRepTemplatesToggle(event.target.checked).catch(fail));
   $('team-share').addEventListener('click', () => onShareInstall().catch(fail));
   $('az-gen').addEventListener('click', onAzureGenerate);
   $('az-copy').addEventListener('click', () => onAzureCopy().catch(fail));
