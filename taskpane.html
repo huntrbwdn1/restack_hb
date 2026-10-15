@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thread Attachments</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="pdf-lib.min.js"></script>
+  <script src="pako_inflate.min.js"></script>
+  <script src="UTIF.js"></script>
+  <link rel="stylesheet" href="taskpane.css">
+  <script type="module" src="taskpane.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <h1 id="title">Thread Attachments</h1>
+      <p id="summary" class="muted">Starting…</p>
+    </header>
+
+    <!-- Reading emails: the attachment list -->
+    <main id="read-view" class="view" hidden>
+      <div class="list-tools">
+        <div class="tools-row">
+          <label class="check-all">
+            <input type="checkbox" id="check-all">
+            <span>Select all</span>
+          </label>
+          <span id="selected-count" class="muted"></span>
+        </div>
+      </div>
+      <ul id="file-list" class="file-list"></ul>
+      <label id="logos-toggle" class="logos-toggle" hidden>
+        <input type="checkbox" id="show-logos">
+        <span>Show logos &amp; icons (<span id="logo-count">0</span>)</span>
+      </label>
+    </main>
+
+    <!-- Writing an email: attach the PDF made with "Put in new email" -->
+    <main id="compose-view" class="view" hidden>
+      <div class="compose-card">
+        <p id="compose-text">Looking for a combined PDF…</p>
+        <button id="btn-attach" class="btn primary" hidden>Attach PDF</button>
+      </div>
+    </main>
+
+    <!-- Nothing to show -->
+    <main id="message-view" class="view" hidden>
+      <p id="message-text" class="notice"></p>
+    </main>
+
+    <footer id="actions" class="actions" hidden>
+      <button id="btn-save" class="btn primary" type="button">Save PDF…</button>
+      <div class="btn-row">
+        <button id="btn-print" class="btn" type="button">Print…</button>
+        <button id="btn-email" class="btn" type="button">Put in new email</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </footer>
+
+    <details id="diagnostics" class="diagnostics">
+      <summary>Test report</summary>
+      <p class="muted small">Try the buttons above, then copy this and paste it into the chat.</p>
+      <textarea id="report" readonly spellcheck="false" aria-label="Test report"></textarea>
+      <button id="btn-copy-report" class="btn" type="button">Copy report</button>
+    </details>
+  </div>
+
+  <!-- Full-panel preview -->
+  <section id="preview" class="preview" hidden aria-label="Preview">
+    <div class="preview-head">
+      <button id="pv-close" class="icon-btn" type="button" aria-label="Back to the list" title="Back">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="pv-title">
+        <div id="pv-name" class="pv-name"></div>
+        <div id="pv-meta" class="muted small"></div>
+      </div>
+      <button id="pv-prev" class="icon-btn" type="button" aria-label="Previous file" title="Previous file">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M5 12.5 10 7.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="pv-next" class="icon-btn" type="button" aria-label="Next file" title="Next file">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div id="pv-body" class="preview-body"></div>
+    <div class="preview-foot">
+      <label class="check-all">
+        <input type="checkbox" id="pv-include">
+        <span id="pv-include-label">Include in PDF</span>
+      </label>
+      <span id="pv-pages" class="muted small"></span>
+    </div>
+  </section>
+
+  <!-- Pages that only appear when printing -->
+  <div id="print-root" aria-hidden="true"></div>
+</body>
+</html>
