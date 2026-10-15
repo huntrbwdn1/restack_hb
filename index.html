@@ -34,35 +34,46 @@
       <img src="icon-128.png" alt="">
       <div>
         <h1>Thread Attachments for Outlook</h1>
-        <span class="tag">Test build 0.4</span>
+        <span class="tag">Test build 0.8</span>
       </div>
     </header>
-    <p class="lead">See every attachment in an email thread in one list, preview them, and combine the ones you pick into a single PDF to save or print.</p>
+    <p class="lead">See every attachment in an email thread in one list, preview them, and combine the ones you pick into a single PDF to email or save.</p>
 
-    <h2>Install</h2>
+    <h2>Set up your team</h2>
+    <p>Do this once. You'll manage the team's email templates, and only people you send the install file to can use the add-in.</p>
     <ol>
       <li>
-        <button id="download" class="button" type="button">Download manifest</button>
+        <button id="create" class="button" type="button">Create team install file</button>
         <div class="muted" id="where"></div>
       </li>
-      <li>Open <a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a>. Outlook opens and shows the <strong>Add-ins for Outlook</strong> window after a few seconds.</li>
-      <li>Choose <strong>My add-ins</strong>. Under <strong>Custom Addins</strong> at the bottom, choose <strong>Add a custom add-in → Add from File</strong>, pick the file you just downloaded, and choose <strong>Install</strong>.</li>
-      <li>New Outlook and Outlook on the web show the button right away. Classic Outlook can take up to a day to show it.</li>
+      <li>In Outlook, remove any older Thread Attachments: open <a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a>, choose <strong>My add-ins</strong>, and under <strong>Custom Addins</strong> choose <strong>… → Remove</strong>.</li>
+      <li>In the same window, choose <strong>Add a custom add-in → Add from File</strong>, pick <code>thread-attachments-team.xml</code>, and choose <strong>Install</strong>.</li>
+      <li>Open Thread Attachments in Outlook, choose <strong>Email ▾ → Create a template…</strong>, add your team templates, and click <strong>Publish to team</strong>. Upload the <code>team.json</code> it downloads to this repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
+      <li>Send the same <code>thread-attachments-team.xml</code> to your reps.</li>
     </ol>
-    <p class="note">No <strong>Add a custom add-in</strong> option? Your organization doesn't allow installing custom add-ins. An admin can deploy the same file for you from the Microsoft 365 admin center (Settings → Integrated apps).</p>
+    <p class="note">Keep that file. Clicking the button again makes a new team key, which can't open templates you've already published. You can download it again any time from the add-in: <strong>Email ▾ → Manage templates → Share install file</strong>. Anyone who has the file can use the add-in and see the team templates, so share it only with your team.</p>
+
+    <h2>Install (reps)</h2>
+    <ol>
+      <li>Save the <code>thread-attachments-team.xml</code> file you were sent.</li>
+      <li>Open <a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a>. Outlook opens the <strong>Add-ins for Outlook</strong> window after a few seconds.</li>
+      <li>Choose <strong>My add-ins</strong>. Under <strong>Custom Addins</strong>, choose <strong>Add a custom add-in → Add from File</strong>, pick the file, and choose <strong>Install</strong>.</li>
+      <li>New Outlook and Outlook on the web show the button right away. Classic Outlook can take up to a day.</li>
+    </ol>
+    <p class="note">No <strong>Add a custom add-in</strong> option? Your organization doesn't allow installing custom add-ins. An admin can deploy the same file from the Microsoft 365 admin center (Settings → Integrated apps).</p>
 
     <h2>Use</h2>
     <ol>
       <li>Select the emails. In new Outlook or Outlook on the web, click the conversation and every message in the thread is included. In classic Outlook, expand the conversation and Ctrl+click its messages.</li>
-      <li>Click <strong>Thread Attachments</strong> on the ribbon. Every attachment shows up once, oldest first, even if it was sent back and forth.</li>
-      <li>Check the files you want (or <strong>Select all</strong>). Click the eye icon to preview one.</li>
-      <li>Choose <strong>Save PDF…</strong>, type a name for the file and click <strong>Save</strong>. Or choose <strong>Print…</strong> (pick <em>Save as PDF</em> or <em>Microsoft Print to PDF</em> to save a file), or <strong>Put in new email</strong>, then click <strong>Attach PDF</strong> in the new email.</li>
+      <li>Click <strong>Thread Attachments</strong> on the ribbon. Every attachment shows up once, oldest first, even if it was sent back and forth, with a small picture of it so you can tell a POD scan from a photo of the truck.</li>
+      <li>Check the files you want, or <strong>Select all</strong>. Nothing is checked until you pick. Click a picture or the eye icon to preview a file, and untick any pages you don't want.</li>
+      <li>For a load with more than one stop, tick <strong>Multi-stop</strong>. Each file you check gets a stop number (change it if it's wrong, or to put two photos in one stop). If one PDF holds several stops, open its preview and pick a stop for each page. You get one PDF per stop, named <code>3645493-1</code>, <code>3645493-2</code> and so on, whatever their size. A stop's POD that comes in later can go out on its own as <code>-2</code>.</li>
+      <li>Choose <strong>Email ▾</strong> and pick a template (or <strong>Blank email</strong>). Type the load number, and tick <strong>Detention</strong>, <strong>Lumper</strong> or <strong>Other</strong> to add those details to the message. <strong>Create email</strong> names the PDF after the load and opens a new email with the recipients and message filled in. The subject is always the load number and POD(s), like <code>3645493 POD(s)</code>. If your team admin has set up automatic attaching, the PDF is already attached; otherwise click <strong>Attach PDF</strong> on the new email's ribbon. To keep a copy instead, choose <strong>Save PDF…</strong> and type a name.</li>
     </ol>
-    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet.</p>
-    <p class="muted">Only want some pages of a PDF, like the POD but not the rate confirmation sent in the same file? Open its preview and untick the pages you don't want. The list shows which pages you picked.</p>
+    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet. Besides the team templates, anyone can add their own under <strong>Email ▾ → Manage templates</strong>. A template (and Save PDF) can split PDFs over a size you choose into <code>3645493-1</code>, <code>3645493-2</code> and so on.</p>
 
     <h2>Privacy</h2>
-    <p>The add-in runs entirely inside Outlook. Attachments are read and combined in the side panel on your computer, and nothing is sent anywhere. This website only hosts the add-in's code.</p>
+    <p>The add-in runs inside Outlook. Attachments are read and combined on your computer. If your team admin turns on automatic attaching, PDFs made with <strong>Email</strong> are uploaded to the admin's own Azure function so Outlook can download them into the new email; those links stop working after an hour and the files are then deleted. Team templates and settings are stored on this site encrypted with your team's key, which only your install file contains. Personal templates are saved in each person's Outlook account.</p>
 
     <footer>
       Built with pdf-lib, PDF.js and UTIF.js. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a>.
@@ -76,27 +87,35 @@
       var secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
       where.textContent = secure
         ? 'Points Outlook at ' + base
-        : 'Open this page over https:// (for example from GitHub Pages) before downloading. Outlook only loads add-ins from https addresses.';
+        : 'Open this page over https:// (for example from GitHub Pages) first. Outlook only loads add-ins from https addresses.';
 
-      document.getElementById('download').addEventListener('click', function () {
+      function newKey() {
+        var bytes = crypto.getRandomValues(new Uint8Array(16));
+        var text = '';
+        for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+        return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      document.getElementById('create').addEventListener('click', function () {
         fetch('manifest.template.xml', { cache: 'no-store' })
           .then(function (response) {
             if (!response.ok) throw new Error('HTTP ' + response.status);
             return response.text();
           })
           .then(function (template) {
-            var xml = template.split('{{BASE}}').join(base);
+            var xml = template.split('{{BASE}}').join(base).split('{{QUERY}}').join('?team=' + newKey());
             var url = URL.createObjectURL(new Blob([xml], { type: 'application/xml' }));
             var link = document.createElement('a');
             link.href = url;
-            link.download = 'thread-attachments-manifest.xml';
+            link.download = 'thread-attachments-team.xml';
             document.body.appendChild(link);
             link.click();
             link.remove();
             setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+            where.textContent = 'Downloaded thread-attachments-team.xml. Points Outlook at ' + base;
           })
           .catch(function (error) {
-            where.textContent = "Couldn't build the manifest (" + error.message + '). Make sure manifest.template.xml was uploaded next to this page.';
+            where.textContent = "Couldn't make the install file (" + error.message + '). Make sure manifest.template.xml was uploaded next to this page.';
           });
       });
     })();

@@ -9,8 +9,8 @@
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.4.0">
-  <script type="module" src="taskpane.js?v=0.4.0"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.8.0">
+  <script type="module" src="taskpane.js?v=0.8.0"></script>
 </head>
 <body>
   <div id="app">
@@ -29,6 +29,10 @@
           </label>
           <span id="selected-count" class="muted"></span>
         </div>
+        <label class="multi-stop">
+          <input type="checkbox" id="multi-stop">
+          <span><b>Multi-stop</b> <span class="muted">· one PDF per stop: -1, -2…</span></span>
+        </label>
       </div>
       <ul id="file-list" class="file-list"></ul>
       <label id="logos-toggle" class="logos-toggle" hidden>
@@ -37,7 +41,7 @@
       </label>
     </main>
 
-    <!-- Writing an email: attach the PDF made with "Put in new email" -->
+    <!-- Writing an email: attach the PDF made with the Email button -->
     <main id="compose-view" class="view" hidden>
       <div class="compose-card">
         <p id="compose-text">Looking for a combined PDF…</p>
@@ -52,11 +56,14 @@
 
     <footer id="actions" class="actions" hidden>
       <div id="save-actions" class="save-actions">
-        <button id="btn-save" class="btn primary" type="button">Save PDF…</button>
-        <div class="btn-row">
-          <button id="btn-print" class="btn" type="button">Print…</button>
-          <button id="btn-email" class="btn" type="button">Put in new email</button>
+        <div class="menu-wrap">
+          <button id="btn-email" class="btn primary menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="email-menu">
+            <span>Email</span>
+            <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="email-menu" class="menu" role="menu" aria-label="Email" hidden></div>
         </div>
+        <button id="btn-save" class="btn" type="button">Save PDF…</button>
       </div>
       <form id="name-form" class="name-form" hidden>
         <label for="file-name" class="name-label">Name the PDF</label>
@@ -64,12 +71,80 @@
           <input id="file-name" type="text" autocomplete="off" spellcheck="false" maxlength="120">
           <span class="name-ext" aria-hidden="true">.pdf</span>
         </div>
+        <label id="save-split-row" class="split-row" for="save-split">
+          <span>Split into files of up to</span>
+          <input id="save-split" type="number" min="0.1" max="150" step="0.1" inputmode="decimal" placeholder="no limit">
+          <span>MB</span>
+        </label>
+        <p id="name-hint" class="hint" hidden></p>
         <div class="btn-row">
           <button id="name-save" class="btn primary" type="submit">Save</button>
           <button id="name-cancel" class="btn" type="button">Cancel</button>
         </div>
       </form>
+      <form id="load-form" class="name-form load-form" hidden novalidate>
+        <div id="load-row" class="field-stack">
+          <label for="load-number" class="name-label">Load number</label>
+          <div class="name-field">
+            <input id="load-number" type="text" autocomplete="off" spellcheck="false" maxlength="60">
+          </div>
+        </div>
+        <p id="load-hint" class="hint"></p>
+        <fieldset class="acc">
+          <legend class="name-label">Accessorials <span class="muted">(optional)</span></legend>
+          <div class="acc-picks">
+            <label class="acc-pick"><input type="checkbox" id="acc-det"><span>Detention</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-lum"><span>Lumper</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-oth"><span>Other</span></label>
+          </div>
+          <div id="acc-det-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title">Detention</span>
+              <select id="det-at" aria-label="Detention at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <div class="acc-grid3">
+              <label class="acc-field"><span>IN</span><input id="det-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span>APPT</span><input id="det-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span>OUT</span><input id="det-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            </div>
+            <label class="acc-field acc-inline"><span>Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
+          </div>
+          <div id="acc-lum-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title">Lumper</span>
+              <select id="lum-at" aria-label="Lumper at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <label class="acc-field acc-inline"><span>Total</span><span class="money"><span aria-hidden="true">$</span><input id="lum-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+          </div>
+          <div id="acc-oth-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title">Other</span>
+              <select id="oth-at" aria-label="Other accessorial at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <label class="acc-field acc-inline"><span>Type</span><input id="oth-type" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Driver assist"></label>
+            <label class="acc-field acc-inline"><span>Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+          </div>
+        </fieldset>
+        <p id="acc-error" class="hint error" role="alert"></p>
+        <div class="btn-row">
+          <button id="load-go" class="btn primary" type="submit">Create email</button>
+          <button id="load-cancel" class="btn" type="button">Cancel</button>
+        </div>
+      </form>
       <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div id="parts" class="parts" hidden></div>
     </footer>
 
     <details id="diagnostics" class="diagnostics">
@@ -107,7 +182,120 @@
     </div>
   </section>
 
-  <!-- Pages that only appear when printing -->
-  <div id="print-root" aria-hidden="true"></div>
+  <!-- Email templates: list and editor -->
+  <section id="templates" class="preview" hidden aria-label="Email templates">
+    <div class="preview-head">
+      <button id="tpl-back" class="icon-btn" type="button" aria-label="Back to the list" title="Back">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="pv-title">
+        <div id="tpl-title" class="pv-name">Email templates</div>
+        <div id="tpl-subtitle" class="muted small">Team templates and your own</div>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <div id="tpl-list-view">
+        <section class="tpl-section">
+          <div class="tpl-head">
+            <h2>Team templates</h2>
+            <span id="team-note" class="muted small"></span>
+          </div>
+          <p id="team-empty" class="tpl-empty" hidden></p>
+          <ul id="team-list" class="tpl-list"></ul>
+          <div id="team-admin" class="tpl-actions" hidden>
+            <button id="team-new" class="btn" type="button">New team template</button>
+            <div class="publish-box">
+              <p id="publish-text" class="hint"></p>
+              <div class="btn-row">
+                <button id="team-publish" class="btn primary" type="button">Publish to team</button>
+                <button id="team-share" class="btn" type="button">Share install file</button>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="azure-section" class="tpl-section" hidden>
+          <div class="tpl-head">
+            <h2>Attach automatically</h2>
+            <span id="azure-note" class="muted small"></span>
+          </div>
+          <div class="azure-form">
+            <p class="hint">With your PDF Emails Azure function set up, Create email opens with the PDF already attached, for everyone on your team.</p>
+            <label class="field">
+              <span>Function address</span>
+              <input id="az-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="yourapp.azurewebsites.net">
+              <small class="hint">Your PDF Emails Function App's Default domain, from its Overview page in the Azure portal.</small>
+            </label>
+            <label class="field">
+              <span>Upload key</span>
+              <span class="name-field">
+                <input id="az-key" type="text" autocomplete="off" spellcheck="false" placeholder="Generate one">
+                <button id="az-gen" class="link-btn" type="button">Generate</button>
+                <button id="az-copy" class="link-btn" type="button">Copy</button>
+              </span>
+              <small class="hint">The same value goes in that Function App's THREAD_ATTACHMENTS_UPLOAD_KEY setting.</small>
+            </label>
+            <p id="az-status" class="hint" role="status"></p>
+            <div class="btn-row">
+              <button id="az-save" class="btn primary" type="button">Save</button>
+              <button id="az-test" class="btn" type="button">Test connection</button>
+            </div>
+          </div>
+        </section>
+        <section class="tpl-section">
+          <div class="tpl-head">
+            <h2>My templates</h2>
+            <span class="muted small">Only you see these</span>
+          </div>
+          <p id="mine-empty" class="tpl-empty" hidden>Make your own templates for addresses you send to often. They're saved to your Outlook account.</p>
+          <ul id="mine-list" class="tpl-list"></ul>
+          <div class="tpl-actions">
+            <button id="mine-new" class="btn" type="button">New template</button>
+          </div>
+        </section>
+      </div>
+      <form id="tpl-form" class="tpl-form" hidden novalidate>
+        <label class="field">
+          <span>Template name</span>
+          <input id="tpl-name" type="text" maxlength="60" autocomplete="off" placeholder="Walmart PODs">
+        </label>
+        <label class="field">
+          <span>To</span>
+          <input id="tpl-to" type="text" autocomplete="off" spellcheck="false" placeholder="pods@example.com">
+          <small class="hint">Separate addresses with ; or ,</small>
+        </label>
+        <label class="field">
+          <span>CC <span class="muted">(optional)</span></span>
+          <input id="tpl-cc" type="text" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>Message</span>
+          <textarea id="tpl-message" rows="5"></textarea>
+        </label>
+        <label class="field">
+          <span>PDF name</span>
+          <span class="name-field">
+            <input id="tpl-file" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+            <span class="name-ext" aria-hidden="true">.pdf</span>
+          </span>
+        </label>
+        <label class="field">
+          <span>Split into files of up to <span class="muted">(optional)</span></span>
+          <span class="name-field">
+            <input id="tpl-split" type="number" min="0.1" max="150" step="0.1" inputmode="decimal" placeholder="no limit">
+            <span class="name-ext" aria-hidden="true">MB</span>
+          </span>
+          <small class="hint">Bigger PDFs are split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Leave it blank to never split.</small>
+        </label>
+        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>.</p>
+        <p id="tpl-error" class="status error" role="alert"></p>
+        <div class="btn-row">
+          <button id="tpl-save" class="btn primary" type="submit">Save template</button>
+          <button id="tpl-cancel" class="btn" type="button">Cancel</button>
+        </div>
+        <button id="tpl-delete" class="link-btn danger" type="button" hidden>Delete this template</button>
+      </form>
+    </div>
+  </section>
+
 </body>
 </html>
