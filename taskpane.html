@@ -8,8 +8,9 @@
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
-  <link rel="stylesheet" href="taskpane.css">
-  <script type="module" src="taskpane.js"></script>
+  <!-- ?v= makes Outlook load the matching versions after an update -->
+  <link rel="stylesheet" href="taskpane.css?v=0.3.0">
+  <script type="module" src="taskpane.js?v=0.3.0"></script>
 </head>
 <body>
   <div id="app">
@@ -50,11 +51,24 @@
     </main>
 
     <footer id="actions" class="actions" hidden>
-      <button id="btn-save" class="btn primary" type="button">Save PDF…</button>
-      <div class="btn-row">
-        <button id="btn-print" class="btn" type="button">Print…</button>
-        <button id="btn-email" class="btn" type="button">Put in new email</button>
+      <div id="save-actions" class="save-actions">
+        <button id="btn-save" class="btn primary" type="button">Save PDF…</button>
+        <div class="btn-row">
+          <button id="btn-print" class="btn" type="button">Print…</button>
+          <button id="btn-email" class="btn" type="button">Put in new email</button>
+        </div>
       </div>
+      <form id="name-form" class="name-form" hidden>
+        <label for="file-name" class="name-label">Name the PDF</label>
+        <div class="name-field">
+          <input id="file-name" type="text" autocomplete="off" spellcheck="false" maxlength="120">
+          <span class="name-ext" aria-hidden="true">.pdf</span>
+        </div>
+        <div class="btn-row">
+          <button id="name-save" class="btn primary" type="submit">Save</button>
+          <button id="name-cancel" class="btn" type="button">Cancel</button>
+        </div>
+      </form>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </footer>
 

@@ -5,7 +5,7 @@
  * add-in API and combined here with pdf-lib, PDF.js and UTIF.js. Nothing is uploaded.
  */
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // inline images smaller than this are logos/icons
 const MAX_IMAGE_SIDE = 2400;          // photos are scaled to this before going into a PDF
 const LOCKED_PDF_DPI = 200;           // locked PDFs are copied in as page images at this quality
@@ -13,6 +13,7 @@ const PRINT_DPI = 150;
 const PREVIEW_PAGE_LIMIT = 40;
 const PENDING_KEY = 'pending-pdf';
 const PENDING_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }];
 
 const COMBINABLE = new Set(['PDF', 'Image', 'TIFF']);
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'jfif', 'png', 'gif', 'bmp', 'webp']);
@@ -35,6 +36,7 @@ const state = {
   checked: new Set(),
   showLogos: false,
   topic: '',
+  fileName: '',          // the name typed in "Name the PDF" (for the current thread)
   messages: 0,
   failed: 0,
   loadToken: 0,
@@ -118,8 +120,32 @@ function safeName(text) {
   return name.slice(0, 120) || 'Combined attachments';
 }
 
+/** The PDF's file name: the name you typed for this thread, else the email subject. */
 function pdfName() {
-  return `${safeName(state.topic || 'Combined attachments')}.pdf`;
+  return `${safeName(state.fileName || state.topic || 'Combined attachments')}.pdf`;
+}
+
+/** What was typed in "Name the PDF", made safe for Windows. Blank means "use the subject". */
+function cleanFileName(text) {
+  const name = String(text || '').trim().replace(/\.pdf$/i, '').trim();
+  return name ? safeName(name) : '';
+}
+
+function readSetting(key) {
+  try {
+    return localStorage.getItem(`thread-attachments.${key}`);
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeSetting(key, value) {
+  try {
+    if (value === null) localStorage.removeItem(`thread-attachments.${key}`);
+    else localStorage.setItem(`thread-attachments.${key}`, value);
+  } catch (error) {
+    // not remembered; harmless
+  }
 }
 
 function fmtDate(date) {
@@ -275,6 +301,8 @@ function loadThread() {
 async function loadThreadNow(token) {
   closePreview();
   clearPrint();
+  hideNameForm();
+  state.fileName = '';
   state.combined = null;
   setStatus('');
   setSummary('Reading the selected emails…');
@@ -560,7 +588,7 @@ function updateSelectionUi() {
     ? `${count} of ${selectable.length} selected`
     : 'Nothing here can go into a PDF';
   const anyChecked = checkedFiles().length > 0;
-  for (const id of ['btn-save', 'btn-print', 'btn-email']) $(id).disabled = state.busy || !anyChecked;
+  for (const id of ['btn-save', 'btn-print', 'btn-email', 'name-save']) $(id).disabled = state.busy || !anyChecked;
   for (const box of document.querySelectorAll('#file-list input[type="checkbox"]')) {
     const file = state.files[Number(box.closest('.file').dataset.id)];
     box.disabled = state.busy || !canCombine(file);
@@ -698,6 +726,9 @@ function pageHolder(file, index, canvas) {
   const box = document.createElement('input');
   box.type = 'checkbox';
   box.setAttribute('aria-label', `Include page ${index + 1}`);
+  box.checked = isPageIncluded(file, index); // right from the start, while later pages still render
+  box.disabled = state.busy || !canCombine(file);
+  holder.classList.toggle('excluded', !box.checked);
   box.addEventListener('change', () => onPreviewPageToggle(file));
   bar.append(box, el('span', '', `Page ${index + 1}`));
   holder.append(bar, canvas);
@@ -1078,30 +1109,82 @@ async function combineChecked() {
 
 // --------------------------------------------------------------------------- save, print, new email
 
+/**
+ * Save PDF. Where Outlook allows Windows' own Save As window, that opens straight away (you can
+ * name the file and pick the folder there). Everywhere else, you name the file in the panel first.
+ */
 async function onSave() {
   if (!checkedFiles().length) return;
-  const name = pdfName();
-  let handle = null;
-  // Ask where to save first: the browser only allows the dialog right after a click.
-  if (typeof window.showSaveFilePicker === 'function') {
-    try {
-      handle = await window.showSaveFilePicker({
-        suggestedName: name,
-        types: [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }],
-      });
-      log('Save dialog: opened');
-    } catch (error) {
-      if (error && error.name === 'AbortError') {
-        log('Save dialog: opened, then cancelled');
-        setStatus('Save cancelled.');
-        return;
-      }
-      log(`Save dialog: blocked (${error && error.name}: ${error && error.message})`);
+  if (typeof window.showSaveFilePicker === 'function' && readSetting('saveDialog') === 'works') {
+    const picked = await pickSaveLocation(pdfName());
+    if (picked.cancelled) return;
+    if (picked.handle) {
+      await finishSave(picked.handle, pdfName());
+      return;
     }
-  } else {
-    log('Save dialog: not available in this Outlook');
+    writeSetting('saveDialog', null); // it stopped working here; name it in the panel instead
   }
+  showNameForm();
+}
 
+function showNameForm() {
+  $('save-actions').hidden = true;
+  $('name-form').hidden = false;
+  setStatus('');
+  updateSelectionUi();
+  const input = $('file-name');
+  input.value = state.fileName || safeName(state.topic || 'Combined attachments');
+  input.focus();
+  input.select();
+}
+
+function hideNameForm() {
+  $('name-form').hidden = true;
+  $('save-actions').hidden = false;
+}
+
+function onNameSubmit(event) {
+  event.preventDefault();
+  if (state.busy || !checkedFiles().length) return;
+  state.fileName = cleanFileName($('file-name').value);
+  hideNameForm();
+  const name = pdfName();
+  log(`Save: named ${name}`);
+  // Straight from the click, so the browser lets Windows' Save As window open if it can.
+  pickSaveLocation(name)
+    .then((picked) => (picked.cancelled ? null : finishSave(picked.handle || null, name)))
+    .catch(fail);
+}
+
+function onNameCancel() {
+  hideNameForm();
+  setStatus('Save cancelled.');
+  $('btn-save').focus();
+}
+
+/** Opens Windows' Save As window when Outlook allows it. Must be called straight from a click. */
+async function pickSaveLocation(name) {
+  if (typeof window.showSaveFilePicker !== 'function') {
+    log('Save dialog: not available in this Outlook');
+    return {};
+  }
+  try {
+    const handle = await window.showSaveFilePicker({ suggestedName: name, types: PDF_TYPES });
+    log('Save dialog: opened');
+    return { handle };
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      log('Save dialog: opened, then cancelled');
+      setStatus('Save cancelled.');
+      return { cancelled: true };
+    }
+    log(`Save dialog: blocked (${error && error.name}: ${error && error.message})`);
+    return {};
+  }
+}
+
+/** Builds the PDF and writes it: into the file picked in Save As, or as a download. */
+async function finishSave(handle, name) {
   const result = await withBusy(combineChecked);
   if (!result) return;
 
@@ -1110,17 +1193,21 @@ async function onSave() {
       const writable = await handle.createWritable();
       await writable.write(result.bytes);
       await writable.close();
-      log(`Save dialog: saved ${handle.name || name} (${humanSize(result.bytes.length)}) ✔`);
-      setStatus(`Saved ${handle.name || name} (${plural(result.pages, 'page')}).${leftOutText(result)}`, 'ok');
+      writeSetting('saveDialog', 'works');
+      const saved = handle.name || name;
+      state.fileName = cleanFileName(saved); // reuse the name chosen in Save As
+      log(`Save dialog: saved ${saved} (${humanSize(result.bytes.length)}) ✔`);
+      setStatus(`Saved ${saved} (${plural(result.pages, 'page')}).${leftOutText(result)}`, 'ok');
       return;
     } catch (error) {
+      writeSetting('saveDialog', null);
       log(`Save dialog: couldn't write the file (${error.name}: ${error.message})`);
     }
   }
   try {
     downloadBytes(result.bytes, name);
-    log('Download: started. Check whether the file showed up in Downloads.');
-    setStatus(`Download started (${plural(result.pages, 'page')}). If nothing shows up in Downloads, use Print… and choose "Save as PDF".${leftOutText(result)}`, 'ok');
+    log(`Download: started as ${name}. Check whether it showed up in Downloads.`);
+    setStatus(`Downloading ${name} (${plural(result.pages, 'page')}) to your Downloads folder. If it doesn't show up, use Print… and choose "Save as PDF".${leftOutText(result)}`, 'ok');
   } catch (error) {
     log(`Download: failed (${error.name}: ${error.message})`);
     setStatus('Saving isn\'t possible here. Use Print… and choose "Save as PDF", or Put in new email.', 'error');
@@ -1185,14 +1272,18 @@ async function onPrint() {
 
   let before = false;
   let after = false;
+  const pageTitle = document.title;
+  const restoreTitle = () => { document.title = pageTitle; };
   const onBefore = () => { before = true; };
   const onAfter = () => {
     after = true;
     clearPrint();
+    restoreTitle();
   };
   window.addEventListener('beforeprint', onBefore);
   window.addEventListener('afterprint', onAfter, { once: true });
   const started = performance.now();
+  document.title = pdfName().replace(/\.pdf$/i, ''); // the name "Save as PDF" suggests
   try {
     window.print();
   } catch (error) {
@@ -1201,6 +1292,7 @@ async function onPrint() {
   const ms = Math.round(performance.now() - started);
   setTimeout(() => {
     window.removeEventListener('beforeprint', onBefore);
+    if (!before || after) restoreTitle();
     log(`Print: print() returned after ${ms} ms; print window ${before ? 'opened' : 'did not open'}${after ? ' and closed' : ''}`);
     if (!before && ms < 150) {
       setStatus('The print window didn\'t open here. Try Save PDF… or Put in new email.', 'error');
@@ -1331,6 +1423,8 @@ function wireReadUi() {
   $('btn-save').addEventListener('click', () => onSave().catch(fail));
   $('btn-print').addEventListener('click', () => onPrint().catch(fail));
   $('btn-email').addEventListener('click', () => onEmail().catch(fail));
+  $('name-form').addEventListener('submit', onNameSubmit);
+  $('name-cancel').addEventListener('click', onNameCancel);
   $('pv-close').addEventListener('click', closePreview);
   $('pv-prev').addEventListener('click', () => stepPreview(-1));
   $('pv-next').addEventListener('click', () => stepPreview(1));
@@ -1339,7 +1433,9 @@ function wireReadUi() {
     if (file) onRowToggle(file, event.target.checked);
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !$('preview').hidden) closePreview();
+    if (event.key !== 'Escape') return;
+    if (!$('preview').hidden) closePreview();
+    else if (!$('name-form').hidden) onNameCancel();
   });
 }
 

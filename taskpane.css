@@ -73,6 +73,15 @@ input[type="checkbox"]:disabled { cursor: default; }
 /* ---- actions */
 .actions { flex: none; display: grid; gap: 6px; padding: 10px 14px 10px; border-top: 1px solid var(--line); background: var(--bg); }
 .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.save-actions, .name-form { display: grid; gap: 6px; }
+.name-label { font-size: 12px; font-weight: 600; }
+.name-field {
+  display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 8px;
+  border: 1px solid #8a8a8a; border-radius: 4px; background: #fff;
+}
+.name-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.name-field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; }
+.name-ext { flex: none; color: var(--muted); }
 .btn {
   height: 32px; padding: 0 12px; border: 1px solid #d1d1d1; border-radius: 4px; background: #fff; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;
