@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.14.1';
+const VERSION = '0.14.2';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -150,7 +150,8 @@ const WORDS = {
   // The bottom of the panel
   testReport: "Test report",
   copyReport: "Copy report",
-  appearance: "Appearance",                        // the light/dark button (screen readers say this)
+  settings: "Settings",                            // the gear button across from Test report
+  appearance: "Appearance",                        // in Settings, over Light, Dark and Match Outlook
   light: "Light",
   dark: "Dark",
   matchOutlook: "Match Outlook",
@@ -3374,6 +3375,11 @@ function accessorialSummary(acc) {
 
 // ---- the menu
 
+/** Templates in A to Z order by name (numbers in order too: Store 9 before Store 10). */
+function byName(list) {
+  return list.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+}
+
 function renderEmailMenu() {
   const menu = $('email-menu');
   menu.textContent = '';
@@ -3382,8 +3388,8 @@ function renderEmailMenu() {
   const ready = !state.busy && !nothing && !blocked;
   if (nothing) menu.append(el('div', 'menu-note', 'Check the files to send first.'));
   if (blocked) menu.append(el('div', 'menu-note', 'Leave out the rate confirmation first.'));
-  const teamList = teamTemplates();
-  const mine = canMakeOwn() ? state.myTemplates : []; // a rep's own templates stay saved, just unused, while it's off
+  const teamList = byName(teamTemplates());
+  const mine = canMakeOwn() ? byName(state.myTemplates) : []; // a rep's own templates stay saved, just unused, while it's off
   if (teamList.length) {
     menu.append(el('div', 'menu-group', word('team')));
     for (const t of teamList) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
@@ -4296,6 +4302,8 @@ function showLocked() {
 let editing = null; // { scope: 'team' | 'mine', id }
 let deleteArmed = 0;
 
+let templatesOpener = null; // the button that opened Manage templates (Email or Settings), for focus after
+
 function openTemplates() {
   closeEmailMenu(false);
   if (!canMakeOwn()) return;
@@ -4309,7 +4317,9 @@ function closeTemplates() {
   $('templates').hidden = true;
   editing = null;
   if (!$('read-view').hidden) renderList(); // a template may have turned lumper receipt tags on or off
-  $('btn-email').focus();
+  const back = templatesOpener || $('btn-email');
+  templatesOpener = null;
+  back.focus();
 }
 
 function cancelEdit() {
@@ -4326,7 +4336,7 @@ function renderTemplateSheet() {
   const admin = isAdmin();
   const teamList = teamTemplates();
   $('team-note').textContent = admin ? 'You manage these' : 'Set by your team admin';
-  fillTemplateList($('team-list'), teamList, admin ? 'team' : null);
+  fillTemplateList($('team-list'), byName(teamList), admin ? 'team' : null);
   $('team-empty').hidden = teamList.length > 0;
   $('team-empty').textContent = admin
     ? 'Add the templates your reps should use, then publish them.'
@@ -4339,7 +4349,7 @@ function renderTemplateSheet() {
   $('rc-section').hidden = !admin;
   if (admin) renderRcBox();
   $('mine-section').hidden = !canMakeOwn();
-  fillTemplateList($('mine-list'), state.myTemplates, 'mine');
+  fillTemplateList($('mine-list'), byName(state.myTemplates), 'mine');
   $('mine-empty').hidden = state.myTemplates.length > 0;
 }
 
@@ -4949,9 +4959,9 @@ async function forgetPending(subject) {
 
 async function initCompose() {
   showView('compose-view');
-  // No light/dark button in a new email's panel: it would save Restack's settings from the copy this
-  // panel loaded, which can be older than changes made in the main window since (like a template).
-  document.querySelector('.foot-toggle').hidden = true;
+  // No Settings in a new email's panel: it would save Restack's settings from the copy this panel
+  // loaded, which can be older than changes made in the main window since (like a template).
+  document.querySelector('.foot-settings').hidden = true;
   setSummary('Attach a combined PDF to this email');
   let pending = null;
   try {
@@ -5044,7 +5054,10 @@ async function initCompose() {
 
 // --------------------------------------------------------------------------- start-up
 
+let readUiWired = false;
+
 function wireReadUi() {
+  readUiWired = true;
   $('check-all').addEventListener('change', (event) => {
     const on = event.target.checked;
     for (const file of selectableFiles()) {
@@ -5149,13 +5162,13 @@ function registerHandlers() {
 
 // --------------------------------------------------------------------------- light or dark
 
-// The button across from Test report: Match Outlook (the default), Light or Dark. The choice is saved
-// in roaming settings, so it follows the rep to other computers. mode.js puts last time's light or
-// dark on the page before anything shows, so the panel doesn't flash white in dark mode.
+// Settings (the gear across from Test report) has Manage templates, and Appearance: Match Outlook (the
+// default), Light or Dark. The choice is saved in roaming settings, so it follows the rep to other
+// computers. mode.js puts last time's light or dark on the page before anything shows, so the panel
+// doesn't flash white in dark mode.
 const APPEARANCE_KEY = 'appearance';
 const APPEARANCE_WORD = { light: 'light', dark: 'dark', match: 'matchOutlook' }; // their WORDS
 let appearance = 'match';
-let appearanceTimers = [];
 let appearanceReady = false; // the saved choice is in (picks before that would be overwritten)
 
 /** How bright a #rrggbb color is, from 0 (black) to 1 (white), or null if it isn't one. */
@@ -5205,19 +5218,10 @@ function fadeMode(theme) {
   return before !== mode;
 }
 
-/** Marks the choice on the button. Closed, only the choice shows, labeled for screen readers. */
+/** Marks the choice in Settings' Light / Dark / Match Outlook switch. */
 function markAppearance() {
-  const pop = $('mode-pop');
-  if (!pop) return;
-  const open = pop.dataset.open === 'true';
-  for (const item of pop.querySelectorAll('.pop-item')) {
-    const on = item.dataset.mode === appearance;
-    const name = word(APPEARANCE_WORD[item.dataset.mode]);
-    item.setAttribute('aria-checked', String(on));
-    item.tabIndex = open || on ? 0 : -1;
-    item.setAttribute('aria-hidden', String(!open && !on));
-    item.setAttribute('aria-label', !open && on ? `${word('appearance')}: ${name}. Show the choices` : name);
-    item.title = !open && on ? `${word('appearance')}: ${name}` : name;
+  for (const item of document.querySelectorAll('#mode-seg .seg-item')) {
+    item.setAttribute('aria-pressed', String(item.dataset.mode === appearance));
   }
 }
 
@@ -5226,67 +5230,63 @@ function saveAppearance() {
   writeRoaming(APPEARANCE_KEY, appearance).catch((error) => log(`Appearance: couldn't save (${error.message})`));
 }
 
-/** Opens the button into the three choices, or closes it again (without changing anything). */
-function setAppearanceOpen(open, returnFocus) {
-  const pop = $('mode-pop');
-  if ((pop.dataset.open === 'true') === open) return;
-  pop.dataset.open = String(open);
-  markAppearance();
-  if (open || returnFocus) {
-    const on = pop.querySelector('.pop-item[aria-checked="true"]');
-    if (on) on.focus();
-  }
-}
-
-/** A pick from the open switch: the highlight moves to it, the switch closes, and the panel fades over. */
+/** A pick in Settings: the panel fades over to it, and Settings stays open. */
 function pickAppearance(choice) {
-  for (const timer of appearanceTimers) clearTimeout(timer);
-  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!appearanceReady || choice === appearance) return;
   appearance = choice;
   markAppearance();
-  appearanceTimers = [
-    setTimeout(() => setAppearanceOpen(false, true), calm ? 0 : 220),
-    setTimeout(() => {
-      fadeMode();
-      saveAppearance();
-      log(`Appearance: ${word(APPEARANCE_WORD[choice])} (${document.documentElement.dataset.mode})`);
-    }, calm ? 0 : 420),
-  ];
+  fadeMode();
+  saveAppearance();
+  log(`Appearance: ${word(APPEARANCE_WORD[choice])} (${document.documentElement.dataset.mode})`);
 }
 
-function wireAppearance() {
-  const pop = $('mode-pop');
-  if (!pop) return;
-  pop.addEventListener('click', (event) => {
-    const item = event.target.closest('.pop-item');
-    if (!item || !appearanceReady) return;
-    if (pop.dataset.open !== 'true') setAppearanceOpen(true);
-    else if (event.detail > 1) return; // the second click of a double-click lands on whatever opened under it
-    else if (item.dataset.mode === appearance) setAppearanceOpen(false, true);
-    else pickAppearance(item.dataset.mode);
+/** Opens Settings above its button: Manage templates (when there's a team to manage), and Appearance. */
+function openSettings() {
+  const pop = $('settings-pop');
+  const templates = $('set-templates');
+  templates.hidden = !(readUiWired && canMakeOwn());
+  if (!templates.hidden) {
+    templates.querySelector('.mi-name').textContent = word(teamTemplates().length || state.myTemplates.length ? 'manageTemplates' : 'createTemplate');
+  }
+  markAppearance();
+  pop.hidden = false;
+  $('btn-settings').setAttribute('aria-expanded', 'true');
+  (templates.hidden ? pop.querySelector('.seg-item[aria-pressed="true"]') : templates).focus();
+}
+
+function closeSettings(returnFocus) {
+  const pop = $('settings-pop');
+  if (pop.hidden) return;
+  pop.hidden = true;
+  $('btn-settings').setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('btn-settings').focus();
+}
+
+function wireSettings() {
+  const box = document.querySelector('.foot-settings');
+  const pop = $('settings-pop');
+  $('btn-settings').addEventListener('click', () => (pop.hidden ? openSettings() : closeSettings(true)));
+  $('set-templates').addEventListener('click', () => {
+    closeSettings(false);
+    templatesOpener = $('btn-settings');
+    openTemplates();
   });
-  pop.addEventListener('keydown', (event) => {
-    if (pop.dataset.open !== 'true') return;
-    if (event.key === 'Escape') {
-      event.stopPropagation(); // just this, not the screen behind it
-      setAppearanceOpen(false, true);
-      return;
-    }
-    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const items = [...pop.querySelectorAll('.pop-item')];
-    const at = items.indexOf(document.activeElement);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
-      : (at + (event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-    items[next].focus();
+  $('mode-seg').addEventListener('click', (event) => {
+    const item = event.target.closest('.seg-item');
+    if (item) pickAppearance(item.dataset.mode);
   });
-  pop.addEventListener('focusout', (event) => {
-    if (pop.dataset.open === 'true' && event.relatedTarget && !pop.contains(event.relatedTarget)) setAppearanceOpen(false);
+  box.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || pop.hidden) return;
+    event.stopPropagation(); // just Settings, not the screen behind it
+    closeSettings(true);
+  });
+  box.addEventListener('focusout', (event) => {
+    if (!pop.hidden && event.relatedTarget && !box.contains(event.relatedTarget)) closeSettings(false);
   });
   document.addEventListener('pointerdown', (event) => {
-    if (pop.dataset.open === 'true' && !event.target.closest('.mode-pop')) setAppearanceOpen(false);
+    if (!pop.hidden && !event.target.closest('.foot-settings')) closeSettings(false);
   });
-  window.addEventListener('blur', () => setAppearanceOpen(false)); // a click in Outlook, outside the panel
+  window.addEventListener('blur', () => closeSettings(false)); // a click in Outlook, outside the panel
   markAppearance();
   if (window.matchMedia) {
     const media = matchMedia('(prefers-color-scheme: dark)');
@@ -5319,7 +5319,7 @@ function loadAppearance() {
 
 function start() {
   applyWords();
-  wireAppearance();
+  wireSettings();
   $('btn-copy-report').addEventListener('click', () => copyReport());
   window.addEventListener('error', (event) => log(`Script error: ${event.message}`));
   window.addEventListener('unhandledrejection', (event) => log(`Unhandled: ${event.reason && (event.reason.message || event.reason)}`));
