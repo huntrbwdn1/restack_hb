@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.14.2';
+const VERSION = '0.14.3';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -4961,7 +4961,8 @@ async function initCompose() {
   showView('compose-view');
   // No Settings in a new email's panel: it would save Restack's settings from the copy this panel
   // loaded, which can be older than changes made in the main window since (like a template).
-  document.querySelector('.foot-settings').hidden = true;
+  const settings = document.querySelector('.foot-settings');
+  if (settings) settings.hidden = true;
   setSummary('Attach a combined PDF to this email');
   let pending = null;
   try {
@@ -5265,6 +5266,10 @@ function closeSettings(returnFocus) {
 function wireSettings() {
   const box = document.querySelector('.foot-settings');
   const pop = $('settings-pop');
+  if (!box || !pop || !$('btn-settings') || !$('set-templates') || !$('mode-seg')) {
+    log('Settings: not on this page (an older copy of taskpane.html)');
+    return;
+  }
   $('btn-settings').addEventListener('click', () => (pop.hidden ? openSettings() : closeSettings(true)));
   $('set-templates').addEventListener('click', () => {
     closeSettings(false);
@@ -5317,9 +5322,49 @@ function loadAppearance() {
   }
 }
 
+/**
+ * After an update, Outlook can show a copy of taskpane.html it kept from before, next to the new
+ * taskpane.js. The page says which version it is; when that isn't this script's, reload once from
+ * the site (the extra ?fresh= in the address gets past the kept copy).
+ */
+function reloadIfOldPage() {
+  const meta = document.querySelector('meta[name="restack-version"]');
+  const page = meta ? meta.getAttribute('content') : '';
+  if (page === VERSION) return false;
+  let url;
+  try {
+    url = new URL(window.location.href);
+  } catch (error) {
+    return false;
+  }
+  if (url.searchParams.get('fresh') === VERSION) {
+    log(`Start: the page is ${page || 'an older one'}, the script ${VERSION}, even after reloading`);
+    return false; // tried once already: carry on with what's here
+  }
+  url.searchParams.set('fresh', VERSION);
+  try {
+    window.location.replace(url.href);
+  } catch (error) {
+    return false;
+  }
+  setTimeout(startNow, 5000); // only if the reload didn't happen
+  return true;
+}
+
 function start() {
+  if (reloadIfOldPage()) return;
+  startNow();
+}
+
+function startNow() {
+  if (startNow.done) return;
+  startNow.done = true;
   applyWords();
-  wireSettings();
+  try {
+    wireSettings();
+  } catch (error) {
+    log(`Settings: couldn't set up (${error.message})`);
+  }
   $('btn-copy-report').addEventListener('click', () => copyReport());
   window.addEventListener('error', (event) => log(`Script error: ${event.message}`));
   window.addEventListener('unhandledrejection', (event) => log(`Unhandled: ${event.reason && (event.reason.message || event.reason)}`));
