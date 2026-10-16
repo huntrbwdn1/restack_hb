@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Thread Attachments - Outlook add-in manifest (template).
+  Restack - Outlook add-in manifest (template).
+  The Id stays the same as Thread Attachments, the add-in's old name, so Outlook treats it as the same add-in.
   Don't install this file directly. The add-in's page (index.html) and its "Share install file"
   button fill in the web address it's hosted at ({{BASE}}) and the team key ({{QUERY}}).
 -->
@@ -9,10 +10,10 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xsi:type="MailApp">
   <Id>50f0be95-347e-4d26-9255-72cc5191b9f0</Id>
-  <Version>0.11.0.0</Version>
-  <ProviderName>Thread Attachments</ProviderName>
+  <Version>0.14.0.0</Version>
+  <ProviderName>Restack</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Thread Attachments"/>
+  <DisplayName DefaultValue="Restack"/>
   <Description DefaultValue="See every attachment in an email thread, preview them, and combine the ones you pick into one PDF."/>
   <IconUrl DefaultValue="{{BASE}}icon-64.png"/>
   <HighResolutionIconUrl DefaultValue="{{BASE}}icon-128.png"/>
@@ -57,7 +58,7 @@
           <DesktopFormFactor>
             <FunctionFile resid="Commands.Url"/>
 
-            <!-- Reading emails: the "Thread Attachments" button opens the side panel. -->
+            <!-- Reading emails: the "Restack" button opens the side panel. -->
             <ExtensionPoint xsi:type="MessageReadCommandSurface">
               <OfficeTab id="TabDefault">
                 <Group id="taReadGroup">
@@ -121,13 +122,13 @@
           <bt:Url id="Taskpane.Url" DefaultValue="{{BASE}}taskpane.html{{QUERY}}"/>
         </bt:Urls>
         <bt:ShortStrings>
-          <bt:String id="Group.Label" DefaultValue="Thread Attachments"/>
-          <bt:String id="ReadButton.Label" DefaultValue="Thread Attachments"/>
+          <bt:String id="Group.Label" DefaultValue="Restack"/>
+          <bt:String id="ReadButton.Label" DefaultValue="Restack"/>
           <bt:String id="ComposeButton.Label" DefaultValue="Attach PDF"/>
         </bt:ShortStrings>
         <bt:LongStrings>
           <bt:String id="ReadButton.Tooltip" DefaultValue="List every attachment in the selected thread, preview them, and combine the ones you pick into one PDF."/>
-          <bt:String id="ComposeButton.Tooltip" DefaultValue="Attach the combined PDF you made with Thread Attachments to this email."/>
+          <bt:String id="ComposeButton.Tooltip" DefaultValue="Attach the combined PDF you made with Restack to this email."/>
         </bt:LongStrings>
       </Resources>
     </VersionOverrides>

@@ -1,12 +1,12 @@
 /*
- * Thread Attachments - Outlook add-in (test build).
+ * Restack - Outlook add-in (test build).
  *
  * Everything happens inside this side panel: attachments are read through Outlook's
  * add-in API and combined here with pdf-lib, PDF.js and UTIF.js. The only upload is the
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.11.0';
+const VERSION = '0.14.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -16,7 +16,9 @@ const PREVIEW_PAGE_LIMIT = 40;
 const THUMB_PX = 96;                  // list pictures are drawn this big and shown at 40 px (sharp on high-DPI screens)
 const PENDING_KEY = 'pending-pdf';
 const PENDING_MAX_AGE_MS = 2 * 60 * 60 * 1000;
-const MB = 1000 * 1000;                // split sizes are in MB as people read them (not MiB)
+const MB = 1000 * 1000;                // sizes are in MB as people read them (not MiB)
+const SPLIT_MB = 10;                   // every PDF stays under this; bigger ones split into -1, -2…
+const SPLIT_LIMIT = SPLIT_MB * MB - 1;
 const AZURE_FUNCTION = 'PdfEmails';    // the function's name in the team admin's Function App
 const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }];
 const TEAM_FILE = 'team.json';
@@ -63,6 +65,9 @@ const OFFICE_COLOR = { doc: '#185abd', docx: '#185abd', docm: '#185abd', rtf: '#
 const ENVELOPE_SVG = '<svg viewBox="0 0 28 28" aria-hidden="true"><rect x="3.5" y="7" width="21" height="14.5" rx="1.5" fill="#fff" stroke="#0f6cbd" stroke-width="1.3"/><path d="M4.2 8 14 15.5 23.8 8" fill="none" stroke="#0f6cbd" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const CLOUD_SVG = '<svg viewBox="0 0 28 28" aria-hidden="true"><path d="M8.6 21h11.6a4.4 4.4 0 0 0 .5-8.8 6.2 6.2 0 0 0-11.9 1.7A3.6 3.6 0 0 0 8.6 21Z" fill="#fff" stroke="#0f6cbd" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const X_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+const GRIP_SVG = '<svg viewBox="0 0 8 14" width="7" height="12" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="7" r="1.2"/><circle cx="6" cy="7" r="1.2"/><circle cx="2" cy="12" r="1.2"/><circle cx="6" cy="12" r="1.2"/></g></svg>';
+const UP_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 12.5 10 7.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const DOWN_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const STOP_SVG = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M7 2.5h6L17.5 7v6L13 17.5H7L2.5 13V7Z" fill="#b10e1c"/><path d="M6.5 10h7" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
 // The how-to animation's little pictures (a mouse pointer, Outlook's expand arrows, a paperclip)
 const CURSOR_SVG = '<svg viewBox="0 0 16 22" width="16" height="22" aria-hidden="true"><path d="M1 1v17.5l4.4-4.2 2.9 6.6 2.7-1.2-2.9-6.5h6.1Z" fill="#fff" stroke="#242424" stroke-width="1.3" stroke-linejoin="round"/></svg>';
@@ -71,6 +76,101 @@ const TRIANGLE_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.
 const CLIP_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M8.2 3.6 4.6 7.2a.9.9 0 0 0 1.3 1.3l3.9-3.9a1.9 1.9 0 0 0-2.7-2.7L3.2 5.8a2.9 2.9 0 0 0 4.1 4.1L9.6 7.6" fill="none" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>';
 
 const $ = (id) => document.getElementById(id);
+
+// =============================================================================================
+// WORDING: most of what reps read on the panel, in one place. To reword something, change the
+// text between the double quotes. Keep the double quotes, the comma at the end, and anything in
+// {curly brackets}. An apostrophe is fine; a double quote inside the text isn't. Then upload
+// taskpane.js: the label changes everywhere it's used, within a few minutes (or close and reopen
+// Outlook). Messages and warnings, and the template screens, aren't in this list.
+// =============================================================================================
+const WORDS = {
+  // The list of files
+  selectAll: "Select all",                         // the checkbox above the list
+  selected: "{n} of {total} selected",             // next to Select all
+  multiStop: "Multi-stop",                         // the checkbox above the list
+  multiStopNote: "one PDF per stop: -1, -2…",      // the grey text after Multi-stop
+  stop: "Stop {n}",                                // the stop picker on each file (and page), with Multi-stop on
+  byPage: "By page",                               // a file's stop picker when its pages are at different stops
+  receipt: "Receipt",                              // the tag on each checked file, and on pages in the preview
+  receiptPages: "Receipt: {pages}",                // under a file that's only partly a receipt, like "Receipt: page 2"
+  oneEmailTip: "Only 1 email came through. To include the whole thread, select every email in it.",
+  showLogos: "Show logos & icons",                 // under the list, when emails have logos in them
+
+  // The buttons under the list, and the Email menu
+  email: "Email",
+  savePdf: "Save PDF…",
+  blankEmail: "Blank email",
+  blankEmailNote: "Just the PDF, no recipients",   // under Blank email
+  team: "Team",                                    // the menu's headings over the templates
+  mine: "Mine",
+  manageTemplates: "Manage templates…",
+  createTemplate: "Create a template…",            // in place of Manage templates, before there are any
+
+  // Save PDF
+  nameThePdf: "Name the PDF",
+  save: "Save",
+  cancel: "Cancel",                                // Save PDF and Create email
+
+  // Create email (the accessorials' names and fields are written the same way in the email)
+  loadNumber: "Load number",
+  accessorials: "Accessorials",
+  detention: "Detention",
+  lumper: "Lumper",
+  other: "Other",
+  timeIn: "IN",                                    // Detention's times
+  appointment: "APPT",
+  timeOut: "OUT",
+  hoursRequested: "Hours requested",
+  total: "Total",                                  // Lumper's and Other's amount
+  otherType: "Type",                               // what the Other accessorial is
+  shipper: "Shipper",                              // where a charge was
+  receiver: "Receiver",
+  receiverAtStop: "Receiver (Stop {n})",           // with Multi-stop on
+  shipperOrReceiver: "Shipper or receiver?",       // the drop-down's prompt
+  shipperOrStop: "Shipper or which stop?",         // the same, with Multi-stop on
+  createEmail: "Create email",
+  subject: "{load} POD(s)",                        // every email's subject
+
+  // The separate accessorial email (for templates with "Accessorials in a separate email")
+  accessorialSubject: "{load} - {types} Request",  // its subject; {types} is like Detention/Lumper
+  accessorialIntro: "Please see the {types} request for load {load} below.", // its first line, unless the template has its own
+
+  // The rate confirmation check
+  looksLikeRateCon: "Looks like a rate confirmation", // under a flagged file
+  leaveItOut: "Leave it out",
+  leaveThemOut: "Leave them out",
+  notARateCon: "Not a rate con",
+  rateConBadge: "Rate con?",                       // on a flagged page in the preview
+  useAsRcSample: "Use as rate con sample",         // the team admin's link at the bottom of the preview
+
+  // The preview
+  includeInPdf: "Include in PDF",
+
+  // The bottom of the panel
+  testReport: "Test report",
+  copyReport: "Copy report",
+  appearance: "Appearance",                        // the light/dark button (screen readers say this)
+  light: "Light",
+  dark: "Dark",
+  matchOutlook: "Match Outlook",
+
+  // A new email
+  attachPdf: "Attach PDF",                         // in the panel and messages (the ribbon's is in the install file)
+};
+
+/** A WORDS entry with its {placeholders} filled in. */
+function word(key, values = {}) {
+  const text = Object.prototype.hasOwnProperty.call(WORDS, key) ? WORDS[key] : key;
+  return String(text).replace(/\{(\w+)\}/g, (match, name) => (Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match));
+}
+
+/** Puts WORDS into the page's fixed labels: elements marked data-w (text), data-w-aria and data-w-title. */
+function applyWords() {
+  for (const node of document.querySelectorAll('[data-w]')) node.textContent = word(node.dataset.w);
+  for (const node of document.querySelectorAll('[data-w-aria]')) node.setAttribute('aria-label', word(node.dataset.wAria));
+  for (const node of document.querySelectorAll('[data-w-title]')) node.title = word(node.dataset.wTitle);
+}
 
 /** The team key from the install file (?team=… in the add-in's address). Read first thing. */
 function readTeamKey() {
@@ -101,8 +201,9 @@ const state = {
   loadNumber: '',        // the load number typed for an email template (for the current thread)
   accessorials: emptyAccessorials(), // Detention / Lumper / Other typed for the current thread
   myTemplates: [],
-  saveSplitMb: 0,        // "Split into files of up to" for Save PDF (0 = no limit)
   multiStop: false,      // Multi-stop: one PDF per stop, named -1, -2… (for the current thread)
+  order: null,           // file ids in the order you put them (null: as they came, oldest first)
+  places: new Map(),     // each checked file's place in its PDF (1, 2, 3…), worked out by renderList
   messages: 0,
   failed: 0,
   loadToken: 0,
@@ -122,6 +223,15 @@ function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+/** A note under a file, where "pages 1–3" (or "page 2") stays on one line. */
+function noteEl(className, text) {
+  const node = el('span', className);
+  String(text).split(/(pages? \d+(?:–\d+)?|\d+–\d+)/i).forEach((part, i) => {
+    if (part) node.append(i % 2 ? el('span', 'nowrap', part) : part);
+  });
   return node;
 }
 
@@ -163,10 +273,11 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+/** Sizes in KB and MB of 1000, the same MB as the 10 MB limit, so a file shown as 9.8 MB isn't split. */
 function humanSize(n) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1000) return `${n} B`;
+  if (n < 999500) return `${Math.round(n / 1000)} KB`;
+  return `${(n / MB).toFixed(1)} MB`;
 }
 
 function plural(n, word, many) {
@@ -309,7 +420,7 @@ function renderReport() {
 }
 
 function collectEnvironment() {
-  const lines = [`Thread Attachments ${VERSION} (test build)`];
+  const lines = [`Restack ${VERSION} (test build)`];
   try {
     const diag = Office.context.diagnostics || {};
     const mailDiag = (Office.context.mailbox && Office.context.mailbox.diagnostics) || {};
@@ -354,7 +465,7 @@ async function copyReport() {
 function flashCopy(text) {
   const button = $('btn-copy-report');
   button.textContent = text;
-  setTimeout(() => { button.textContent = 'Copy report'; }, 2500);
+  setTimeout(() => { button.textContent = word('copyReport'); }, 2500);
 }
 
 function fail(error) {
@@ -395,7 +506,7 @@ const HOWTO = {
     steps: [
       'Click › next to the conversation to open it.',
       'Tick the checkbox at the top of the conversation.',
-      'Every email is selected, so Thread Attachments reads them all.',
+      'Every email is selected, so Restack reads them all.',
     ],
     note: '',
     script: [ // what the pointer does, step by step (wait: ms before the next frame)
@@ -413,7 +524,7 @@ const HOWTO = {
       'Click ▷ next to the conversation to open it.',
       'Click the first email under it.',
       'Hold Shift and click the last email.',
-      'Every email is selected, so Thread Attachments reads them all.',
+      'Every email is selected, so Restack reads them all.',
     ],
     note: 'To pick only some of them, hold Ctrl and click each one.',
     script: [
@@ -707,6 +818,7 @@ async function loadThreadNow(token) {
   state.loadNumber = '';
   state.accessorials = emptyAccessorials();
   state.multiStop = false; // a new thread starts as a single-stop load
+  state.order = null;      // ...in the order its files came in
   state.built.clear();
   setStatus('');
   setSummary('Reading the selected emails…');
@@ -785,7 +897,7 @@ async function loadThreadNow(token) {
   state.failed = failed;
   state.topic = stripPrefixes(subjects[0] || '');
   state.checked = new Set(); // nothing checked until you pick (or Select all)
-  $('title').textContent = state.topic || 'Thread Attachments';
+  $('title').textContent = state.topic || 'Restack';
   renderSummary();
   renderOneEmailTip(messages);
 
@@ -797,6 +909,10 @@ async function loadThreadNow(token) {
   renderList();
   const dupes = files.reduce((sum, f) => sum + f.copies - 1, 0);
   log(`Found ${plural(files.length, 'file')}${dupes ? `, ${plural(dupes, 'duplicate')} merged` : ''}${failed ? `, ${failed} unreadable` : ''}`);
+  for (const file of files) {
+    const scans = file.kind === 'PDF' && file.bytes ? scanFormats(file.bytes) : '';
+    if (scans) log(`${file.name}: has ${scans} images`);
+  }
   fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
   checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
 }
@@ -855,17 +971,18 @@ function stopsOfFile(file) {
 
 /**
  * How one checked file is divided up: [{ stop, lumper, pages }] (pages null = all its picked
- * pages). Stops count only with Multi-stop on; lumper receipts only when `lumpers` is true.
+ * pages). Stops count only with Multi-stop on. Lumper receipt pages are a part of their own, so
+ * they can go after the PODs (or into a file of their own).
  */
-function partsOfFile(file, lumpers) {
+function partsOfFile(file) {
   const stopOf = (p) => (state.multiStop ? ((file.pageStops && file.pageStops.get(p)) || file.stop || 1) : 1);
-  const byPage = file.kind === 'PDF' && ((state.multiStop && file.pageStops && file.pageStops.size) || (lumpers && file.pageLumper && file.pageLumper.size));
+  const byPage = file.kind === 'PDF' && ((state.multiStop && file.pageStops && file.pageStops.size) || (file.pageLumper && file.pageLumper.size));
   const pages = byPage ? allIncludedPages(file) : null;
-  if (!pages) return [{ stop: state.multiStop ? (file.stop || 1) : 1, lumper: lumpers && !!file.lumper, pages: includedPages(file) }];
+  if (!pages) return [{ stop: state.multiStop ? (file.stop || 1) : 1, lumper: !!file.lumper, pages: includedPages(file) }];
   const parts = new Map();
   for (const p of pages) {
     const stop = stopOf(p);
-    const lumper = lumpers && pageLumperOf(file, p);
+    const lumper = pageLumperOf(file, p);
     const key = `${stop}|${lumper}`;
     if (!parts.has(key)) parts.set(key, { stop, lumper, pages: [] });
     parts.get(key).pages.push(p);
@@ -876,16 +993,20 @@ function partsOfFile(file, lumpers) {
 /**
  * The PDFs to make, before building them: [{ stop, lumper, entries: [{ file, only }] }], PODs
  * first, then lumper receipts. splitStops: one PDF per stop (stop 0 = all stops together, in stop
- * order). splitLumpers: lumper receipts in their own PDF(s) instead of with the PODs.
+ * order). splitLumpers: lumper receipts in their own PDF(s); otherwise they go after the PODs in
+ * the same file (after every stop, when the stops share a file). Within that, files go in the
+ * order of the list, which you can change.
  */
-function fileGroups(splitStops, splitLumpers) {
+function fileGroups(splitStops, splitLumpers, noReceipts = false) {
   const groups = new Map();
   checkedFiles().forEach((file, index) => {
-    for (const part of partsOfFile(file, splitLumpers)) {
+    for (const part of partsOfFile(file)) {
+      if (noReceipts && part.lumper) continue; // the POD email, when the receipts go in the accessorial email
       const stop = splitStops ? part.stop : 0;
-      const key = `${part.lumper ? 'L' : 'P'}${stop}`;
-      if (!groups.has(key)) groups.set(key, { stop, lumper: part.lumper, items: [] });
-      groups.get(key).items.push({ file, only: part.pages, order: part.stop, index });
+      const own = splitLumpers && part.lumper;
+      const key = `${own ? 'L' : 'P'}${stop}`;
+      if (!groups.has(key)) groups.set(key, { stop, lumper: own, items: [] });
+      groups.get(key).items.push({ file, only: part.pages, receipt: part.lumper, order: part.stop, index });
     }
   });
   return [...groups.values()]
@@ -893,8 +1014,17 @@ function fileGroups(splitStops, splitLumpers) {
     .map((group) => ({
       stop: group.stop,
       lumper: group.lumper,
-      entries: group.items.sort((x, y) => (x.order - y.order) || (x.index - y.index)).map(({ file, only }) => ({ file, only })),
+      entries: group.items
+        .sort((x, y) => (Number(x.receipt) - Number(y.receipt)) || (x.order - y.order) || (x.index - y.index))
+        .map(({ file, only }) => ({ file, only })),
     }));
+}
+
+/** "Order in 3645493.pdf: pod1.pdf, pod2.pdf, scan.pdf (page 2)" for the test report. */
+function logOrder(name, entries) {
+  if (entries.length < 2) return;
+  const parts = entries.map(({ file, only }) => (only && file.pages && only.length < file.pages ? `${file.name} (${pagesLabel(only).toLowerCase()})` : file.name));
+  log(`Order in ${name}: ${parts.join(', ')}`);
 }
 
 /** What an email template does with stops and lumper receipts (t null: Save PDF and Blank email). */
@@ -949,7 +1079,7 @@ function stopNote(file) {
   if (!state.multiStop || !state.checked.has(file.id) || !file.pageStops) return null;
   const map = stopsOfFile(file);
   if (map.size < 2) return null;
-  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([stop, pages]) => `Stop ${stop}: ${pagesLabel(pages).toLowerCase()}`).join(' · ');
+  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([stop, pages]) => `${word('stop', { n: stop })}: ${pagesLabel(pages).toLowerCase()}`).join(' · ');
 }
 
 /** A stop picker (Stop 1…n). `mixed` adds a "By page" choice for a file split across stops. */
@@ -958,11 +1088,11 @@ function stopPicker(value, label, mixed, onPick) {
   select.className = 'stop-pick';
   select.setAttribute('aria-label', label);
   if (mixed) {
-    const option = new Option('By page', '', true, true);
+    const option = new Option(word('byPage'), '', true, true);
     option.disabled = true;
     select.append(option);
   }
-  for (let stop = 1; stop <= stopChoices(); stop++) select.append(new Option(`Stop ${stop}`, String(stop), false, !mixed && stop === value));
+  for (let stop = 1; stop <= stopChoices(); stop++) select.append(new Option(word('stop', { n: stop }), String(stop), false, !mixed && stop === value));
   select.disabled = state.busy;
   select.addEventListener('change', () => onPick(Number(select.value)));
   return select;
@@ -974,7 +1104,7 @@ function setFileStop(file, stop) {
   file.pageStops = null;
   state.built.clear();
   log(`Multi-stop: ${file.name} -> stop ${stop}`);
-  refreshRow(file);
+  refreshList();
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
 }
 
@@ -984,21 +1114,13 @@ function setPageStop(file, page, stop) {
   file.pageStops.set(page, stop);
   normalizePageStops(file);
   state.built.clear();
-  refreshRow(file);
+  refreshList();
   syncPreviewPages();
 }
 
 // --------------------------------------------------------------------------- lumper receipts: which files (or pages) they are
-
-/** The templates this person can use. */
-function emailTemplates() {
-  return [...teamTemplates(), ...(canMakeOwn() ? state.myTemplates : [])];
-}
-
-/** "Lumper receipt" tags show up once some template saves lumper receipts in their own file. */
-function lumperTagging() {
-  return emailTemplates().some((t) => t.lumperSeparate);
-}
+// Every checked file has a "Receipt" tag (WORDS.receipt). Tagged files and pages go after the PODs, or
+// into a file of their own for templates that want that.
 
 function pageLumperOf(file, page) {
   return file.pageLumper && file.pageLumper.has(page) ? file.pageLumper.get(page) : !!file.lumper;
@@ -1021,14 +1143,14 @@ function normalizePageLumper(file) {
   for (const [page, value] of [...file.pageLumper]) if (value === !!file.lumper) file.pageLumper.delete(page);
 }
 
-/** "Lumper receipt: page 3" for a file that's partly a lumper receipt, else null. */
+/** "Receipt: page 3" for a file that's partly a lumper receipt, else null. */
 function lumperNote(file) {
-  if (!lumperTagging() || !state.checked.has(file.id) || !file.pageLumper || !file.pageLumper.size) return null;
+  if (!state.checked.has(file.id) || !file.pageLumper || !file.pageLumper.size) return null;
   const pages = (allIncludedPages(file) || []).filter((p) => pageLumperOf(file, p));
-  return pages.length ? `Lumper receipt: ${pagesLabel(pages).toLowerCase()}` : null;
+  return pages.length ? word('receiptPages', { pages: pagesLabel(pages).toLowerCase() }) : null;
 }
 
-/** A "Lumper receipt" tag: a checkbox in a small pill. */
+/** A "Receipt" tag: a checkbox in a small pill. */
 function lumperChip(on, mixed, label, onToggle) {
   const chip = el('label', 'tag-chip');
   const box = document.createElement('input');
@@ -1039,7 +1161,7 @@ function lumperChip(on, mixed, label, onToggle) {
   box.setAttribute('aria-label', label);
   box.addEventListener('change', () => onToggle(box.checked));
   chip.classList.toggle('on', on || mixed);
-  chip.append(box, el('span', '', 'Lumper receipt'));
+  chip.append(box, el('span', '', word('receipt')));
   return chip;
 }
 
@@ -1048,8 +1170,10 @@ function setFileLumper(file, on) {
   file.lumper = on;
   file.pageLumper = null;
   state.built.clear();
-  log(`Lumper receipt: ${file.name} ${on ? 'yes' : 'no'}`);
-  refreshRow(file);
+  log(`Receipt: ${file.name} ${on ? 'yes' : 'no'}`);
+  const moved = normalizeOrder(); // a receipt moves below the PODs
+  refreshList();
+  if (moved) flashRow(file);
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
 }
 
@@ -1059,7 +1183,8 @@ function setPageLumper(file, page, on) {
   file.pageLumper.set(page, on);
   normalizePageLumper(file);
   state.built.clear();
-  refreshRow(file);
+  normalizeOrder(); // every page tagged makes it a whole-file receipt
+  refreshList();
   syncPreviewPages();
 }
 
@@ -1218,8 +1343,15 @@ async function mergeDuplicates(found) {
 
 // --------------------------------------------------------------------------- the list
 
+/** Every file, in the list's order: as they came (oldest first) until you move one. */
+function orderedFiles() {
+  if (!state.order) return state.files;
+  const rank = new Map(state.order.map((id, i) => [id, i]));
+  return [...state.files].sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : 1e9) - (rank.has(b.id) ? rank.get(b.id) : 1e9));
+}
+
 function visibleFiles() {
-  return state.files.filter((f) => state.showLogos || !f.smallLogo);
+  return orderedFiles().filter((f) => state.showLogos || !f.smallLogo);
 }
 
 function checkedFiles() {
@@ -1243,6 +1375,9 @@ function renderSummary() {
 }
 
 function renderList() {
+  if (drag) return; // redrawn when the drag ends
+  const spot = focusedSpot();
+  state.places = orderPlaces();
   const list = $('file-list');
   list.textContent = '';
   for (const file of visibleFiles()) list.append(fileRow(file));
@@ -1251,6 +1386,210 @@ function renderList() {
   $('logo-count').textContent = String(logos);
   $('show-logos').checked = state.showLogos;
   updateSelectionUi();
+  restoreFocus(spot);
+}
+
+// Redrawing the list keeps focus on the same control of the same file
+const ROW_CONTROLS = ['.order-grip', '.order-up', '.order-down', '.stop-pick', '.tag-chip input', '.file-label > input', '.eye'];
+
+function focusedSpot() {
+  const node = document.activeElement;
+  const row = node && node.closest ? node.closest('#file-list .file') : null;
+  if (!row) return null;
+  return { id: row.dataset.id, control: ROW_CONTROLS.find((s) => node.matches(s)) || '.file-label > input' };
+}
+
+function restoreFocus(spot) {
+  if (!spot) return;
+  const row = document.querySelector(`#file-list .file[data-id="${spot.id}"]`);
+  if (!row) return;
+  const target = [spot.control, '.order-grip', '.file-label > input'].map((s) => row.querySelector(s)).find((n) => n && !n.disabled);
+  if (target) target.focus();
+}
+
+// --------------------------------------------------------------------------- the order files go into the PDF
+
+/** 1st, 2nd, 3rd, 4th… */
+function ordinal(n) {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+}
+
+/**
+ * Each checked file's place in its PDF (1, 2, 3…, counted per stop with Multi-stop on), or none
+ * when fewer than two files are checked. The list keeps lumper receipts below the PODs, so these
+ * are simply the list's order.
+ */
+function orderPlaces() {
+  const places = new Map();
+  const checked = checkedFiles();
+  if (checked.length < 2) return places;
+  const counts = new Map();
+  for (const file of checked) {
+    const key = state.multiStop ? (file.stop || 1) : 0;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    places.set(file.id, counts.get(key));
+  }
+  return places;
+}
+
+/** Puts the checked files in this order, in the places checked files have now (the others stay put). */
+function setCheckedOrder(sorted) {
+  const ids = new Set(sorted.map((f) => f.id));
+  let k = 0;
+  state.order = orderedFiles().map((f) => (ids.has(f.id) ? sorted[k++].id : f.id));
+  state.built.clear();
+}
+
+/** Lumper receipts (whole files) go below the other checked files, keeping their own order. */
+function normalizeOrder() {
+  const checked = checkedFiles();
+  const sorted = [...checked.filter((f) => !f.lumper), ...checked.filter((f) => f.lumper)];
+  if (sorted.every((f, i) => f === checked[i])) return false;
+  setCheckedOrder(sorted);
+  return true;
+}
+
+/** The checked file a step up (-1) or down (1) that `file` can swap with: same stop, both PODs or both receipts. */
+function neighbor(file, step) {
+  const checked = checkedFiles();
+  const same = (f) => !!f.lumper === !!file.lumper && (!state.multiStop || (f.stop || 1) === (file.stop || 1));
+  for (let i = checked.indexOf(file) + step; i >= 0 && i < checked.length; i += step) {
+    if (same(checked[i])) return checked[i];
+  }
+  return null;
+}
+
+/** The up and down arrows (and the arrow keys on a file's handle). */
+function moveFile(file, step) {
+  const target = neighbor(file, step);
+  if (!target || state.busy) return;
+  const others = checkedFiles().filter((f) => f !== file);
+  others.splice(others.indexOf(target) + (step > 0 ? 1 : 0), 0, file);
+  setCheckedOrder(others);
+  log(`Order: ${file.name} ${step < 0 ? 'up' : 'down'}`);
+  renderList();
+  flashRow(file);
+  if (!$('name-form').hidden) updateNameHint();
+}
+
+/** A moment's highlight on a file that just moved, so it's easy to see where it went. */
+function flashRow(file) {
+  const row = document.querySelector(`#file-list .file[data-id="${file.id}"]`);
+  if (!row) return;
+  row.classList.remove('moved');
+  void row.offsetWidth; // restart the highlight
+  row.classList.add('moved');
+}
+
+/** A checked file's place in the PDF, its handle for dragging, and up / down arrows. */
+function orderControl(file, place) {
+  const wrap = el('span', 'order-ctl');
+  const where = state.multiStop ? `in stop ${file.stop || 1}'s PDF` : 'in the PDF';
+  const grip = el('button', 'order-grip');
+  grip.type = 'button';
+  grip.innerHTML = GRIP_SVG;
+  grip.append(el('span', 'order-n', String(place)));
+  grip.title = `${ordinal(place)} ${where}. Drag to move it.`;
+  grip.setAttribute('aria-label', `${file.name}, ${ordinal(place)} ${where}. Drag to move it, or press the up or down arrow key.`);
+  grip.disabled = state.busy;
+  grip.addEventListener('pointerdown', (event) => startDrag(event, file, grip));
+  grip.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    moveFile(file, event.key === 'ArrowUp' ? -1 : 1);
+  });
+  const arrow = (cls, svg, step, label) => {
+    const button = el('button', `order-step ${cls}`);
+    button.type = 'button';
+    button.innerHTML = svg;
+    button.title = label;
+    button.setAttribute('aria-label', `${label}: ${file.name}`);
+    button.dataset.edge = neighbor(file, step) ? 'no' : 'yes'; // nothing to swap with that way
+    button.disabled = state.busy || button.dataset.edge === 'yes';
+    button.addEventListener('click', () => moveFile(file, step));
+    return button;
+  };
+  wrap.append(grip, arrow('order-up', UP_SVG, -1, 'Move up'), arrow('order-down', DOWN_SVG, 1, 'Move down'));
+  return wrap;
+}
+
+// ---- dragging a file by its handle
+
+let drag = null; // { file, grip, row, rows, startY, scroll0, moved, index } while a handle is held
+
+function startDrag(event, file, grip) {
+  if (event.button !== 0 || state.busy || drag) return;
+  event.preventDefault(); // no text selection while dragging
+  grip.focus();
+  const row = grip.closest('.file');
+  drag = {
+    file, grip, row,
+    rows: [...document.querySelectorAll('#file-list .file.ordered')].filter((r) => r !== row),
+    startY: event.clientY,
+    scroll0: $('read-view').scrollTop,
+    moved: false,
+    index: null,
+  };
+  try { grip.setPointerCapture(event.pointerId); } catch (error) { /* moves still arrive */ }
+  grip.addEventListener('pointermove', onDragMove);
+  grip.addEventListener('pointerup', endDrag);
+  grip.addEventListener('pointercancel', endDrag);
+}
+
+function onDragMove(event) {
+  if (!drag) return;
+  const view = $('read-view');
+  const box = view.getBoundingClientRect();
+  if (event.clientY < box.top + 30) view.scrollTop -= 12; // keep going past the visible part of a long list
+  else if (event.clientY > box.bottom - 30) view.scrollTop += 12;
+  const dy = event.clientY - drag.startY + (view.scrollTop - drag.scroll0);
+  if (!drag.moved && Math.abs(dy) < 4) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    drag.row.classList.add('dragging');
+  }
+  drag.row.style.transform = `translateY(${dy}px)`;
+  let index = drag.rows.length; // lands before the first file whose middle is below the pointer
+  for (let i = 0; i < drag.rows.length; i++) {
+    const r = drag.rows[i].getBoundingClientRect();
+    if (event.clientY < r.top + r.height / 2) {
+      index = i;
+      break;
+    }
+  }
+  drag.index = index;
+  const line = $('drop-line');
+  const list = $('file-list').getBoundingClientRect();
+  const edge = index < drag.rows.length ? drag.rows[index].getBoundingClientRect().top : drag.rows[drag.rows.length - 1].getBoundingClientRect().bottom;
+  line.style.top = `${Math.round(edge - list.top) - 1}px`;
+  line.hidden = false;
+}
+
+function endDrag(event) {
+  if (!drag) return;
+  const { file, grip, row, rows, moved, index } = drag;
+  drag = null;
+  grip.removeEventListener('pointermove', onDragMove);
+  grip.removeEventListener('pointerup', endDrag);
+  grip.removeEventListener('pointercancel', endDrag);
+  try { grip.releasePointerCapture(event.pointerId); } catch (error) { /* already released */ }
+  row.classList.remove('dragging');
+  row.style.transform = '';
+  $('drop-line').hidden = true;
+  if (moved && index !== null && event.type === 'pointerup') {
+    const others = rows.map((r) => state.files.find((f) => f.id === Number(r.dataset.id))).filter(Boolean);
+    others.splice(index, 0, file);
+    setCheckedOrder(others);
+    normalizeOrder(); // receipts stay below the PODs
+    log(`Order: moved ${file.name}`);
+    if (!$('name-form').hidden) updateNameHint();
+  }
+  renderList();
+  const handle = document.querySelector(`#file-list .file[data-id="${file.id}"] .order-grip`);
+  if (handle) handle.focus();
+  if (moved) flashRow(file);
 }
 
 function fileRow(file) {
@@ -1273,11 +1612,11 @@ function fileRow(file) {
   text.append(nameRow, el('span', 'file-meta', metaLine(file)));
   if (!canCombine(file)) text.append(el('span', 'file-note', WHY_NOT[file.kind] || "Can't go into the PDF"));
   const note = stopNote(file) || pageNote(file);
-  if (note) text.append(el('span', 'file-note picked', note));
+  if (note) text.append(noteEl('file-note picked', note));
   const lumperLine = lumperNote(file);
-  if (lumperLine) text.append(el('span', 'file-note lumper', lumperLine));
+  if (lumperLine) text.append(noteEl('file-note lumper', lumperLine));
   const rcLine = rcNote(file);
-  if (rcLine) text.append(el('span', `file-note rc${rcLine.going ? '' : ' out'}`, rcLine.text)); // grey once it's not going in
+  if (rcLine) text.append(noteEl(`file-note rc${rcLine.going ? '' : ' out'}`, rcLine.text)); // grey once it's not going in
 
   // A small picture of the file, so a POD scan and a photo of the truck look different at a glance
   const thumb = el('span', 'thumb');
@@ -1294,24 +1633,27 @@ function fileRow(file) {
 
   const preview = document.createElement('button');
   preview.type = 'button';
-  preview.className = 'icon-btn';
+  preview.className = 'icon-btn eye';
   preview.title = 'Preview';
   preview.setAttribute('aria-label', `Preview ${file.name}`);
   preview.innerHTML = EYE_SVG;
   preview.addEventListener('click', () => openPreview(file.id));
   row.append(label);
-  // Which stop this file is, and whether it's a lumper receipt (outside the label, so using them
-  // doesn't tick the file's own box)
-  if (canCombine(file) && state.checked.has(file.id) && (state.multiStop || lumperTagging())) {
+  // Its place in the PDF, which stop it is, and whether it's a lumper receipt (outside the label,
+  // so using them doesn't tick the file's own box)
+  if (canCombine(file) && state.checked.has(file.id)) {
     const tags = el('div', 'row-tags');
+    const place = state.places.get(file.id);
+    if (place) {
+      row.classList.add('ordered');
+      tags.append(orderControl(file, place));
+    }
     if (state.multiStop) {
       const mixed = !!(file.pageStops && file.pageStops.size);
       tags.append(stopPicker(file.stop || 1, `Stop for ${file.name}`, mixed, (stop) => setFileStop(file, stop)));
     }
-    if (lumperTagging()) {
-      const mixed = !!(file.pageLumper && file.pageLumper.size);
-      tags.append(lumperChip(!!file.lumper, mixed, `${file.name} is a lumper receipt`, (on) => setFileLumper(file, on)));
-    }
+    const mixed = !!(file.pageLumper && file.pageLumper.size);
+    tags.append(lumperChip(!!file.lumper, mixed, `${file.name}: ${word('receipt')}`, (on) => setFileLumper(file, on)));
     row.append(tags);
   }
   row.append(preview);
@@ -1332,7 +1674,7 @@ function updateSelectionUi() {
   all.indeterminate = count > 0 && count < selectable.length;
   const stops = state.multiStop ? stopsInUse().size : 0;
   $('selected-count').textContent = selectable.length
-    ? `${count} of ${selectable.length} selected${stops ? ` · ${plural(stops, 'stop')}` : ''}`
+    ? `${word('selected', { n: count, total: selectable.length })}${stops ? ` · ${plural(stops, 'stop')}` : ''}`
     : 'Nothing here can go into a PDF';
   $('multi-stop').checked = state.multiStop;
   $('multi-stop').disabled = state.busy;
@@ -1347,7 +1689,8 @@ function updateSelectionUi() {
     box.disabled = state.busy || !canCombine(file);
     box.checked = state.checked.has(file.id);
   }
-  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .tag-chip input, #pv-body .tag-chip input')) pick.disabled = state.busy;
+  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .tag-chip input, #pv-body .tag-chip input, #file-list .order-grip')) pick.disabled = state.busy;
+  for (const button of document.querySelectorAll('#file-list .order-step')) button.disabled = state.busy || button.dataset.edge === 'yes';
   if (!$('preview').hidden) syncPreviewInclude();
   // The open name box or create-email step lists the files it will make
   if (!$('name-form').hidden) updateNameHint();
@@ -1361,26 +1704,20 @@ function setChecked(id, on) {
   else state.checked.delete(id);
   if (on && state.multiStop && file) assignStop(file);
   state.built.clear();
+  normalizeOrder(); // a receipt that's ticked again goes back below the PODs
   updateSelectionUi();
 }
 
 /** Ticking a file by hand (in the list or the preview). Page picks are kept. */
 function onRowToggle(file, on) {
   setChecked(file.id, on);
-  refreshRow(file);
+  refreshList();
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
 }
 
-function refreshRow(file) {
-  const row = document.querySelector(`#file-list .file[data-id="${file.id}"]`);
-  if (row) {
-    const focused = row.contains(document.activeElement) ? document.activeElement : null;
-    const fresh = fileRow(file);
-    row.replaceWith(fresh);
-    const same = focused && (focused.matches('.stop-pick') ? '.stop-pick' : focused.closest('.tag-chip') ? '.tag-chip input' : '.file-label > input');
-    if (focused) (fresh.querySelector(same) || fresh.querySelector('.file-label > input')).focus();
-  }
-  updateSelectionUi();
+/** Redraws the list after a file changes: that can move other files or change their places. */
+function refreshList() {
+  renderList();
 }
 
 // --------------------------------------------------------------------------- rate confirmation check
@@ -1604,6 +1941,19 @@ function cleanRateCon(value) {
   return pages.length ? { v: 1, name: String(value.name || 'rate confirmation').slice(0, 120), saved: Number(value.saved) || 0, pages } : null;
 }
 
+/** The numbers printed under barcodes on a page, like *AXLL-3668149* (the text between the asterisks). */
+function barcodeNumbers(text) {
+  const found = new Set();
+  for (const match of String(text || '').matchAll(/\*\s?([A-Z0-9][A-Z0-9.\/-]{4,30}[A-Z0-9])\s?\*/gi)) {
+    const code = match[1].toUpperCase();
+    if (!/\d{4}/.test(code)) continue;
+    if (/^\d{1,4}[\/.-]\d{1,2}[\/.-]\d{1,4}$/.test(code)) continue; // a date, like *10/16/2026*
+    if (/^\d{3}[.-]\d{3}[.-]\d{4}$/.test(code)) continue;          // a phone number
+    found.add(code);
+  }
+  return [...found];
+}
+
 /** Checks one file's pages against the sample. Marks file.rcPages (0-based pages that look like it). */
 async function checkFileForRateCon(file, sample, token) {
   const found = new Set();
@@ -1622,19 +1972,43 @@ async function checkFileForRateCon(file, sample, token) {
     }
     try {
       file.pages = doc.numPages;
+      const codes = []; // the numbers printed under barcodes on each page
       for (let p = 1; p <= Math.min(doc.numPages, RC.maxPages); p++) {
         if (token !== state.loadToken) return;
         const page = await doc.getPage(p);
         const text = await pageText(page);
         const words = wordSet(text);
+        codes.push(barcodeNumbers(text));
         let hit;
-        if (/rate\s+confirmation/i.test(text)) hit = judge(`p${p} says "rate confirmation"`, 1, 0.5);
-        else if (words.size >= RC.minWords) hit = judge(`p${p} text`, textLikeness(words, sample), RC.textMatch);
-        else if (words.size >= RC.scanWords) hit = judge(`p${p} few words`, 0, 1); // a sparse digital page
-        else hit = judge(`p${p} layout`, layoutLikeness(await pageGrid(page), sample), RC.layoutMatch);
+        const named = /\b(rate|load)\s+confirmation\b/i.exec(text); // not "Download confirmation"
+        if (named) {
+          hit = judge(`p${p} says "${named[0].toLowerCase().replace(/\s+/, ' ')}"`, 1, 0.5);
+        } else {
+          // Words and layout both count, whichever is closer: a sample made from pictures of pages has
+          // no words to compare, and the words a scanner app reads off a page often come out garbled
+          const byText = words.size >= RC.minWords ? textLikeness(words, sample) : 0;
+          let byLayout = -1;
+          try {
+            byLayout = layoutLikeness(await pageGrid(page), sample);
+          } catch (error) {
+            scores.push(`p${p} couldn't be drawn (${error.message})`); // its words still count
+          }
+          hit = byText >= RC.textMatch || byLayout >= RC.layoutMatch;
+          scores.push(`p${p} text ${byText.toFixed(2)} layout ${byLayout.toFixed(2)}${hit ? ' ⚑' : ''}`);
+        }
         page.cleanup();
         if (hit) found.add(p - 1);
       }
+      // A page with the same barcode number as a flagged page is part of the same rate con
+      const flagged = new Set();
+      for (const i of found) for (const code of codes[i]) flagged.add(code);
+      codes.forEach((list, i) => {
+        if (found.has(i)) return;
+        const shared = list.find((code) => flagged.has(code));
+        if (!shared) return;
+        found.add(i);
+        scores.push(`p${i + 1} has the same barcode as a flagged page (${shared}) ⚑`);
+      });
     } finally {
       closePdf(doc);
     }
@@ -1672,7 +2046,7 @@ async function checkRateCons(token) {
         log(`Rate con check: couldn't check ${file.name} (${error.message})`);
       }
       if (token !== state.loadToken) return;
-      if (file.rcPages && file.rcPages.size) refreshRow(file);
+      if (file.rcPages && file.rcPages.size) refreshList();
       else updateSelectionUi();
       if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1728,7 +2102,7 @@ function rcNote(file) {
   if (!flags) return null;
   const which = rcPagesText(file, [...flags]);
   const going = state.checked.has(file.id) && (file.kind !== 'PDF' || (allIncludedPages(file) || [...flags]).some((p) => flags.has(p)));
-  return { text: `Looks like a rate confirmation${which ? `: ${which}` : ''}`, going };
+  return { text: `${word('looksLikeRateCon')}${which ? `: ${which}` : ''}`, going };
 }
 
 /** Shows (or hides) the warning above the buttons. */
@@ -1745,7 +2119,7 @@ function renderRcBanner(problems) {
   $('rc-banner-text').textContent = many
     ? `These look like rate confirmations: ${list.join(', ')}. They have to come out before you email or save.`
     : `This looks like a rate confirmation: ${list[0]}. It has to come out before you email or save.`;
-  $('rc-leave-out').textContent = many ? 'Leave them out' : 'Leave it out';
+  $('rc-leave-out').textContent = word(many ? 'leaveThemOut' : 'leaveItOut');
 }
 
 /** "Leave it out": unticks the flagged pages (or the whole file). */
@@ -1800,8 +2174,9 @@ async function onUseRateConSample() {
     const sample = await rateConSample(file);
     if (!sample.pages.some((page) => page.words || page.grid)) throw userError("nothing could be read from this file");
     await saveTeamDraft({ rateCon: sample });
-    log(`Rate con check: sample set from ${file.name} (${plural(sample.pages.length, 'page')}), not published yet`);
-    button.textContent = 'Saved as the sample. Publish it in Manage templates.';
+    const readable = sample.pages.filter((page) => page.words.split(' ').filter(Boolean).length >= 10).length;
+    log(`Rate con check: sample set from ${file.name} (${plural(sample.pages.length, 'page')}, readable text on ${readable}), not published yet`);
+    button.textContent = `Saved as the sample (${plural(sample.pages.length, 'page')}${readable ? '' : ', pictures of pages, so it\'s matched by layout'}). Publish it in Manage templates.`;
     recheckRateCons();
   } catch (error) {
     button.textContent = `Couldn't use it: ${error.userMessage || error.message}`;
@@ -1947,7 +2322,7 @@ async function openPreview(id) {
   $('pv-pages').textContent = '';
   const sampleButton = $('pv-rc-sample');
   sampleButton.hidden = !(isAdmin() && file.kind === 'PDF' && file.bytes);
-  sampleButton.textContent = 'Use as rate con sample';
+  sampleButton.textContent = word('useAsRcSample');
   syncPreviewInclude();
   updatePreviewNav();
 
@@ -1998,7 +2373,7 @@ function syncPreviewInclude() {
   const box = $('pv-include');
   box.disabled = state.busy || !canCombine(file);
   box.checked = state.checked.has(file.id);
-  $('pv-include-label').textContent = canCombine(file) ? 'Include in PDF' : (WHY_NOT[file.kind] || "Can't go into the PDF");
+  $('pv-include-label').textContent = canCombine(file) ? word('includeInPdf') : (WHY_NOT[file.kind] || "Can't go into the PDF");
 }
 
 async function previewPdf(file, body, token, waiting) {
@@ -2047,9 +2422,9 @@ function pageHolder(file, index, canvas) {
   pick.className = 'stop-pick';
   pick.setAttribute('aria-label', `Stop for page ${index + 1}`);
   pick.addEventListener('change', () => setPageStop(file, index, Number(pick.value)));
-  const chip = lumperChip(false, false, `Page ${index + 1} is a lumper receipt`, (on) => setPageLumper(file, index, on));
+  const chip = lumperChip(false, false, `Page ${index + 1}: ${word('receipt')}`, (on) => setPageLumper(file, index, on));
   const tags = el('div', 'pv-page-tags');
-  const badge = el('span', 'rc-badge', 'Rate con?');
+  const badge = el('span', 'rc-badge', word('rateConBadge'));
   badge.title = 'This page looks like a rate confirmation';
   tags.append(badge, pick, chip);
   top.append(bar, tags);
@@ -2075,7 +2450,7 @@ function syncPageHolder(holder, file) {
     const choices = stopChoices();
     if (pick.options.length !== choices) {
       pick.textContent = '';
-      for (let stop = 1; stop <= choices; stop++) pick.append(new Option(`Stop ${stop}`, String(stop)));
+      for (let stop = 1; stop <= choices; stop++) pick.append(new Option(word('stop', { n: stop }), String(stop)));
     }
     pick.value = String(pageStopOf(file, index));
   }
@@ -2083,7 +2458,7 @@ function syncPageHolder(holder, file) {
   holder.querySelector('.rc-badge').hidden = !(flags && flags.has(index));
   const chip = holder.querySelector('.tag-chip');
   const lumper = pageLumperOf(file, index);
-  chip.hidden = !(lumperTagging() && box.checked);
+  chip.hidden = !box.checked;
   chip.classList.toggle('on', lumper);
   chip.querySelector('input').checked = lumper;
   chip.querySelector('input').disabled = state.busy;
@@ -2125,7 +2500,7 @@ function onPreviewPageToggle(file) {
   normalizePageStops(file);
   normalizePageLumper(file);
   state.built.clear();
-  refreshRow(file);
+  refreshList();
   syncPreviewPages();
 }
 
@@ -2173,8 +2548,9 @@ function loadPdfJs() {
 
 async function openPdf(bytes) {
   const pdfjs = await loadPdfJs();
-  // PDF.js takes ownership of the buffer it's given, so hand it a copy.
-  const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false });
+  // PDF.js takes ownership of the buffer it's given, so hand it a copy. wasmUrl is where its
+  // decoders for fax/JBIG2 and JPEG 2000 scans are: without them those pages draw blank.
+  const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false, wasmUrl: new URL('./wasm/', import.meta.url).href });
   try {
     return await task.promise;
   } catch (error) {
@@ -2182,6 +2558,21 @@ async function openPdf(bytes) {
     if (error && error.name === 'PasswordException') throw userError('needs a password to open');
     throw userError("couldn't be read - the file may be damaged");
   }
+}
+
+/**
+ * How a PDF's page images are compressed, for the test report: "fax (CCITT), JPEG 2000"…, or ''
+ * for none of the scanner formats. Image dictionaries are never inside compressed object
+ * streams, so their /Filter names can be found in the raw bytes.
+ */
+function scanFormats(bytes) {
+  const text = new TextDecoder('latin1').decode(bytes.length > 40 * MB ? bytes.subarray(0, 40 * MB) : bytes);
+  const found = [];
+  if (/\/CCITTFaxDecode\b/.test(text)) found.push('fax (CCITT)');
+  if (/\/JBIG2Decode\b/.test(text)) found.push('JBIG2');
+  if (/\/JPXDecode\b/.test(text)) found.push('JPEG 2000');
+  if (/\/DCTDecode\b/.test(text)) found.push('JPEG');
+  return found.join(', ');
 }
 
 function closePdf(doc) {
@@ -2418,8 +2809,8 @@ async function buildPdf(entries, label) {
   let bytes = null;
   if (pages) {
     if (state.topic) out.setTitle(state.topic);
-    out.setCreator('Thread Attachments');
-    out.setProducer(`Thread Attachments ${VERSION}`);
+    out.setCreator('Restack');
+    out.setProducer(`Restack ${VERSION}`);
     bytes = await out.save();
   }
   const result = { bytes, pages, skipped };
@@ -2452,10 +2843,12 @@ async function withBusy(task) {
   }
 }
 
+/** Save PDF's one file: the checked files in the list's order, lumper receipts last. */
 async function combineChecked() {
-  const files = checkedFiles();
-  if (!files.length) return null;
-  const result = await buildPdf(files.map((file) => ({ file, only: null })));
+  const [group] = fileGroups(false, false);
+  if (!group) return null;
+  logOrder(pdfName(), group.entries);
+  const result = await buildPdf(group.entries);
   if (!result.pages) {
     setStatus(`None of the checked files could go into a PDF.${leftOutText(result)}`, 'error');
     return null;
@@ -2466,20 +2859,21 @@ async function combineChecked() {
 /**
  * The files to email or save. `layout` says whether stops and lumper receipts get files of their
  * own: base-1.pdf, base-2.pdf… per stop (whatever their size), and lumperStem.pdf (or
- * lumperStem-1.pdf… per stop) for lumper receipts. A single POD PDF is split by `splitMb` instead.
+ * lumperStem-1.pdf… per stop) for lumper receipts. A single POD PDF over 10 MB is split into -1, -2… instead.
  * Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
  */
-async function makeFiles(base, splitMb, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
+async function makeFiles(base, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
   const files = [];
   const skipped = [];
-  for (const group of fileGroups(layout.splitStops, layout.splitLumpers)) {
-    const label = `${group.lumper ? 'Lumper receipt' : group.stop ? 'Stop' : ''}${group.stop ? ` ${group.stop}` : ''}`;
+  for (const group of fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts)) {
+    const label = [group.lumper ? word('receipt') : '', group.stop ? word('stop', { n: group.stop }) : ''].filter(Boolean).join(', ');
     const result = await buildPdf(group.entries, label);
     skipped.push(...result.skipped);
     if (!result.pages) continue;
     const stem = `${group.lumper ? lumperStem : base}${group.stop ? `-${group.stop}` : ''}`;
+    logOrder(`${stem}.pdf`, group.entries);
     if (!group.lumper && !group.stop) {
-      for (const part of await splitIntoFiles(result.bytes, stem, splitMb)) files.push({ ...part, pages: part.pages || result.pages });
+      for (const part of await splitIntoFiles(result.bytes, stem)) files.push({ ...part, pages: part.pages || result.pages });
     } else {
       files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, lumper: group.lumper, over: false });
     }
@@ -2488,8 +2882,7 @@ async function makeFiles(base, splitMb, layout = layoutOf(null), lumperStem = `$
     setStatus(`None of the checked files could go into a PDF.${leftOutText({ skipped })}`, 'error');
     return null;
   }
-  const limit = splitMb > 0 ? Math.floor(splitMb * MB) : 0;
-  for (const file of files) if (file.stop || file.lumper) file.over = !!limit && file.bytes.length > limit;
+  for (const file of files) if (file.stop || file.lumper) file.over = file.bytes.length > SPLIT_LIMIT; // these aren't split by size
   if (layout.splitStops || layout.splitLumpers) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
   return { files, skipped, pages: files.reduce((sum, f) => sum + (f.pages || 0), 0) };
 }
@@ -2507,7 +2900,7 @@ async function onSave() {
     setStatus(blocked, 'error');
     return;
   }
-  if (typeof window.showSaveFilePicker === 'function' && readSetting('saveDialog') === 'works' && !state.saveSplitMb && !state.multiStop) {
+  if (typeof window.showSaveFilePicker === 'function' && readSetting('saveDialog') === 'works' && !state.multiStop && likelyOneFile()) {
     const picked = await pickSaveLocation(pdfName());
     if (picked.cancelled) return;
     if (picked.handle) {
@@ -2526,16 +2919,14 @@ function showNameForm() {
   updateSelectionUi();
   const input = $('file-name');
   input.value = pdfName().replace(/\.pdf$/i, '');
-  $('save-split').value = state.saveSplitMb ? String(state.saveSplitMb) : '';
   updateNameHint();
   input.focus();
   input.select();
 }
 
-/** With Multi-stop on, the name box says which files it will save (no size split then). */
+/** With Multi-stop on, the name box says which files it will save. */
 function updateNameHint() {
   const hint = $('name-hint');
-  $('save-split-row').hidden = state.multiStop;
   hint.hidden = !state.multiStop;
   if (!state.multiStop) return;
   const base = cleanFileName($('file-name').value) || pdfName().replace(/\.pdf$/i, '');
@@ -2558,16 +2949,11 @@ function onNameSubmit(event) {
     return;
   }
   state.fileName = cleanFileName($('file-name').value);
-  const splitMb = parseSplitMb($('save-split').value);
-  if (splitMb !== state.saveSplitMb) {
-    state.saveSplitMb = splitMb;
-    writeRoaming('saveSplitMb', splitMb || null).catch(() => {});
-  }
   hideNameForm();
   const name = pdfName();
-  log(`Save: named ${name}${state.multiStop ? ', one file per stop' : splitMb ? `, split over ${splitMb} MB` : ''}`);
-  if (state.multiStop || splitMb) {
-    saveFiles(name, state.multiStop ? 0 : splitMb).catch(fail);
+  log(`Save: named ${name}${state.multiStop ? ', one file per stop' : ''}`);
+  if (state.multiStop || !likelyOneFile()) {
+    saveFiles(name).catch(fail); // downloads: one file per stop, or -1, -2… over 10 MB
     return;
   }
   // Straight from the click, so the browser lets Windows' Save As window open if it can.
@@ -2578,12 +2964,16 @@ function onNameSubmit(event) {
 
 /**
  * Save PDF as downloads: one file per stop with Multi-stop on; otherwise one file, or name-1.pdf,
- * name-2.pdf… when it's over the size limit.
+ * name-2.pdf… when it's over 10 MB.
  */
-async function saveFiles(name, splitMb) {
-  const result = await withBusy(() => makeFiles(name.replace(/\.pdf$/i, ''), splitMb));
+async function saveFiles(name) {
+  const result = await withBusy(() => makeFiles(name.replace(/\.pdf$/i, '')));
   if (!result) return;
-  const { files } = result;
+  await startDownloads(result.files, result);
+}
+
+/** Downloads the files (a short pause between them) and says so. `lead` goes before the message. */
+async function startDownloads(files, result, lead = '') {
   try {
     for (let i = 0; i < files.length; i++) {
       downloadBytes(files[i].bytes, files[i].name);
@@ -2598,7 +2988,7 @@ async function saveFiles(name, splitMb) {
   const what = files.length === 1
     ? `Downloading ${files[0].name} (${plural(files[0].pages || result.pages, 'page')}) to your Downloads folder.`
     : `Downloading ${files.length} files to your Downloads folder: ${files.map((f) => f.name).join(', ')}. If Outlook asks about downloading multiple files, choose Allow.`;
-  setStatus(`${what}${oversizeNote(files, splitMb)}${leftOutText(result)}`, 'ok');
+  setStatus(`${lead}${what}${oversizeNote(files)}${leftOutText(result)}`, 'ok');
   if (files.length > 1) showParts(files);
 }
 
@@ -2629,10 +3019,38 @@ async function pickSaveLocation(name) {
   }
 }
 
-/** Builds the PDF and writes it: into the file picked in Save As, or as a download. */
+/**
+ * Whether Save PDF will most likely make one file (under 10 MB), judging by the checked files' sizes,
+ * so Windows' Save As window can be used. Fax scans grow when they become PDF pages, so they count extra.
+ */
+function likelyOneFile() {
+  let bytes = 0;
+  for (const file of checkedFiles()) bytes += (file.size || 0) * (file.kind === 'TIFF' ? 8 : 1);
+  return bytes < SPLIT_MB * 0.8 * MB;
+}
+
+/** Builds the PDF and writes it: into the file picked in Save As, or as a download (split if over 10 MB). */
 async function finishSave(handle, name) {
   const result = await withBusy(combineChecked);
   if (!result) return;
+  if (result.bytes.length > SPLIT_LIMIT) {
+    // Over 10 MB: Save As can only make the one file, so the parts go to Downloads instead
+    let lead = '';
+    if (handle) {
+      const picked = handle.name || name;
+      name = picked;
+      lead = `It came out at ${mbText(result.bytes.length)}, over ${SPLIT_MB} MB, so it's in parts in Downloads instead of where you picked. `;
+      try {
+        // Save As may have made an empty file there already (it's left alone: it could be one you had)
+        if ((await handle.getFile()).size === 0) lead += `You can delete the empty ${picked} there. `;
+      } catch (error) {
+        // can't tell; say nothing
+      }
+      log(`Save dialog: ${picked} came out at ${mbText(result.bytes.length)}, saving it in parts instead`);
+    }
+    await downloadParts(result, name, lead);
+    return;
+  }
 
   if (handle) {
     try {
@@ -2651,13 +3069,20 @@ async function finishSave(handle, name) {
     }
   }
   try {
-    downloadBytes(result.bytes, name);
+    downloadBytes(result.bytes, name); // (under 10 MB: bigger ones were split above)
     log(`Download: started as ${name}. Check whether it showed up in Downloads.`);
     setStatus(`Downloading ${name} (${plural(result.pages, 'page')}) to your Downloads folder.${leftOutText(result)}`, 'ok');
   } catch (error) {
     log(`Download: failed (${error.name}: ${error.message})`);
     setStatus("Saving isn't possible here. Use Email instead.", 'error');
   }
+}
+
+/** A built PDF over 10 MB, saved as name-1.pdf, name-2.pdf… downloads. */
+async function downloadParts(result, name, lead = '') {
+  const files = await withBusy(() => splitIntoFiles(result.bytes, name.replace(/\.pdf$/i, '')));
+  if (!files) return;
+  await startDownloads(files, result, lead);
 }
 
 function downloadBytes(bytes, name) {
@@ -2693,9 +3118,9 @@ function templateSub(t) {
   return `${recipientsText(t) || 'No recipients set'}${n ? ` · ${plural(n, 'question')}` : ''}`;
 }
 
-/** Every email's subject, whatever the template: "3645493 POD(s)". */
+/** Every email's subject, whatever the template: "3645493 POD(s)" (WORDS.subject). */
 function emailSubject(load) {
-  return `${String(load || '').trim()} POD(s)`.slice(0, 255);
+  return word('subject', { load: String(load || '').trim() }).trim().slice(0, 255);
 }
 
 /** The PDF's name for an email, without .pdf: the template's PDF name, or just the load number. */
@@ -2711,12 +3136,13 @@ function lumperBase(t, load) {
 }
 
 /** The files an email will get, named before anything is built (for the hint under the load number). */
-function plannedFiles(base, splitMb, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
-  const groups = fileGroups(layout.splitStops, layout.splitLumpers);
+function plannedFiles(base, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
+  const groups = fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts);
   if (!groups.length) return { names: [`${base}${layout.splitStops ? '-1' : ''}.pdf`], note: layout.splitStops ? '…' : '' };
   const names = groups.map((g) => `${g.lumper ? lumperStem : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
-  let note = splitMb && groups.some((g) => !g.stop && !g.lumper) ? ` (split over ${splitMb} MB)` : '';
-  if (layout.splitLumpers && !groups.some((g) => g.lumper)) note += ' · no lumper receipt tagged';
+  let note = '';
+  if (groups.some((g) => !g.stop && !g.lumper) && !likelyOneFile()) note += ` (split into -1, -2… if it's over ${SPLIT_MB} MB)`;
+  if (layout.splitLumpers && !layout.noReceipts && !groups.some((g) => g.lumper)) note += ` · no ${word('receipt').toLowerCase()} tagged`;
   return { names, note };
 }
 
@@ -2744,17 +3170,20 @@ function escapeHtml(text) {
 }
 
 /** The new email's message: the template's text, then any accessorials. '' when there's neither. */
-function bodyHtml(text, acc, t) {
+function bodyHtml(text, acc, t, lines = true) {
   const parts = [];
   if (String(text || '').trim()) parts.push(escapeHtml(String(text).slice(0, 30000)).replace(/\r?\n/g, '<br>'));
-  const extra = accessorialHtml(acc, t);
+  const extra = accessorialHtml(acc, t, lines);
   if (extra) parts.push(extra);
   if (!parts.length) return '';
   return `<div style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;">${parts.join('<br><br>')}</div>`;
 }
 
-/** The new email's To, CC, subject and message from a template (or a blank email when t is null). */
-function emailFields(t, load, acc) {
+/**
+ * The new email's To, CC, subject and message from a template (or a blank email when t is null).
+ * lines false: the accessorials are left out (they go in their own email).
+ */
+function emailFields(t, load, acc, lines = true) {
   const form = { subject: emailSubject(load) };
   if (t) {
     const to = parseAddresses(fill(t.to, load));
@@ -2762,9 +3191,68 @@ function emailFields(t, load, acc) {
     if (to.length) form.toRecipients = to.slice(0, 100);
     if (cc.length) form.ccRecipients = cc.slice(0, 100);
   }
-  const html = bodyHtml(t ? fill(t.body, load) : '', acc, t);
+  const html = bodyHtml(t ? fill(t.body, load) : '', acc, t, lines);
   if (html) form.htmlBody = html;
   return form;
+}
+
+// ---- the separate accessorial email (a template setting)
+
+/** The ticked accessorials' names, in the form's order: Detention, Lumper, then Other's typed type. */
+function accessorialTypes(acc) {
+  if (!acc) return [];
+  const types = [];
+  if (acc.det.on) types.push(word('detention'));
+  if (acc.lum.on) types.push(word('lumper'));
+  if (acc.oth.on) types.push(String(acc.oth.type || '').trim() || word('other'));
+  return types;
+}
+
+/** Whether Create email makes two emails: the template says so and an accessorial is ticked. */
+function separateAccessorials(t, acc) {
+  return !!(t && t.accSeparate && accessorialTypes(acc).length);
+}
+
+/** "3645493 - Detention/Lumper Request" */
+function accessorialSubject(load, acc) {
+  return word('accessorialSubject', { load: String(load || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
+}
+
+/** The accessorial email's To and CC: the template's, or the POD email's where those are blank. */
+function accessorialRecipients(t, load) {
+  const to = parseAddresses(fill(t.accTo, load));
+  const cc = parseAddresses(fill(t.accCc, load));
+  return {
+    to: (to.length ? to : parseAddresses(fill(t.to, load))).slice(0, 100),
+    cc: (cc.length ? cc : parseAddresses(fill(t.cc, load))).slice(0, 100),
+  };
+}
+
+/** The accessorial email: its To, CC, subject, and a message with the accessorials' details. */
+function accessorialFields(t, load, acc) {
+  const form = { subject: accessorialSubject(load, acc) };
+  const { to, cc } = accessorialRecipients(t, load);
+  if (to.length) form.toRecipients = to;
+  if (cc.length) form.ccRecipients = cc;
+  const types = accessorialTypes(acc).join('/');
+  const intro = String(t.accBody || '').trim()
+    ? fill(t.accBody, load).replace(/\{types\}/gi, types)
+    : word('accessorialIntro', { types, load: String(load || '').trim() });
+  form.htmlBody = bodyHtml(intro, acc, null); // (No Lumper stays with the POD email)
+  return form;
+}
+
+/** Whether any checked file (or page) is tagged Receipt, and whether anything else is. */
+function receiptMix() {
+  let receipts = false;
+  let pods = false;
+  for (const file of checkedFiles()) {
+    for (const part of partsOfFile(file)) {
+      if (part.lumper) receipts = true;
+      else pods = true;
+    }
+  }
+  return { receipts, pods };
 }
 
 // ---- accessorials (Detention, Lumper, Other) for the email body
@@ -2813,9 +3301,9 @@ function syncAccessorialBoxes() {
  * use instead, as "Receiver (Stop 2)", which is also how the email body says it.
  */
 function atChoices() {
-  if (!state.multiStop) return ['Shipper', 'Receiver'];
+  if (!state.multiStop) return [word('shipper'), word('receiver')];
   const stops = [...stopsInUse()].sort((a, b) => a - b);
-  return ['Shipper', ...(stops.length ? stops.map((stop) => `Receiver (Stop ${stop})`) : ['Receiver'])];
+  return [word('shipper'), ...(stops.length ? stops.map((stop) => word('receiverAtStop', { n: stop })) : [word('receiver')])];
 }
 
 /** Brings the three Shipper/Receiver drop-downs in line with the stops, keeping each pick that's still there. */
@@ -2829,7 +3317,7 @@ function syncAtChoices() {
       select.length = 1; // keep the "Shipper or receiver?" prompt
       for (const choice of choices) select.append(new Option(choice, choice));
     }
-    select.options[0].textContent = state.multiStop ? 'Shipper or which stop?' : 'Shipper or receiver?';
+    select.options[0].textContent = word(state.multiStop ? 'shipperOrStop' : 'shipperOrReceiver');
     select.value = choices.includes(current) ? current : '';
     select.classList.toggle('empty', !select.value);
   }
@@ -2845,13 +3333,13 @@ function money(text) {
 
 /** [field id, message] for the first thing to fix, or null. */
 function accessorialProblem(acc) {
-  const where = state.multiStop ? 'Shipper or a stop' : 'Shipper or Receiver';
-  if (acc.det.on && !acc.det.at) return ['det-at', `Pick ${where} for Detention.`];
-  if (acc.lum.on && !acc.lum.at) return ['lum-at', `Pick ${where} for Lumper.`];
-  if (acc.lum.on && money(acc.lum.total) === null) return ['lum-total', 'The lumper total should be an amount, like 350.00.'];
-  if (acc.oth.on && !acc.oth.at) return ['oth-at', `Pick ${where} for Other.`];
-  if (acc.oth.on && !acc.oth.type) return ['oth-type', 'Type what the other accessorial is.'];
-  if (acc.oth.on && money(acc.oth.total) === null) return ['oth-total', 'The other total should be an amount, like 75.00.'];
+  const where = state.multiStop ? `${word('shipper')} or a stop` : `${word('shipper')} or ${word('receiver')}`;
+  if (acc.det.on && !acc.det.at) return ['det-at', `Pick ${where} for ${word('detention')}.`];
+  if (acc.lum.on && !acc.lum.at) return ['lum-at', `Pick ${where} for ${word('lumper')}.`];
+  if (acc.lum.on && money(acc.lum.total) === null) return ['lum-total', `The ${word('lumper')} ${word('total').toLowerCase()} should be an amount, like 350.00.`];
+  if (acc.oth.on && !acc.oth.at) return ['oth-at', `Pick ${where} for ${word('other')}.`];
+  if (acc.oth.on && !acc.oth.type) return ['oth-type', `Type what the ${word('other').toLowerCase()} accessorial is.`];
+  if (acc.oth.on && money(acc.oth.total) === null) return ['oth-total', `The ${word('other')} ${word('total').toLowerCase()} should be an amount, like 75.00.`];
   return null;
 }
 
@@ -2859,7 +3347,7 @@ function accessorialProblem(acc) {
  * The ticked accessorials as lines for the email body (blank entries are left out). A template
  * set to say "No Lumper" gets that line when Lumper isn't ticked.
  */
-function accessorialHtml(acc, t) {
+function accessorialHtml(acc, t, lines = true) {
   if (!acc) acc = emptyAccessorials();
   const blocks = [];
   const add = (title, at, entries) => {
@@ -2867,10 +3355,11 @@ function accessorialHtml(acc, t) {
     for (const [name, value] of entries) if (value) lines.push(`${escapeHtml(name)}: ${escapeHtml(value)}`);
     blocks.push(lines.join('<br>'));
   };
-  if (acc.det.on) add('Detention', acc.det.at, [['IN', acc.det.in], ['APPT', acc.det.appt], ['OUT', acc.det.out], ['Hours requested', acc.det.hours]]);
-  if (acc.lum.on) add('Lumper', acc.lum.at, [['Total', money(acc.lum.total)]]);
-  else if (t && t.noLumper) blocks.push('<b>No Lumper</b>');
-  if (acc.oth.on) add('Other', acc.oth.at, [['Type', acc.oth.type], ['Total', money(acc.oth.total)]]);
+  if (lines && acc.det.on) add(word('detention'), acc.det.at, [[word('timeIn'), acc.det.in], [word('appointment'), acc.det.appt], [word('timeOut'), acc.det.out], [word('hoursRequested'), acc.det.hours]]);
+  if (acc.lum.on) {
+    if (lines) add(word('lumper'), acc.lum.at, [[word('total'), money(acc.lum.total)]]);
+  } else if (t && t.noLumper) blocks.push(`<b>No ${escapeHtml(word('lumper'))}</b>`);
+  if (lines && acc.oth.on) add(word('other'), acc.oth.at, [[word('otherType'), acc.oth.type], [word('total'), money(acc.oth.total)]]);
   return blocks.join('<br><br>');
 }
 
@@ -2878,8 +3367,8 @@ function accessorialHtml(acc, t) {
 function accessorialSummary(acc) {
   if (!acc) return '';
   const parts = [];
-  if (acc.det.on) parts.push(`Detention at ${acc.det.at}${acc.det.hours ? ` (${acc.det.hours} h)` : ''}`);
-  if (acc.lum.on) parts.push(`Lumper at ${acc.lum.at}${money(acc.lum.total) ? ` ${money(acc.lum.total)}` : ''}`);
+  if (acc.det.on) parts.push(`${word('detention')} at ${acc.det.at}${acc.det.hours ? ` (${acc.det.hours} h)` : ''}`);
+  if (acc.lum.on) parts.push(`${word('lumper')} at ${acc.lum.at}${money(acc.lum.total) ? ` ${money(acc.lum.total)}` : ''}`);
   if (acc.oth.on) parts.push(`${acc.oth.type} at ${acc.oth.at}${money(acc.oth.total) ? ` ${money(acc.oth.total)}` : ''}`);
   return parts.join(', ');
 }
@@ -2897,16 +3386,16 @@ function renderEmailMenu() {
   const teamList = teamTemplates();
   const mine = canMakeOwn() ? state.myTemplates : []; // a rep's own templates stay saved, just unused, while it's off
   if (teamList.length) {
-    menu.append(el('div', 'menu-group', 'Team'));
+    menu.append(el('div', 'menu-group', word('team')));
     for (const t of teamList) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
   }
   if (mine.length) {
-    menu.append(el('div', 'menu-group', 'Mine'));
+    menu.append(el('div', 'menu-group', word('mine')));
     for (const t of mine) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
   }
   if (teamList.length || mine.length) menu.append(el('div', 'menu-sep'));
-  menu.append(menuItem('Blank email', 'Just the PDF, no recipients', () => startEmail(null), !ready));
-  if (canMakeOwn()) menu.append(menuItem(teamList.length || mine.length ? 'Manage templates…' : 'Create a template…', '', openTemplates, false));
+  menu.append(menuItem(word('blankEmail'), word('blankEmailNote'), () => startEmail(null), !ready));
+  if (canMakeOwn()) menu.append(menuItem(word(teamList.length || mine.length ? 'manageTemplates' : 'createTemplate'), '', openTemplates, false));
 }
 
 function menuItem(title, sub, action, disabled) {
@@ -3020,10 +3509,26 @@ function updateLoadHint() {
   const hint = $('load-hint');
   hint.classList.remove('error');
   const load = $('load-number').value.trim();
-  const { names, note } = plannedFiles(emailFileBase(t, load || '…'), t ? t.splitMb : 0, layoutOf(t), lumperBase(t, load || '…'));
+  const acc = readAccessorials();
+  const separate = separateAccessorials(t, acc);
+  const layout = layoutOf(t);
+  const base = emailFileBase(t, load || '…');
+  const lumperStem = lumperBase(t, load || '…');
+  const { names, note } = plannedFiles(base, separate ? { ...layout, noReceipts: true } : layout, lumperStem);
   const to = t ? recipientsText(t, load) : '';
   hint.textContent = '';
-  hint.append(`${t ? t.name : 'Blank email'}: attaches `, namesFragment(names), `${note}${to ? ` · to ${to}` : ''}`);
+  const podEmail = !separate || receiptMix().pods; // only receipts checked: just the request
+  if (podEmail) hint.append(`${t ? t.name : word('blankEmail')}: attaches `, namesFragment(names), `${note}${to ? ` · to ${to}` : ''}`);
+  if (separate) {
+    // The second email: the PODs and receipts, with the accessorials' details
+    const request = plannedFiles(base, layout, lumperStem);
+    const requestTo = accessorialRecipients(t, load).to.join(', ');
+    const both = !layout.splitLumpers && receiptMix().receipts ? ' (PODs and receipts)' : '';
+    if (podEmail) hint.append(el('br'));
+    hint.append(`${accessorialSubject(load || '…', acc)}: attaches `, namesFragment(request.names), `${both}${request.note}${requestTo ? ` · to ${requestTo}` : ''}`);
+  } else if (t && t.accSeparate) {
+    hint.append(' · accessorials get their own email');
+  }
 }
 
 function onLoadSubmit(event) {
@@ -3229,33 +3734,56 @@ function onQuizKeys(event) {
 // ---- creating the email
 
 /**
- * Builds the PDF (one per stop with Multi-stop on, otherwise split by the template's size limit),
+ * Builds the PDF (one per stop with Multi-stop on, otherwise one, split into -1, -2… over 10 MB),
  * then opens the new email. With the team's Azure function set up, the files are uploaded so
  * Outlook attaches them itself; otherwise (or if the upload fails) they wait for the new email's
  * Attach PDF button.
  */
 async function createEmail(template, load, acc) {
   const base = emailFileBase(template, load);
-  const splitMb = template ? template.splitMb : 0;
-  const result = await withBusy(() => makeFiles(base, splitMb, layoutOf(template), lumperBase(template, load)));
+  const layout = layoutOf(template);
+  const lumperStem = lumperBase(template, load);
+  const separate = separateAccessorials(template, acc);
+  const result = await withBusy(() => makeFiles(base, layout, lumperStem));
   if (!result) return;
-  const { files } = result;
-  const names = files.map((f) => f.name).join(', ');
-  const form = emailFields(template, load, acc);
-  const extras = [accessorialSummary(acc), acc && !acc.lum.on && template && template.noLumper ? 'No Lumper' : ''].filter(Boolean).join(', ');
 
-  let links = null;
+  // The emails to open, each with its files: the usual one, or with the accessorials in a separate
+  // email, the PODs in one and the request (with the PODs and receipts) in the other
+  const emails = [];
+  if (!separate) {
+    emails.push({ form: emailFields(template, load, acc), files: result.files });
+  } else {
+    const mix = receiptMix();
+    let podFiles = result.files;
+    if (mix.receipts && layout.splitLumpers) podFiles = result.files.filter((f) => !f.lumper);
+    else if (mix.receipts && mix.pods) {
+      const pods = await withBusy(() => makeFiles(base, { ...layout, noReceipts: true }, lumperStem));
+      if (!pods) return;
+      podFiles = pods.files;
+    }
+    // Only receipts checked (a lumper request on its own): just the request, no empty POD email
+    if (mix.pods) emails.push({ form: emailFields(template, load, acc, false), files: podFiles });
+    emails.push({ form: accessorialFields(template, load, acc), files: result.files });
+  }
+  const namesOf = (files) => files.map((f) => f.name).join(', ');
+  // The request's file has the same name as the POD email's when the receipts go in it, so say so
+  const both = separate && !layout.splitLumpers && receiptMix().receipts ? ' (PODs and receipts)' : '';
+  const toOf = (form) => (form.toRecipients || []).join(', ');
+  const allFiles = [...new Set(emails.flatMap((e) => e.files))];
+
+  let links = null; // file -> { type, name, url } once uploaded
   let azureProblem = '';
   const azure = teamAzure();
-  if (azure) {
+  if (azure && allFiles.length) {
     links = await withBusy(async () => {
       try {
-        const list = [];
-        for (let i = 0; i < files.length; i++) {
-          setStatus(`Uploading ${files.length > 1 ? `${i + 1} of ${files.length}: ` : ''}${files[i].name}…`);
-          list.push({ type: 'file', name: files[i].name, url: await uploadToAzure(azure, files[i].bytes, files[i].name) });
+        const list = new Map();
+        for (let i = 0; i < allFiles.length; i++) {
+          const file = allFiles[i];
+          setStatus(`Uploading ${allFiles.length > 1 ? `${i + 1} of ${allFiles.length}: ` : ''}${file.name}…`);
+          list.set(file, { type: 'file', name: file.name, url: await uploadToAzure(azure, file.bytes, file.name) });
         }
-        log(`Azure: uploaded ${names}`);
+        log(`Azure: uploaded ${namesOf(allFiles)}`);
         return list;
       } catch (error) {
         azureProblem = error.userMessage || error.message;
@@ -3265,13 +3793,10 @@ async function createEmail(template, load, acc) {
     });
   }
 
+  // For Attach PDF in each new email (it finds its files by the subject)
+  const stored = emails.map((e) => ({ subject: e.form.subject || '', files: e.files.map((f) => ({ name: f.name, bytes: f.bytes, pages: f.pages })) }));
   try {
-    await idbSet(PENDING_KEY, {
-      files: files.map((f) => ({ name: f.name, bytes: f.bytes, pages: f.pages })),
-      created: Date.now(),
-      subject: form.subject || '',
-      viaLink: !!links,
-    });
+    await idbSet(PENDING_KEY, { emails: stored, files: stored[0].files, subject: stored[0].subject, created: Date.now(), viaLink: !!links });
   } catch (error) {
     log(`New email: couldn't store the PDF (${error.name}: ${error.message})`);
     if (!links) {
@@ -3279,39 +3804,88 @@ async function createEmail(template, load, acc) {
       return;
     }
   }
-  if (links) form.attachments = links;
+  if (links) for (const e of emails) if (e.files.length) e.form.attachments = e.files.map((f) => links.get(f));
 
-  const mailbox = Office.context.mailbox;
-  try {
-    if (typeof mailbox.displayNewMessageFormAsync === 'function') {
-      await call((done) => mailbox.displayNewMessageFormAsync(form, done));
-    } else {
-      mailbox.displayNewMessageForm(form);
+  let secondProblem = '';
+  for (let i = 0; i < emails.length; i++) {
+    if (i) await new Promise((resolve) => setTimeout(resolve, 800)); // a moment between the two, so Outlook opens both
+    try {
+      await openNewEmail(emails[i].form);
+    } catch (error) {
+      log(`New email: couldn't open ${i ? 'the accessorial email' : 'one'} (${error.message})`);
+      if (!i) {
+        setStatus(`Couldn't open a new email: ${error.message}`, 'error');
+        return;
+      }
+      secondProblem = error.message;
     }
-  } catch (error) {
-    log(`New email: couldn't open one (${error.message})`);
-    setStatus(`Couldn't open a new email: ${error.message}`, 'error');
+  }
+
+  const summary = accessorialSummary(acc);
+  const noLumper = acc && !acc.lum.on && template && template.noLumper ? `No ${word('lumper')}` : '';
+  if (template && template.checklist) log(`Checklist: all ${plural(template.checklist.split('\n').length, 'item')} ticked for "${template.name}"`);
+  for (const e of emails) {
+    log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''})`);
+  }
+  if (summary || noLumper) log(`New email: ${[summary, noLumper].filter(Boolean).join(', ')}${separate ? ' (accessorials in their own email)' : ''}`);
+  const tail = `${oversizeNote(allFiles)}${leftOutText(result)}`;
+  const why = azureProblem ? ` (Couldn't attach automatically: ${azureProblem}.)` : '';
+  const tone = azureProblem || secondProblem ? 'error' : 'ok';
+
+  if (emails.length === 1) {
+    const [only] = emails;
+    const to = toOf(only.form);
+    // (with the accessorials in a separate email, this is the request: only receipts were checked)
+    const what = separate ? `: ${only.form.subject}` : '';
+    const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
+    const extra = `${extras ? ` In the message: ${extras}.` : ''}${tail}`;
+    if (links) setStatus(`New email opened${what}${to ? ` to ${to}` : ''} with ${namesOf(only.files)} attached.${extra}`, 'ok');
+    else setStatus(`New email opened${what}${to ? ` to ${to}` : ''}. Click ${word('attachPdf')} on its ribbon to add ${namesOf(only.files)}.${why}${extra}`, tone);
     return;
   }
-  const to = (form.toRecipients || []).join(', ');
-  if (template && template.checklist) log(`Checklist: all ${plural(template.checklist.split('\n').length, 'item')} ticked for "${template.name}"`);
-  log(`New email: opened (${template ? `template "${template.name}"` : 'blank'}; ${names}${to ? `; to ${to}` : ''}${extras ? `; ${extras}` : ''}${links ? '; attached through Azure' : ''})`);
-  const accNote = extras ? ` In the message: ${extras}.` : '';
-  const extra = `${accNote}${oversizeNote(files, splitMb)}${leftOutText(result)}`;
-  if (links) {
-    setStatus(`New email opened${to ? ` to ${to}` : ''} with ${names} attached.${extra}`, 'ok');
+
+  const [pod, request] = emails;
+  const describe = (e) => `${e.form.subject}${toOf(e.form) ? ` to ${toOf(e.form)}` : ''}`;
+  const extra = ` In the request: ${summary}.${noLumper ? ` The POD email says ${noLumper}.` : ''}${tail}`;
+  let text;
+  if (secondProblem) {
+    text = `Opened ${describe(pod)}, but couldn't open the accessorial email: ${secondProblem}.${links ? '' : ` Click ${word('attachPdf')} on the POD email's ribbon to add ${namesOf(pod.files) || 'its files'}.`}`;
+  } else if (links) {
+    text = `Opened 2 emails: ${describe(pod)} with ${namesOf(pod.files) || 'nothing'} attached, and ${describe(request)} with ${namesOf(request.files)}${both} attached.`;
   } else {
-    const why = azureProblem ? ` (Couldn't attach it automatically: ${azureProblem}.)` : '';
-    setStatus(`New email opened${to ? ` to ${to}` : ''}. Click Attach PDF on its ribbon to add ${names}.${why}${extra}`, azureProblem ? 'error' : 'ok');
+    text = `Opened 2 emails: ${describe(pod)}, and ${describe(request)}. Click ${word('attachPdf')} on each one's ribbon: the POD email gets ${namesOf(pod.files) || 'nothing'}, the request gets ${namesOf(request.files)}${both}.${why}`;
   }
+  setStatus(`${text}${extra}`, tone);
+  showReopen(request.form, !!secondProblem);
+}
+
+/** Opens a new email in Outlook with these fields. */
+async function openNewEmail(form) {
+  const mailbox = Office.context.mailbox;
+  if (typeof mailbox.displayNewMessageFormAsync === 'function') {
+    await call((done) => mailbox.displayNewMessageFormAsync(form, done));
+  } else {
+    mailbox.displayNewMessageForm(form);
+  }
+}
+
+/** Under the status: a button for the accessorial email, in case Outlook didn't show it. */
+function showReopen(form, failed) {
+  const box = $('parts');
+  box.textContent = '';
+  box.append(el('span', 'muted', failed ? '' : "Didn't see the accessorial email?"));
+  const button = el('button', 'link-btn', failed ? 'Try opening the accessorial email again' : 'Open it again');
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    openNewEmail(form)
+      .then(() => log(`New email: opened "${form.subject}" again`))
+      .catch((error) => setStatus(`Couldn't open the accessorial email: ${error.message}`, 'error'));
+  });
+  box.append(button);
+  box.hidden = false;
 }
 
 // ---- splitting by size
-
-function parseSplitMb(value) {
-  const n = parseFloat(String(value === undefined || value === null ? '' : value).replace(',', '.'));
-  return Number.isFinite(n) && n > 0 ? Math.round(Math.min(Math.max(n, 0.1), 150) * 10) / 10 : 0;
-}
 
 function mbText(bytes) {
   return `${(bytes / MB).toFixed(1)} MB`;
@@ -3323,8 +3897,8 @@ async function pagesToPdf(src, from, to) {
   const pages = await out.copyPages(src, Array.from({ length: to - from }, (_, i) => from + i));
   pages.forEach((page) => out.addPage(page));
   if (state.topic) out.setTitle(state.topic);
-  out.setCreator('Thread Attachments');
-  out.setProducer(`Thread Attachments ${VERSION}`);
+  out.setCreator('Restack');
+  out.setProducer(`Restack ${VERSION}`);
   return out.save();
 }
 
@@ -3375,22 +3949,21 @@ async function splitPdfBySize(bytes, limit) {
   return parts;
 }
 
-/** The files to send or save: base.pdf, or base-1.pdf, base-2.pdf… when it's over the limit. */
-async function splitIntoFiles(bytes, base, splitMb) {
-  const limit = splitMb > 0 ? Math.floor(splitMb * MB) : 0;
-  if (!limit || bytes.length <= limit) return [{ name: `${base}.pdf`, bytes, pages: null, over: false }];
-  const parts = await splitPdfBySize(bytes, limit);
+/** The files to send or save: base.pdf, or base-1.pdf, base-2.pdf… when it's over 10 MB. */
+async function splitIntoFiles(bytes, base) {
+  if (bytes.length <= SPLIT_LIMIT) return [{ name: `${base}.pdf`, bytes, pages: null, over: false }];
+  const parts = await splitPdfBySize(bytes, SPLIT_LIMIT);
   if (parts.length === 1) return [{ name: `${base}.pdf`, bytes: parts[0].bytes, pages: parts[0].pages, over: parts[0].over }];
   const files = parts.map((part, i) => ({ name: `${base}-${i + 1}.pdf`, bytes: part.bytes, pages: part.pages, over: part.over }));
-  log(`Split over ${splitMb} MB: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
+  log(`Split (over ${SPLIT_MB} MB): ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
   return files;
 }
 
-function oversizeNote(files, splitMb) {
+function oversizeNote(files) {
   const over = files.filter((f) => f.over);
   if (!over.length) return '';
-  const why = over[0].stop || over[0].lumper ? ' (stop and lumper receipt files are never split by size)' : ' because a single page is that big';
-  return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over the ${splitMb} MB limit${why}.`;
+  const why = over[0].stop || over[0].lumper ? ' (stop and receipt files aren\'t split by size)' : ', because a single page is that big';
+  return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over ${SPLIT_MB} MB${why}.`;
 }
 
 // ---- Azure (the team admin's function app)
@@ -3500,11 +4073,14 @@ function cleanTemplates(list) {
       cc: String(t.cc || ''),
       body: String(t.body || ''),
       file: String(t.file || ''),
-      splitMb: parseSplitMb(t.splitMb),
       stopFiles: t.stopFiles !== false,             // Multi-stop: each stop its own file (else all stops in one)
       lumperSeparate: !!t.lumperSeparate,           // lumper receipts in their own file
       lumperName: String(t.lumperName || '').trim() || '{load} Lumper',
       noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't ticked
+      accSeparate: !!t.accSeparate,                 // accessorials in a separate email, when one is ticked
+      accTo: String(t.accTo || ''),                 // that email's To and CC (blank: the POD email's)
+      accCc: String(t.accCc || ''),
+      accBody: String(t.accBody || ''),             // its message (blank: WORDS.accessorialIntro)
       checklist: cleanChecklist(t.checklist),       // things to tick before the email is created
       customer: String(t.customer || '').trim().slice(0, 60), // fills in {company} in the questions
       questions: cleanQuestions(t.questions),       // asked in a pop-up before the create-email step
@@ -3699,7 +4275,7 @@ function teamTemplates() {
 function showLocked() {
   const site = new URL('.', window.location.href).href;
   const [title, body] = {
-    nokey: ["This copy of Thread Attachments isn't set up for a team.",
+    nokey: ["This copy of Restack isn't set up for a team.",
       'Install it from the team install file you were sent. If you manage the add-in, make a team install file on its page:'],
     wrongkey: ["This install file doesn't match your team.",
       'Ask whoever sent it to you for the current install file.'],
@@ -3775,8 +4351,8 @@ function renderRcBox(message) {
   $('rc-remove').hidden = !sample;
   const saved = sample && sample.saved ? new Date(sample.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
   $('rc-text').textContent = message || (sample
-    ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}). Pages that look like it are flagged, and have to be left out before anyone emails or saves.`
-    : 'Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click Use as rate con sample at the bottom of the preview.');
+    ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}${sample.pages.some((page) => page.words) ? '' : '; pictures of pages, so it\'s matched by layout'}). Pages that look like it are flagged, as are pages that say "Rate Confirmation" or "Load Confirmation" and pages with the same barcode as a flagged one. They have to be left out before anyone emails or saves.`
+    : `Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click ${word('useAsRcSample')} at the bottom of the preview.`);
 }
 
 async function onRcRemove() {
@@ -3846,13 +4422,18 @@ function editTemplate(scope, id) {
   $('tpl-cc').value = t ? t.cc : '';
   $('tpl-message').value = t ? t.body : NEW_TEMPLATE.body;
   $('tpl-file').value = t ? (t.file || '{load}') : NEW_TEMPLATE.file;
-  $('tpl-split').value = t && t.splitMb ? String(t.splitMb) : '';
   $('tpl-no-lumper').checked = !!(t && t.noLumper);
   $('tpl-checklist').value = t ? t.checklist || '' : '';
   $('tpl-stop-files').checked = !t || t.stopFiles !== false;
   $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
   $('tpl-lumper-name').value = (t && t.lumperName) || NEW_TEMPLATE.lumperName;
   syncLumperNameRow();
+  $('tpl-acc-sep').checked = !!(t && t.accSeparate);
+  $('tpl-acc-to').value = t ? t.accTo || '' : '';
+  $('tpl-acc-cc').value = t ? t.accCc || '' : '';
+  $('tpl-acc-message').value = t ? t.accBody || '' : '';
+  $('tpl-acc-message').placeholder = word('accessorialIntro');
+  syncAccRow();
   $('tpl-customer').value = t ? t.customer || '' : '';
   qDraft = t && t.questions ? JSON.parse(JSON.stringify(t.questions)) : { intro: '', items: [] };
   renderQuestionBuilder();
@@ -3868,6 +4449,11 @@ function editTemplate(scope, id) {
 /** Shows the lumper file name box only when lumper receipts get their own file. */
 function syncLumperNameRow() {
   $('tpl-lumper-row').hidden = !$('tpl-lumper-sep').checked;
+}
+
+/** Shows the accessorial email's To, CC and message only when the template sends one. */
+function syncAccRow() {
+  $('tpl-acc-row').hidden = !$('tpl-acc-sep').checked;
 }
 
 // ---- the question builder (in the template form)
@@ -4042,9 +4628,9 @@ function questionsProblem(draft) {
 function templateProblem(t) {
   if (!t.name) return 'Give the template a name.';
   if (t.lumperSeparate && fill(t.lumperName, 'X').toLowerCase() === fill(t.file || '{load}', 'X').toLowerCase()) {
-    return 'The lumper receipt file needs a different name from the PDF name.';
+    return 'The receipt file needs a different name from the PDF name.';
   }
-  for (const [label, text] of [['To', t.to], ['CC', t.cc]]) {
+  for (const [label, text] of [['To', t.to], ['CC', t.cc], ['Accessorial email To', t.accTo], ['Accessorial email CC', t.accCc]]) {
     for (const address of parseAddresses(text)) {
       if (/\{load\}/i.test(address)) continue;
       if (!/^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/.test(address)) return `${label}: "${address}" doesn't look like an email address.`;
@@ -4083,8 +4669,11 @@ async function onTemplateSubmit(event) {
     cc: $('tpl-cc').value.trim(),
     body: $('tpl-message').value.replace(/\s+$/, ''),
     file: $('tpl-file').value.trim().replace(/\.pdf$/i, '') || '{load}',
-    splitMb: parseSplitMb($('tpl-split').value),
     noLumper: $('tpl-no-lumper').checked,
+    accSeparate: $('tpl-acc-sep').checked,
+    accTo: $('tpl-acc-to').value.trim(),
+    accCc: $('tpl-acc-cc').value.trim(),
+    accBody: $('tpl-acc-message').value.replace(/\s+$/, ''),
     checklist: cleanChecklist($('tpl-checklist').value),
     stopFiles: $('tpl-stop-files').checked,
     lumperSeparate: $('tpl-lumper-sep').checked,
@@ -4092,10 +4681,6 @@ async function onTemplateSubmit(event) {
     customer: $('tpl-customer').value.trim().slice(0, 60),
     questions: null,
   };
-  if ($('tpl-split').value.trim() && !data.splitMb) {
-    $('tpl-error').textContent = 'Split size should be a number of MB, like 10.';
-    return;
-  }
   const problem = templateProblem(data) || questionsProblem(qDraft);
   if (problem) {
     $('tpl-error').textContent = problem;
@@ -4172,7 +4757,7 @@ function renderAzureBox(message, tone) {
   $('azure-note').textContent = azure ? 'On' : 'Off';
   setAzureStatus(message || (azure
     ? 'Create email attaches PDFs through your Azure function.'
-    : 'Not set up. Create email uses the Attach PDF button instead.'), tone);
+    : `Not set up. ${word('createEmail')} uses the ${word('attachPdf')} button instead.`), tone);
 }
 
 function setAzureStatus(text, tone) {
@@ -4263,7 +4848,7 @@ async function onAzureTest() {
     if (!info.uploadKeySet) throw userError("THREAD_ATTACHMENTS_UPLOAD_KEY isn't set in the Function App yet");
 
     const doc = await PDFLib.PDFDocument.create();
-    doc.addPage([200, 200]).drawText('Thread Attachments test', { x: 20, y: 100, size: 12 });
+    doc.addPage([200, 200]).drawText('Restack test', { x: 20, y: 100, size: 12 });
     const bytes = await doc.save();
     const link = await uploadToAzure(azure, bytes, 'test.pdf');
     let back;
@@ -4298,9 +4883,9 @@ async function onShareInstall() {
     renderPublishBox(`Couldn't make the install file: ${error.message}`);
     return;
   }
-  downloadText(xml, 'thread-attachments-team.xml', 'application/xml');
+  downloadText(xml, 'restack-team.xml', 'application/xml');
   log('Team: install file downloaded');
-  renderPublishBox('thread-attachments-team.xml downloaded. Email it to a rep; they install it at aka.ms/olksideload (My add-ins → Add a custom add-in → Add from File). Anyone with this file can use the add-in and see the team templates, so keep it within your team.');
+  renderPublishBox('restack-team.xml downloaded. Email it to a rep; they install it at aka.ms/olksideload (My add-ins → Add a custom add-in → Add from File). Anyone with this file can use the add-in and see the team templates, so keep it within your team.');
 }
 
 // --------------------------------------------------------------------------- hand-off storage (IndexedDB)
@@ -4335,8 +4920,39 @@ const idbDelete = (key) => idbRequest('readwrite', (store) => store.delete(key))
 
 // --------------------------------------------------------------------------- writing an email: attach the PDF
 
+/** The emails Create email opened and their files, from the hand-over store (one, or two). */
+function pendingEmails(pending) {
+  if (!pending) return [];
+  const raw = Array.isArray(pending.emails) && pending.emails.length
+    ? pending.emails
+    : [{ subject: pending.subject, files: Array.isArray(pending.files) ? pending.files : [{ name: pending.name, bytes: pending.bytes, pages: pending.pages }] }];
+  return raw
+    .map((e) => ({
+      subject: String((e && e.subject) || ''),
+      files: (e && Array.isArray(e.files) ? e.files : [])
+        .filter((f) => f && f.bytes && f.name)
+        .map((f) => ({ ...f, bytes: f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes) })),
+    }))
+    .filter((e) => e.files.length);
+}
+
+/** Once an email has its files: takes them out of the store (the store goes when both are done). */
+async function forgetPending(subject) {
+  try {
+    const pending = await idbGet(PENDING_KEY);
+    const left = pendingEmails(pending).filter((e) => e.subject !== subject);
+    if (!left.length) await idbDelete(PENDING_KEY);
+    else await idbSet(PENDING_KEY, { ...pending, emails: left, files: left[0].files, subject: left[0].subject });
+  } catch (error) {
+    // harmless: it expires on its own
+  }
+}
+
 async function initCompose() {
   showView('compose-view');
+  // No light/dark button in a new email's panel: it would save Restack's settings from the copy this
+  // panel loaded, which can be older than changes made in the main window since (like a template).
+  document.querySelector('.foot-toggle').hidden = true;
   setSummary('Attach a combined PDF to this email');
   let pending = null;
   try {
@@ -4346,55 +4962,15 @@ async function initCompose() {
   }
   const text = $('compose-text');
   const button = $('btn-attach');
-  const files = pending
-    ? (Array.isArray(pending.files) ? pending.files : [{ name: pending.name, bytes: pending.bytes, pages: pending.pages }])
-        .filter((f) => f && f.bytes && f.name)
-        .map((f) => ({ ...f, bytes: f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes) }))
-    : [];
-  if (!files.length || Date.now() - pending.created > PENDING_MAX_AGE_MS) {
-    text.textContent = 'No combined PDF is waiting. Open Thread Attachments on a thread, check the files you want, then choose Email.';
+  const waiting = pendingEmails(pending);
+  if (!waiting.length || Date.now() - pending.created > PENDING_MAX_AGE_MS) {
+    text.textContent = 'No combined PDF is waiting. Open Restack on a thread, check the files you want, then choose Email.';
     button.hidden = true;
     log('Compose: no PDF waiting');
     return;
   }
-  const names = files.map((f) => f.name).join(', ');
-  const size = humanSize(files.reduce((sum, f) => sum + f.bytes.length, 0));
 
-  const attach = async () => {
-    button.disabled = true;
-    let done = 0;
-    try {
-      for (const file of files) {
-        text.textContent = `Attaching ${file.name}…`;
-        await call((cb) => Office.context.mailbox.item.addFileAttachmentFromBase64Async(bytesToBase64(file.bytes), file.name, { isInline: false }, cb));
-        done += 1;
-      }
-      try {
-        await idbDelete(PENDING_KEY);
-      } catch (error) {
-        // harmless: it expires on its own
-      }
-      log(`Compose: attached ${names} ✔`);
-      text.textContent = `Attached ${names}.`;
-      button.hidden = true;
-    } catch (error) {
-      log(`Compose: attaching failed after ${done} of ${files.length} (${error.message})`);
-      text.textContent = `Couldn't attach ${files[done] ? files[done].name : 'the PDF'}: ${error.message}`;
-      button.hidden = false;
-      button.disabled = false;
-    }
-  };
-  button.addEventListener('click', attach);
-
-  if (pending.viaLink) {
-    // Outlook attached these from the Azure link already; offer the button only as a backup.
-    text.textContent = `This email should already have ${names} attached. If ${files.length > 1 ? "they're" : "it's"} missing, click Attach PDF.`;
-    button.hidden = false;
-    log('Compose: already attached through Azure; button offered as a backup');
-    return;
-  }
-
-  // The email the Email button just opened: attach without another click.
+  // Which email this is: the one with the same subject
   let subject = '';
   try {
     const field = Office.context.mailbox.item.subject;
@@ -4402,14 +4978,69 @@ async function initCompose() {
   } catch (error) {
     subject = '';
   }
-  if (pending.subject && subject.trim() === String(pending.subject).trim()) {
-    log('Compose: this is the email Thread Attachments opened, attaching right away');
-    await attach();
+  const match = waiting.find((e) => e.subject && subject.trim() === e.subject.trim());
+  const card = button.parentElement;
+  const picks = [];
+
+  const attach = async (entry) => {
+    const names = entry.files.map((f) => f.name).join(', ');
+    for (const b of [button, ...picks]) b.disabled = true;
+    let done = 0;
+    try {
+      for (const file of entry.files) {
+        text.textContent = `Attaching ${file.name}…`;
+        await call((cb) => Office.context.mailbox.item.addFileAttachmentFromBase64Async(bytesToBase64(file.bytes), file.name, { isInline: false }, cb));
+        done += 1;
+      }
+      await forgetPending(entry.subject);
+      log(`Compose: attached ${names} ✔`);
+      text.textContent = `Attached ${names}.`;
+      button.hidden = true;
+      for (const b of picks) b.remove();
+    } catch (error) {
+      log(`Compose: attaching failed after ${done} of ${entry.files.length} (${error.message})`);
+      text.textContent = `Couldn't attach ${entry.files[done] ? entry.files[done].name : 'the PDF'}: ${error.message}`;
+      for (const b of [button, ...picks]) b.disabled = false;
+      if (!picks.length) button.hidden = false;
+    }
+  };
+
+  if (match || waiting.length === 1) {
+    const entry = match || waiting[0];
+    const names = entry.files.map((f) => f.name).join(', ');
+    button.addEventListener('click', () => attach(entry));
+    if (pending.viaLink) {
+      // Outlook attached these from the Azure link already; offer the button only as a backup.
+      text.textContent = `This email should already have ${names} attached. If ${entry.files.length > 1 ? "they're" : "it's"} missing, click ${word('attachPdf')}.`;
+      button.hidden = false;
+      log('Compose: already attached through Azure; button offered as a backup');
+      return;
+    }
+    if (match) {
+      // The email the Email button just opened: attach without another click.
+      log('Compose: this is the email Restack opened, attaching right away');
+      await attach(entry);
+      return;
+    }
+    text.textContent = `Ready to attach: ${names} (${humanSize(entry.files.reduce((sum, f) => sum + f.bytes.length, 0))}).`;
+    button.hidden = false;
+    log('Compose: PDF waiting');
     return;
   }
-  text.textContent = `Ready to attach: ${names} (${size}).`;
-  button.hidden = false;
-  log('Compose: PDF waiting');
+
+  // Two emails were opened, and this one's subject has changed since: pick whose files go on it
+  text.textContent = pending.viaLink
+    ? 'These emails should already have their files attached. If this one is missing them, pick which:'
+    : 'Which files go on this email?';
+  button.hidden = true;
+  for (const entry of waiting) {
+    const pick = el('button', 'btn', `${entry.subject}: ${entry.files.map((f) => f.name).join(', ')}`);
+    pick.type = 'button';
+    pick.addEventListener('click', () => attach(entry));
+    picks.push(pick);
+    card.append(pick);
+  }
+  log(`Compose: ${waiting.length} emails waiting; this one's subject matches neither`);
 }
 
 // --------------------------------------------------------------------------- start-up
@@ -4424,8 +5055,8 @@ function wireReadUi() {
       if (on && !was && state.multiStop) assignStop(file); // in list order: the next free stop each
     }
     state.built.clear();
-    if (state.multiStop || lumperTagging()) renderList(); // stop pickers and lumper tags come and go with the ticks
-    else updateSelectionUi();
+    normalizeOrder();
+    renderList(); // places, stop pickers and lumper tags come and go with the ticks
     if (!$('preview').hidden) syncPreviewPages();
   });
   $('multi-stop').addEventListener('change', (event) => onMultiStopToggle(event.target.checked));
@@ -4442,17 +5073,20 @@ function wireReadUi() {
   });
   $('load-form').addEventListener('submit', onLoadSubmit);
   $('load-cancel').addEventListener('click', onLoadCancel);
-  $('load-number').addEventListener('input', updateLoadHint);
   for (const kind of Object.keys(ACC_FIELDS)) {
     $(`acc-${kind}`).addEventListener('change', (event) => onAccessorialPick(kind, event.target.checked));
     $(`${kind}-at`).addEventListener('change', syncAccessorialBoxes);
   }
   for (const id of ['lum-total', 'oth-total']) $(id).addEventListener('change', onMoneyChange);
-  $('load-form').addEventListener('input', () => { $('acc-error').textContent = ''; });
+  $('load-form').addEventListener('input', () => { // (ticks fire this too: the hint follows the accessorials)
+    $('acc-error').textContent = '';
+    updateLoadHint();
+  });
   $('tpl-back').addEventListener('click', () => (editing ? cancelEdit() : closeTemplates()));
   $('tpl-form').addEventListener('submit', (event) => onTemplateSubmit(event).catch(fail));
   $('tpl-cancel').addEventListener('click', cancelEdit);
   $('tpl-lumper-sep').addEventListener('change', syncLumperNameRow);
+  $('tpl-acc-sep').addEventListener('change', syncAccRow);
   $('q-add').addEventListener('click', addQuestion);
   $('q-intro').addEventListener('input', (event) => { qDraft.intro = event.target.value; });
   $('q-list').addEventListener('keydown', (event) => { // Enter in a question box doesn't save the template (or add a line)
@@ -4514,11 +5148,184 @@ function registerHandlers() {
   }
 }
 
+// --------------------------------------------------------------------------- light or dark
+
+// The button across from Test report: Match Outlook (the default), Light or Dark. The choice is saved
+// in roaming settings, so it follows the rep to other computers. mode.js puts last time's light or
+// dark on the page before anything shows, so the panel doesn't flash white in dark mode.
+const APPEARANCE_KEY = 'appearance';
+const APPEARANCE_WORD = { light: 'light', dark: 'dark', match: 'matchOutlook' }; // their WORDS
+let appearance = 'match';
+let appearanceTimers = [];
+let appearanceReady = false; // the saved choice is in (picks before that would be overwritten)
+
+/** How bright a #rrggbb color is, from 0 (black) to 1 (white), or null if it isn't one. */
+function luminance(color) {
+  let hex = String(color || '').trim().replace(/^#/, '');
+  if (hex.length === 3) hex = hex.replace(/./g, '$&$&');
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return null;
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Whether Outlook is dark (by its background color), or the computer is when Outlook doesn't say. */
+function outlookIsDark(theme) {
+  let colors = theme || null;
+  if (!colors) {
+    try {
+      colors = typeof Office !== 'undefined' && Office.context ? Office.context.officeTheme : null;
+    } catch (error) {
+      colors = null;
+    }
+  }
+  const light = colors ? luminance(colors.bodyBackgroundColor) : null;
+  if (light !== null) return light < 0.35;
+  return !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/** Puts the panel in light or dark for the choice, and remembers which for next time (mode.js). */
+function applyMode(theme) {
+  const mode = appearance === 'dark' || (appearance === 'match' && outlookIsDark(theme)) ? 'dark' : 'light';
+  document.documentElement.dataset.mode = mode;
+  writeSetting('mode', mode);
+  markAppearance();
+  return mode;
+}
+
+/** The same, fading the colors over instead of switching at once. */
+function fadeMode(theme) {
+  const root = document.documentElement;
+  const before = root.dataset.mode;
+  root.classList.add('mode-fade');
+  const mode = applyMode(theme);
+  clearTimeout(fadeMode.timer);
+  fadeMode.timer = setTimeout(() => root.classList.remove('mode-fade'), 450);
+  return before !== mode;
+}
+
+/** Marks the choice on the button. Closed, only the choice shows, labeled for screen readers. */
+function markAppearance() {
+  const pop = $('mode-pop');
+  if (!pop) return;
+  const open = pop.dataset.open === 'true';
+  for (const item of pop.querySelectorAll('.pop-item')) {
+    const on = item.dataset.mode === appearance;
+    const name = word(APPEARANCE_WORD[item.dataset.mode]);
+    item.setAttribute('aria-checked', String(on));
+    item.tabIndex = open || on ? 0 : -1;
+    item.setAttribute('aria-hidden', String(!open && !on));
+    item.setAttribute('aria-label', !open && on ? `${word('appearance')}: ${name}. Show the choices` : name);
+    item.title = !open && on ? `${word('appearance')}: ${name}` : name;
+  }
+}
+
+/** Saves the choice for this mailbox (roaming settings). */
+function saveAppearance() {
+  writeRoaming(APPEARANCE_KEY, appearance).catch((error) => log(`Appearance: couldn't save (${error.message})`));
+}
+
+/** Opens the button into the three choices, or closes it again (without changing anything). */
+function setAppearanceOpen(open, returnFocus) {
+  const pop = $('mode-pop');
+  if ((pop.dataset.open === 'true') === open) return;
+  pop.dataset.open = String(open);
+  markAppearance();
+  if (open || returnFocus) {
+    const on = pop.querySelector('.pop-item[aria-checked="true"]');
+    if (on) on.focus();
+  }
+}
+
+/** A pick from the open switch: the highlight moves to it, the switch closes, and the panel fades over. */
+function pickAppearance(choice) {
+  for (const timer of appearanceTimers) clearTimeout(timer);
+  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  appearance = choice;
+  markAppearance();
+  appearanceTimers = [
+    setTimeout(() => setAppearanceOpen(false, true), calm ? 0 : 220),
+    setTimeout(() => {
+      fadeMode();
+      saveAppearance();
+      log(`Appearance: ${word(APPEARANCE_WORD[choice])} (${document.documentElement.dataset.mode})`);
+    }, calm ? 0 : 420),
+  ];
+}
+
+function wireAppearance() {
+  const pop = $('mode-pop');
+  if (!pop) return;
+  pop.addEventListener('click', (event) => {
+    const item = event.target.closest('.pop-item');
+    if (!item || !appearanceReady) return;
+    if (pop.dataset.open !== 'true') setAppearanceOpen(true);
+    else if (event.detail > 1) return; // the second click of a double-click lands on whatever opened under it
+    else if (item.dataset.mode === appearance) setAppearanceOpen(false, true);
+    else pickAppearance(item.dataset.mode);
+  });
+  pop.addEventListener('keydown', (event) => {
+    if (pop.dataset.open !== 'true') return;
+    if (event.key === 'Escape') {
+      event.stopPropagation(); // just this, not the screen behind it
+      setAppearanceOpen(false, true);
+      return;
+    }
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const items = [...pop.querySelectorAll('.pop-item')];
+    const at = items.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (at + (event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items[next].focus();
+  });
+  pop.addEventListener('focusout', (event) => {
+    if (pop.dataset.open === 'true' && event.relatedTarget && !pop.contains(event.relatedTarget)) setAppearanceOpen(false);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (pop.dataset.open === 'true' && !event.target.closest('.mode-pop')) setAppearanceOpen(false);
+  });
+  window.addEventListener('blur', () => setAppearanceOpen(false)); // a click in Outlook, outside the panel
+  markAppearance();
+  if (window.matchMedia) {
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    const follow = () => { if (appearance === 'match') fadeMode(); };
+    if (media.addEventListener) media.addEventListener('change', follow);
+    else if (media.addListener) media.addListener(follow);
+  }
+}
+
+/** Once Outlook is ready: the saved choice, and Outlook's theme (followed while the panel is open). */
+function loadAppearance() {
+  const saved = readRoaming(APPEARANCE_KEY);
+  appearance = ['light', 'dark', 'match'].includes(saved) ? saved : 'match';
+  appearanceReady = true;
+  const mode = applyMode();
+  log(`Appearance: ${word(APPEARANCE_WORD[appearance])} (${mode})`);
+  try {
+    const mailbox = Office.context.mailbox;
+    if (Office.EventType.OfficeThemeChanged && mailbox && typeof mailbox.addHandlerAsync === 'function') {
+      mailbox.addHandlerAsync(Office.EventType.OfficeThemeChanged, (event) => {
+        if (appearance === 'match' && fadeMode(event && event.officeTheme)) log(`Appearance: Outlook changed to ${document.documentElement.dataset.mode}`);
+      }, (result) => {
+        if (result && result.status === Office.AsyncResultStatus.Failed) log("Appearance: can't follow Outlook's theme while open (it will next time)");
+      });
+    }
+  } catch (error) {
+    // older Outlook: the panel follows Outlook's theme the next time it opens
+  }
+}
+
 function start() {
+  applyWords();
+  wireAppearance();
   $('btn-copy-report').addEventListener('click', () => copyReport());
   window.addEventListener('error', (event) => log(`Script error: ${event.message}`));
   window.addEventListener('unhandledrejection', (event) => log(`Unhandled: ${event.reason && (event.reason.message || event.reason)}`));
   if (typeof Office === 'undefined') {
+    appearanceReady = true; // nothing saved to wait for
     showMessage("Outlook's add-in library didn't load. Check the internet connection, then close and reopen this panel.");
     setSummary('');
     return;
@@ -4526,9 +5333,10 @@ function start() {
   Office.onReady(async (info) => {
     try {
       collectEnvironment();
+      loadAppearance();
       if (!info || info.host !== Office.HostType.Outlook) {
         setSummary('');
-        showMessage('Open this from Outlook: select an email, then click Thread Attachments on the ribbon.');
+        showMessage('Open this from Outlook: select an email, then click Restack on the ribbon.');
         return;
       }
       const item = Office.context.mailbox.item;
@@ -4543,7 +5351,6 @@ function start() {
         return;
       }
       state.myTemplates = cleanTemplates(readRoaming(MY_TEMPLATES_KEY));
-      state.saveSplitMb = parseSplitMb(readRoaming('saveSplitMb'));
       wireReadUi();
       registerHandlers();
       loadThread().catch(fail);

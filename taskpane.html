@@ -3,25 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Thread Attachments</title>
+  <title>Restack</title>
+  <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
+  <script src="mode.js?v=0.14.0"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.11.0">
-  <script type="module" src="taskpane.js?v=0.11.0"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.14.0">
+  <script type="module" src="taskpane.js?v=0.14.0"></script>
 </head>
 <body>
   <div id="app">
     <header class="top">
-      <h1 id="title">Thread Attachments</h1>
-      <p id="summary" class="muted">Starting…</p>
+      <div class="brand-row">
+        <img class="for-light" src="brand/axle-logo.png" alt="Axle Logistics">
+        <img class="for-dark" src="brand/axle-logo-white.png" alt="Axle Logistics">
+      </div>
+      <h1 id="title">Restack</h1>
+      <p id="summary">Starting…</p>
       <p id="one-tip" class="one-tip" hidden>
         <button id="tip-info" class="info-btn" type="button" aria-label="How to include every email in the thread" aria-expanded="false" aria-controls="howto" title="How to include every email">
           <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="6.3" r="1.05" fill="currentColor"/></svg>
         </button>
-        <span>Only 1 email came through. To include the whole thread, select every email in it.</span>
+        <span data-w="oneEmailTip">Only 1 email came through. To include the whole thread, select every email in it.</span>
       </p>
     </header>
 
@@ -31,19 +37,22 @@
         <div class="tools-row">
           <label class="check-all">
             <input type="checkbox" id="check-all">
-            <span>Select all</span>
+            <span data-w="selectAll">Select all</span>
           </label>
           <span id="selected-count" class="muted"></span>
         </div>
         <label class="multi-stop">
           <input type="checkbox" id="multi-stop">
-          <span><b>Multi-stop</b> <span class="muted">· one PDF per stop: -1, -2…</span></span>
+          <span><b data-w="multiStop">Multi-stop</b> <span class="muted">· <span data-w="multiStopNote">one PDF per stop: -1, -2…</span></span></span>
         </label>
       </div>
-      <ul id="file-list" class="file-list"></ul>
+      <div class="list-wrap">
+        <ul id="file-list" class="file-list"></ul>
+        <div id="drop-line" class="drop-line" hidden></div>
+      </div>
       <label id="logos-toggle" class="logos-toggle" hidden>
         <input type="checkbox" id="show-logos">
-        <span>Show logos &amp; icons (<span id="logo-count">0</span>)</span>
+        <span><span data-w="showLogos">Show logos &amp; icons</span> (<span id="logo-count">0</span>)</span>
       </label>
     </main>
 
@@ -51,7 +60,7 @@
     <main id="compose-view" class="view" hidden>
       <div class="compose-card">
         <p id="compose-text">Looking for a combined PDF…</p>
-        <button id="btn-attach" class="btn primary" hidden>Attach PDF</button>
+        <button id="btn-attach" class="btn primary" hidden data-w="attachPdf">Attach PDF</button>
       </div>
     </main>
 
@@ -65,54 +74,49 @@
         <p id="rc-banner-text"></p>
         <div class="btn-row">
           <button id="rc-leave-out" class="btn primary" type="button">Leave it out</button>
-          <button id="rc-keep" class="btn" type="button">Not a rate con</button>
+          <button id="rc-keep" class="btn" type="button" data-w="notARateCon">Not a rate con</button>
         </div>
       </div>
       <div id="save-actions" class="save-actions">
         <div class="menu-wrap">
           <button id="btn-email" class="btn primary menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="email-menu">
-            <span>Email</span>
+            <span data-w="email">Email</span>
             <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div id="email-menu" class="menu" role="menu" aria-label="Email" hidden></div>
         </div>
-        <button id="btn-save" class="btn" type="button">Save PDF…</button>
+        <button id="btn-save" class="btn" type="button" data-w="savePdf">Save PDF…</button>
       </div>
       <form id="name-form" class="name-form" hidden>
-        <label for="file-name" class="name-label">Name the PDF</label>
+        <label for="file-name" class="name-label" data-w="nameThePdf">Name the PDF</label>
         <div class="name-field">
           <input id="file-name" type="text" autocomplete="off" spellcheck="false" maxlength="120">
           <span class="name-ext" aria-hidden="true">.pdf</span>
         </div>
-        <label id="save-split-row" class="split-row" for="save-split">
-          <span>Split into files of up to</span>
-          <input id="save-split" type="number" min="0.1" max="150" step="0.1" inputmode="decimal" placeholder="no limit">
-          <span>MB</span>
-        </label>
         <p id="name-hint" class="hint" hidden></p>
         <div class="btn-row">
-          <button id="name-save" class="btn primary" type="submit">Save</button>
-          <button id="name-cancel" class="btn" type="button">Cancel</button>
+          <button id="name-save" class="btn primary" type="submit" data-w="save">Save</button>
+          <button id="name-cancel" class="btn" type="button" data-w="cancel">Cancel</button>
         </div>
       </form>
       <form id="load-form" class="name-form load-form" hidden novalidate>
         <div id="load-row" class="field-stack">
-          <label for="load-number" class="name-label">Load number</label>
+          <label for="load-number" class="name-label" data-w="loadNumber">Load number</label>
           <div class="name-field">
             <input id="load-number" type="text" autocomplete="off" spellcheck="false" maxlength="60">
           </div>
         </div>
         <p id="load-hint" class="hint"></p>
         <fieldset class="acc">
-          <legend class="name-label">Accessorials <span class="muted">(optional)</span></legend>
+          <legend class="name-label"><span data-w="accessorials">Accessorials</span> <span class="muted">(optional)</span></legend>
           <div class="acc-picks">
-            <label class="acc-pick"><input type="checkbox" id="acc-det"><span>Detention</span></label>
-            <label class="acc-pick"><input type="checkbox" id="acc-lum"><span>Lumper</span></label>
-            <label class="acc-pick"><input type="checkbox" id="acc-oth"><span>Other</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-det"><span data-w="detention">Detention</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-lum"><span data-w="lumper">Lumper</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-oth"><span data-w="other">Other</span></label>
           </div>
           <div id="acc-det-box" class="acc-box" hidden>
             <div class="acc-head">
-              <span class="acc-title">Detention</span>
+              <span class="acc-title" data-w="detention">Detention</span>
               <select id="det-at" aria-label="Detention at">
                 <option value="">Shipper or receiver?</option>
                 <option>Shipper</option>
@@ -120,34 +124,34 @@
               </select>
             </div>
             <div class="acc-grid3">
-              <label class="acc-field"><span>IN</span><input id="det-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span>APPT</span><input id="det-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span>OUT</span><input id="det-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="timeIn">IN</span><input id="det-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="appointment">APPT</span><input id="det-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="timeOut">OUT</span><input id="det-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
             </div>
-            <label class="acc-field acc-inline"><span>Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
+            <label class="acc-field acc-inline"><span data-w="hoursRequested">Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
           </div>
           <div id="acc-lum-box" class="acc-box" hidden>
             <div class="acc-head">
-              <span class="acc-title">Lumper</span>
+              <span class="acc-title" data-w="lumper">Lumper</span>
               <select id="lum-at" aria-label="Lumper at">
                 <option value="">Shipper or receiver?</option>
                 <option>Shipper</option>
                 <option>Receiver</option>
               </select>
             </div>
-            <label class="acc-field acc-inline"><span>Total</span><span class="money"><span aria-hidden="true">$</span><input id="lum-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+            <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="lum-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
           </div>
           <div id="acc-oth-box" class="acc-box" hidden>
             <div class="acc-head">
-              <span class="acc-title">Other</span>
+              <span class="acc-title" data-w="other">Other</span>
               <select id="oth-at" aria-label="Other accessorial at">
                 <option value="">Shipper or receiver?</option>
                 <option>Shipper</option>
                 <option>Receiver</option>
               </select>
             </div>
-            <label class="acc-field acc-inline"><span>Type</span><input id="oth-type" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Driver assist"></label>
-            <label class="acc-field acc-inline"><span>Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+            <label class="acc-field acc-inline"><span data-w="otherType">Type</span><input id="oth-type" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Driver assist"></label>
+            <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
           </div>
         </fieldset>
         <div id="checklist-box" class="checklist" hidden>
@@ -156,20 +160,30 @@
         </div>
         <p id="acc-error" class="hint error" role="alert"></p>
         <div class="btn-row">
-          <button id="load-go" class="btn primary" type="submit">Create email</button>
-          <button id="load-cancel" class="btn" type="button">Cancel</button>
+          <button id="load-go" class="btn primary" type="submit" data-w="createEmail">Create email</button>
+          <button id="load-cancel" class="btn" type="button" data-w="cancel">Cancel</button>
         </div>
       </form>
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <div id="parts" class="parts" hidden></div>
     </footer>
 
-    <details id="diagnostics" class="diagnostics">
-      <summary>Test report</summary>
-      <p class="muted small">Try the buttons above, then copy this and paste it into the chat.</p>
-      <textarea id="report" readonly spellcheck="false" aria-label="Test report"></textarea>
-      <button id="btn-copy-report" class="btn" type="button">Copy report</button>
-    </details>
+    <div class="foot-row">
+      <details id="diagnostics" class="diagnostics">
+        <summary data-w="testReport">Test report</summary>
+        <p class="muted small">Try the buttons above, then copy this and paste it into the chat.</p>
+        <textarea id="report" readonly spellcheck="false" aria-label="Test report"></textarea>
+        <button id="btn-copy-report" class="btn" type="button" data-w="copyReport">Copy report</button>
+      </details>
+      <!-- Light or dark: one button that opens into Light (sun), Dark (moon) and Match Outlook (screen) -->
+      <div class="foot-toggle">
+        <div id="mode-pop" class="mode-pop" role="radiogroup" data-open="false" data-w-aria="appearance" aria-label="Appearance">
+          <button class="pop-item" type="button" role="radio" aria-checked="false" data-mode="light" data-w-aria="light" data-w-title="light" aria-label="Light" title="Light"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="3.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.3v1.9M10 15.8v1.9M2.3 10h1.9M15.8 10h1.9M4.6 4.6l1.35 1.35M14.05 14.05l1.35 1.35M4.6 15.4l1.35-1.35M14.05 5.95l1.35-1.35" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+          <button class="pop-item" type="button" role="radio" aria-checked="false" data-mode="dark" data-w-aria="dark" data-w-title="dark" aria-label="Dark" title="Dark"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M16 12.6A6.6 6.6 0 0 1 7.4 4a6.6 6.6 0 1 0 8.6 8.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
+          <button class="pop-item" type="button" role="radio" aria-checked="true" data-mode="match" data-w-aria="matchOutlook" data-w-title="matchOutlook" aria-label="Match Outlook" title="Match Outlook"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="2.8" y="3.6" width="14.4" height="9.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7.4 16.7h5.2M10 13.6v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Full-panel preview -->
@@ -193,12 +207,12 @@
     <div class="preview-foot">
       <label class="check-all">
         <input type="checkbox" id="pv-include">
-        <span id="pv-include-label">Include in PDF</span>
+        <span id="pv-include-label" data-w="includeInPdf">Include in PDF</span>
       </label>
       <span id="pv-pages" class="muted small"></span>
     </div>
     <div class="pv-admin">
-      <button id="pv-rc-sample" class="link-btn" type="button" hidden>Use as rate con sample</button>
+      <button id="pv-rc-sample" class="link-btn" type="button" hidden data-w="useAsRcSample">Use as rate con sample</button>
     </div>
   </section>
 
@@ -309,6 +323,28 @@
           <input type="checkbox" id="tpl-no-lumper">
           <span>Say <b>No Lumper</b> in the message when Lumper isn't ticked</span>
         </label>
+        <div class="field">
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-acc-sep">
+            <span>Accessorials in a separate email</span>
+          </label>
+          <div id="tpl-acc-row" class="tpl-sub tpl-acc" hidden>
+            <small class="hint">When Detention, Lumper or Other is ticked, Create email opens two emails: the PODs, and a request like <b>3645493 - Detention/Lumper Request</b> with the PODs and receipts attached and the details in it.</small>
+            <label class="field">
+              <span>To <span class="muted">(blank: the same as above)</span></span>
+              <input id="tpl-acc-to" type="text" autocomplete="off" spellcheck="false" placeholder="accessorials@example.com">
+            </label>
+            <label class="field">
+              <span>CC <span class="muted">(blank: the same as above)</span></span>
+              <input id="tpl-acc-cc" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span>Message <span class="muted">(optional)</span></span>
+              <textarea id="tpl-acc-message" rows="3"></textarea>
+              <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Detention, Lumper and so on.</small>
+            </label>
+          </div>
+        </div>
         <label class="field">
           <span>Checklist before sending <span class="muted">(optional)</span></span>
           <textarea id="tpl-checklist" rows="3" placeholder="One item per line, e.g. Receiver's printed name and signature on the POD"></textarea>
@@ -336,14 +372,6 @@
             <span class="name-ext" aria-hidden="true">.pdf</span>
           </span>
         </label>
-        <label class="field">
-          <span>Split into files of up to <span class="muted">(optional)</span></span>
-          <span class="name-field">
-            <input id="tpl-split" type="number" min="0.1" max="150" step="0.1" inputmode="decimal" placeholder="no limit">
-            <span class="name-ext" aria-hidden="true">MB</span>
-          </span>
-          <small class="hint">Bigger PDFs are split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Leave it blank to never split.</small>
-        </label>
         <div class="field">
           <span>Files</span>
           <label class="check-row tpl-check">
@@ -352,17 +380,17 @@
           </label>
           <label class="check-row tpl-check">
             <input type="checkbox" id="tpl-lumper-sep">
-            <span>Lumper receipts in their own file</span>
+            <span>Receipts in their own file</span>
           </label>
           <div id="tpl-lumper-row" class="tpl-sub" hidden>
             <span class="name-field">
-              <input id="tpl-lumper-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Lumper receipt file name">
+              <input id="tpl-lumper-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Receipt file name">
               <span class="name-ext" aria-hidden="true">.pdf</span>
             </span>
-            <small class="hint">Tick <b>Lumper receipt</b> on those files in the list, or on their pages in the preview.</small>
+            <small class="hint">Tick <b data-w="receipt">Receipt</b> on those files in the list, or on their pages in the preview.</small>
           </div>
         </div>
-        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>.</p>
+        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>. A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files and receipt files are kept whole.</p>
         <p id="tpl-error" class="status error" role="alert"></p>
         <div class="btn-row">
           <button id="tpl-save" class="btn primary" type="submit">Save template</button>
