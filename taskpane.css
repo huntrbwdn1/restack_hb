@@ -342,6 +342,9 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tag-chip input { width: 14px; height: 14px; accent-color: var(--tag-ink); }
 .tag-chip.on { border-color: var(--tag-line); background: var(--tag-bg); color: var(--tag-ink); }
 .pv-page-tags { display: flex; align-items: center; gap: 6px; }
+.pv-page-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.pv-rotate { width: 28px; height: 28px; margin-left: auto; }
+.pv-page-tags .pv-rotate { margin-left: 0; }
 .file-note.lumper { font-style: normal; color: var(--tag-ink); }
 .tpl-check { align-items: flex-start; font-size: 13px; font-weight: 400; }
 .tpl-check input { margin-top: 2px; }

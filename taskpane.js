@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.14.3';
+const VERSION = '0.15.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -146,6 +146,7 @@ const WORDS = {
 
   // The preview
   includeInPdf: "Include in PDF",
+  rotate: "Rotate",                                // the button on each page and photo (turns it a quarter clockwise)
 
   // The bottom of the panel
   testReport: "Test report",
@@ -2215,6 +2216,8 @@ function fillThumbSlot(slot, file) {
     const img = document.createElement('img');
     img.alt = '';
     img.src = file.thumb;
+    const turn = rotationOf(file, 0);
+    if (turn) img.style.transform = `rotate(${turn}deg)`; // as turned in the preview
     slot.append(img);
   } else {
     slot.innerHTML = typeIcon(file);
@@ -2391,8 +2394,9 @@ async function previewPdf(file, body, token, waiting) {
     for (let p = 1; p <= count; p++) {
       if (token !== state.previewToken) return;
       const page = await doc.getPage(p);
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: (width * ratio) / base.width });
+      const rotation = (((page.rotate || 0) + rotationOf(file, p - 1)) % 360 + 360) % 360; // as turned in the preview
+      const base = page.getViewport({ scale: 1, rotation });
+      const viewport = page.getViewport({ scale: (width * ratio) / base.width, rotation });
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
@@ -2406,6 +2410,86 @@ async function previewPdf(file, body, token, waiting) {
   } finally {
     closePdf(doc);
   }
+}
+
+// ---- turning pages and photos (a quarter turn clockwise per click, for the PDF; the attachment stays as it is)
+
+const ROTATE_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4v6h-6"/><path d="M19.4 15a8.5 8.5 0 1 1-2-8.8L21 10"/></svg>';
+
+/** How far a page (or the photo, index 0) has been turned in the preview: 0, 90, 180 or 270 degrees clockwise. */
+function rotationOf(file, index) {
+  return (file.rotations && file.rotations.get(index)) || 0;
+}
+
+/** One more quarter turn for a page; returns its new rotation. */
+function turnPage(file, index) {
+  if (!file.rotations) file.rotations = new Map();
+  const next = (rotationOf(file, index) + 90) % 360;
+  if (next) file.rotations.set(index, next);
+  else file.rotations.delete(index);
+  state.built.clear();
+  log(`Rotate: ${file.name}${file.kind === 'Image' ? '' : ` page ${index + 1}`} now turned ${next}°`);
+  if (index === 0) placeThumb(file);
+  return next;
+}
+
+/** A copy of a canvas turned clockwise by 90, 180 or 270 degrees (the same canvas for 0). */
+function turnCanvas(source, deg) {
+  if (!deg) return source;
+  const canvas = document.createElement('canvas');
+  const quarter = deg % 180 !== 0;
+  canvas.width = quarter ? source.height : source.width;
+  canvas.height = quarter ? source.width : source.height;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  const label = source.getAttribute('aria-label');
+  if (label) canvas.setAttribute('aria-label', label);
+  if (source.style.aspectRatio) {
+    const [w, h] = source.style.aspectRatio.split('/').map((v) => v.trim());
+    canvas.style.aspectRatio = quarter ? `${h} / ${w}` : `${w} / ${h}`;
+  }
+  return canvas;
+}
+
+/** The Rotate button for a page or photo in the preview. It turns the picture there straight away. */
+function rotateButton(file, index, holder) {
+  const button = el('button', 'icon-btn pv-rotate');
+  button.type = 'button';
+  const what = file.kind === 'Image' ? 'the photo' : `page ${index + 1}`;
+  button.setAttribute('aria-label', `${word('rotate')} ${what}`);
+  button.title = word('rotate');
+  button.innerHTML = ROTATE_SVG;
+  button.addEventListener('click', () => {
+    turnPage(file, index);
+    const canvas = holder.querySelector('canvas');
+    if (canvas) canvas.replaceWith(turnCanvas(canvas, 90));
+  });
+  return button;
+}
+
+/** A photo or fax page in the preview: its label and Rotate button above the picture. */
+function turnHolder(file, index, canvas, label) {
+  const holder = el('div', 'pv-page');
+  holder.dataset.page = String(index);
+  const top = el('div', 'pv-page-top');
+  top.append(el('span', 'pv-page-label', label), rotateButton(file, index, holder));
+  holder.append(top, turnCanvas(canvas, rotationOf(file, index)));
+  return holder;
+}
+
+/** Turns the pages just added to `out` for a file the way they were turned in the preview. */
+function applyTurns(out, file, from, only) {
+  if (!file.rotations || !file.rotations.size) return;
+  const pages = out.getPages().slice(from);
+  const sources = file.kind === 'PDF' && only ? only : pages.map((_, i) => i);
+  pages.forEach((page, i) => {
+    const turn = rotationOf(file, sources[i]);
+    if (!turn) return;
+    const now = ((page.getRotation().angle % 360) + 360) % 360;
+    page.setRotation(PDFLib.degrees((now + turn) % 360));
+  });
 }
 
 /** A previewed PDF page with its own "include this page" checkbox (and, with Multi-stop, its stop). */
@@ -2427,7 +2511,7 @@ function pageHolder(file, index, canvas) {
   const tags = el('div', 'pv-page-tags');
   const badge = el('span', 'rc-badge', word('rateConBadge'));
   badge.title = 'This page looks like a rate confirmation';
-  tags.append(badge, pick, chip);
+  tags.append(badge, pick, chip, rotateButton(file, index, holder));
   top.append(bar, tags);
   holder.append(top, canvas);
   syncPageHolder(holder, file); // right from the start, while later pages still render
@@ -2510,7 +2594,7 @@ async function previewImage(file, body, token, waiting) {
   if (token !== state.previewToken) return;
   const canvas = rasterize(image, MAX_IMAGE_SIDE);
   waiting.remove();
-  body.append(canvas);
+  body.append(turnHolder(file, 0, canvas, 'Photo'));
   const [w, h] = sizeOf(image);
   $('pv-pages').textContent = `${w} × ${h}`;
 }
@@ -2521,10 +2605,10 @@ async function previewTiff(file, body, token, waiting) {
   if (!pages.length) throw userError('This TIFF file has no pages.');
   waiting.remove();
   $('pv-pages').textContent = plural(pages.length, 'page');
-  for (const page of pages.slice(0, PREVIEW_PAGE_LIMIT)) {
+  pages.slice(0, PREVIEW_PAGE_LIMIT).forEach((page, i) => {
     page.canvas.style.aspectRatio = `${page.w / page.xresOr1} / ${page.h / page.yresOr1}`;
-    body.append(page.canvas);
-  }
+    body.append(turnHolder(file, i, page.canvas, `Page ${i + 1}`));
+  });
 }
 
 // --------------------------------------------------------------------------- decoding
@@ -2782,7 +2866,8 @@ async function addTiff(out, file) {
  * or null for its picked pages). Cached until the selection changes.
  */
 async function buildPdf(entries, label) {
-  const key = entries.map(({ file, only }) => `${file.id}:${(only || includedPages(file) || ['all']).join('.')}`).join(',');
+  const turns = (file) => (file.rotations ? [...file.rotations].map(([i, d]) => `${i}r${d}`).join('.') : '');
+  const key = entries.map(({ file, only }) => `${file.id}:${(only || includedPages(file) || ['all']).join('.')}:${turns(file)}`).join(',');
   if (state.built.has(key)) return state.built.get(key);
   const out = await PDFLib.PDFDocument.create();
   const skipped = [];
@@ -2790,6 +2875,7 @@ async function buildPdf(entries, label) {
     const { file } = entries[i];
     const only = entries[i].only || includedPages(file);
     setStatus(`${label ? `${label}: ` : ''}Adding ${i + 1} of ${entries.length}: ${file.name}`);
+    const before = out.getPageCount();
     try {
       if (file.kind === 'PDF') {
         if (only && !only.length) continue;
@@ -2800,6 +2886,7 @@ async function buildPdf(entries, label) {
       } else if (file.kind === 'TIFF') {
         await addTiff(out, file);
       }
+      applyTurns(out, file, before, only);
     } catch (error) {
       const reason = error.userMessage || `couldn't be converted (${error.message})`;
       skipped.push({ name: file.name, reason });

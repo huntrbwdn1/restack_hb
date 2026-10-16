@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to email or save. Restack was called Thread Attachments before 0.13; it's the same add-in (same ID), so team keys and published templates carry over.
 
-**Status:** test build 0.14.
+**Status:** test build 0.15.
 
 ## Install
 
@@ -26,7 +26,9 @@ Open this repository's GitHub Pages site (the address shown under **Settings →
 - Accessorials: tick Detention (shipper or receiver, IN, APPT, OUT, hours requested), Lumper (total) or Other (type, total) when creating the email, and they're listed in the message. On a Multi-stop load, the receiver choices name the stop, like "Receiver (Stop 2)".
 - When only one email comes through, a tip says so, and its info icon plays a short how-to for selecting every email in the thread (new Outlook or classic Outlook).
 - Pick individual pages of a PDF in the preview, for example the POD but not the rate confirmation sent in the same file.
-- Light or dark: a button at the bottom of the panel opens into Light, Dark and Match Outlook (the default). The choice is saved in each person's Outlook account.
+- Rotate pages and photos in the preview, a quarter turn per click, so sideways scans and photos go into the PDF upright. The attachment itself isn't changed.
+- Settings: the gear at the bottom of the panel, there whatever email is selected (even one without attachments, or none). It has Manage templates, for whoever can make templates, and Appearance: Light, Dark or Match Outlook (the default), saved in each person's Outlook account.
+- Templates are listed A to Z, in the Email menu and in Manage templates.
 - Optional automatic attaching: with the team admin's PDF Emails Azure function (its own Function App, kept outside this site), Create email opens with the PDF already attached.
 
 ## Changing the wording
