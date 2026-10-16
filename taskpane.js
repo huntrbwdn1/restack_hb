@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.14.0';
+const VERSION = '0.14.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -3218,13 +3218,12 @@ function accessorialSubject(load, acc) {
   return word('accessorialSubject', { load: String(load || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
 }
 
-/** The accessorial email's To and CC: the template's, or the POD email's where those are blank. */
+/** The accessorial email's To and CC: the template's own. A blank To uses the POD email's; a blank CC means no CC. */
 function accessorialRecipients(t, load) {
   const to = parseAddresses(fill(t.accTo, load));
-  const cc = parseAddresses(fill(t.accCc, load));
   return {
     to: (to.length ? to : parseAddresses(fill(t.to, load))).slice(0, 100),
-    cc: (cc.length ? cc : parseAddresses(fill(t.cc, load))).slice(0, 100),
+    cc: parseAddresses(fill(t.accCc, load)).slice(0, 100),
   };
 }
 
@@ -4078,7 +4077,7 @@ function cleanTemplates(list) {
       lumperName: String(t.lumperName || '').trim() || '{load} Lumper',
       noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't ticked
       accSeparate: !!t.accSeparate,                 // accessorials in a separate email, when one is ticked
-      accTo: String(t.accTo || ''),                 // that email's To and CC (blank: the POD email's)
+      accTo: String(t.accTo || ''),                 // that email's To (blank: the POD email's) and CC (blank: none)
       accCc: String(t.accCc || ''),
       accBody: String(t.accBody || ''),             // its message (blank: WORDS.accessorialIntro)
       checklist: cleanChecklist(t.checklist),       // things to tick before the email is created
