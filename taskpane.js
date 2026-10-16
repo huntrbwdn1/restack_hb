@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.8.1';
+const VERSION = '0.11.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -22,8 +22,26 @@ const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pd
 const TEAM_FILE = 'team.json';
 const MY_TEMPLATES_KEY = 'myTemplates'; // each person's own templates (Outlook roaming settings)
 const DRAFT_KEY = 'teamDraft';          // the team admin's unpublished edits
-const NEW_TEMPLATE = { body: 'Attached are the POD(s) for load {load}.', file: '{load}' };
+const NEW_TEMPLATE = { body: 'Attached are the POD(s) for load {load}.', file: '{load}', lumperName: '{load} Lumper' };
 const STOP_CHOICES = 9;                 // the stop picker offers at least Stop 1-9
+const QUIZ = {                          // a template's questions, asked before the Create email step
+  maxQuestions: 12,
+  maxAnswers: 8,
+  intro: 'This is a {company} load. Please answer the following before continuing:',
+};
+const RC = {                            // the rate confirmation check
+  minWords: 15,                         // digital pages with fewer words than this are too sparse to be one
+  scanWords: 3,                         // pages with fewer words than this are scans, compared by layout
+  textMatch: 0.45,                      // share of the sample's words found on a page
+  layoutMatch: 0.7,                     // layout likeness for scanned pages and photos (-1 to 1)
+  boxSlack: 0.2,                        // a scan's printed area may differ this much (share of the page) from the sample's
+  maxPages: 30,                         // pages checked per file
+  samplePages: 3,                       // pages kept from the sample rate confirmation
+  sampleWords: 250,                     // words kept per sample page
+  gridW: 24,                            // a page's layout is ink density in a 24 x 32 grid
+  gridH: 32,
+  renderW: 220,                         // pages are drawn this many pixels wide to measure their layout
+};
 
 const COMBINABLE = new Set(['PDF', 'Image', 'TIFF']);
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'jfif', 'png', 'gif', 'bmp', 'webp']);
@@ -44,6 +62,13 @@ const ICON_LINE = '#8a8a8a';
 const OFFICE_COLOR = { doc: '#185abd', docx: '#185abd', docm: '#185abd', rtf: '#185abd', odt: '#185abd', xls: '#107c41', xlsx: '#107c41', xlsm: '#107c41', xlsb: '#107c41', csv: '#107c41', ods: '#107c41', ppt: '#c43e1c', pptx: '#c43e1c' };
 const ENVELOPE_SVG = '<svg viewBox="0 0 28 28" aria-hidden="true"><rect x="3.5" y="7" width="21" height="14.5" rx="1.5" fill="#fff" stroke="#0f6cbd" stroke-width="1.3"/><path d="M4.2 8 14 15.5 23.8 8" fill="none" stroke="#0f6cbd" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const CLOUD_SVG = '<svg viewBox="0 0 28 28" aria-hidden="true"><path d="M8.6 21h11.6a4.4 4.4 0 0 0 .5-8.8 6.2 6.2 0 0 0-11.9 1.7A3.6 3.6 0 0 0 8.6 21Z" fill="#fff" stroke="#0f6cbd" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+const X_SVG = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+const STOP_SVG = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M7 2.5h6L17.5 7v6L13 17.5H7L2.5 13V7Z" fill="#b10e1c"/><path d="M6.5 10h7" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+// The how-to animation's little pictures (a mouse pointer, Outlook's expand arrows, a paperclip)
+const CURSOR_SVG = '<svg viewBox="0 0 16 22" width="16" height="22" aria-hidden="true"><path d="M1 1v17.5l4.4-4.2 2.9 6.6 2.7-1.2-2.9-6.5h6.1Z" fill="#fff" stroke="#242424" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+const CHEVRON_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m3.5 1.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const TRIANGLE_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5v7L8 5Z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>';
+const CLIP_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M8.2 3.6 4.6 7.2a.9.9 0 0 0 1.3 1.3l3.9-3.9a1.9 1.9 0 0 0-2.7-2.7L3.2 5.8a2.9 2.9 0 0 0 4.1 4.1L9.6 7.6" fill="none" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>';
 
 const $ = (id) => document.getElementById(id);
 
@@ -84,6 +109,7 @@ const state = {
   busy: false,
   reloadPending: false,
   built: new Map(),      // PDFs already built for the current selection, so Save then Email doesn't rebuild
+  rcPending: false,      // the rate confirmation check is still going through the files
   previewIndex: -1,
   previewToken: 0,
   env: [],
@@ -349,6 +375,308 @@ function showMessage(text) {
   showView('message-view');
 }
 
+// --------------------------------------------------------------------------- only one email came through: tip and how-to
+
+/**
+ * When only one email came through, a tip under the summary. Outlook doesn't say how many emails
+ * the conversation has, so it shows whenever there's just one. Its info icon (hover or click)
+ * plays a short how-to for selecting every email, for new Outlook or classic Outlook.
+ */
+function renderOneEmailTip(messages) {
+  const show = messages === 1;
+  $('one-tip').hidden = !show;
+  if (!show) closeHowto(false);
+  else log('Tip: only 1 email came through');
+}
+
+const HOWTO = {
+  new: {
+    label: 'New Outlook',
+    steps: [
+      'Click › next to the conversation to open it.',
+      'Tick the checkbox at the top of the conversation.',
+      'Every email is selected, so Thread Attachments reads them all.',
+    ],
+    note: '',
+    script: [ // what the pointer does, step by step (wait: ms before the next frame)
+      { step: 0, state: 'collapsed', cursor: 'rest', wait: 900 },
+      { cursor: 'chev', wait: 850 },
+      { click: true, state: 'expanded', wait: 1000 },
+      { step: 1, cursor: 'head-check', wait: 850 },
+      { click: true, state: 'all', wait: 500 },
+      { step: 2, cursor: 'rest', wait: 2800 },
+    ],
+  },
+  classic: {
+    label: 'Classic Outlook',
+    steps: [
+      'Click ▷ next to the conversation to open it.',
+      'Click the first email under it.',
+      'Hold Shift and click the last email.',
+      'Every email is selected, so Thread Attachments reads them all.',
+    ],
+    note: 'To pick only some of them, hold Ctrl and click each one.',
+    script: [
+      { step: 0, state: 'collapsed', cursor: 'rest', wait: 900 },
+      { cursor: 'chev', wait: 850 },
+      { click: true, state: 'expanded', wait: 1000 },
+      { step: 1, cursor: 'first', wait: 850 },
+      { click: true, state: 'first', wait: 700 },
+      { step: 2, shift: true, cursor: 'last', wait: 1100 },
+      { click: true, state: 'range', wait: 500 },
+      { step: 3, shift: false, cursor: 'rest', wait: 2800 },
+    ],
+  },
+};
+
+// The made-up conversation the how-to plays with
+const HOWTO_EMAILS = [
+  { who: 'Dispatch', what: 'POD stop 1', clip: true },
+  { who: 'You', what: 'Got it, thanks!', clip: false },
+  { who: 'Driver', what: 'Lumper receipt', clip: true },
+  { who: 'Dispatch', what: 'POD stop 2', clip: true },
+];
+
+const howto = { client: 'new', detected: '', pinned: false, token: 0, hoverTimer: 0, leaveTimer: 0 };
+
+/** Which Outlook this is: 'classic', 'new' (new Outlook or the web) or '' when it doesn't say. */
+function detectOutlook() {
+  try {
+    const host = String((Office.context.mailbox.diagnostics || {}).hostName || '');
+    if (host === 'Outlook') return 'classic';
+    if (host === 'newOutlookWindows' || host === 'OutlookWebApp') return 'new';
+  } catch (error) {
+    // not told
+  }
+  return '';
+}
+
+function hostLabel() {
+  try {
+    const host = String((Office.context.mailbox.diagnostics || {}).hostName || '');
+    if (host === 'OutlookWebApp') return 'Outlook on the web, which works like New Outlook';
+  } catch (error) {
+    // not told
+  }
+  return howto.detected ? HOWTO[howto.detected].label : '';
+}
+
+function buildHowtoStage(client) {
+  const stage = $('howto-stage');
+  stage.textContent = '';
+  stage.dataset.client = client;
+  stage.dataset.state = 'collapsed';
+  stage.classList.remove('shift');
+  const list = el('div', 'ml');
+  const head = el('div', 'ml-row ml-head');
+  const chev = el('span', 'ml-chev');
+  chev.dataset.target = 'chev';
+  chev.innerHTML = client === 'classic' ? TRIANGLE_SVG : CHEVRON_SVG;
+  head.append(chev);
+  if (client === 'new') {
+    const box = el('span', 'ml-check');
+    box.dataset.target = 'head-check';
+    head.append(box);
+  }
+  const title = el('span', 'ml-lines');
+  title.append(el('b', '', 'Load 3645493 PODs'), el('i', '', `${HOWTO_EMAILS.length} emails`));
+  head.append(title);
+  const kids = el('div', 'ml-kids');
+  HOWTO_EMAILS.forEach((email, i) => {
+    const row = el('div', 'ml-row ml-kid');
+    if (i === 0) row.dataset.target = 'first';
+    if (i === HOWTO_EMAILS.length - 1) row.dataset.target = 'last';
+    if (client === 'new') row.append(el('span', 'ml-check'));
+    const text = el('span', 'ml-lines');
+    text.append(el('b', '', email.who), el('i', '', email.what));
+    row.append(text);
+    if (email.clip) {
+      const clip = el('span', 'ml-clip');
+      clip.innerHTML = CLIP_SVG;
+      row.append(clip);
+    }
+    kids.append(row);
+  });
+  list.append(head, kids);
+  const ring = el('span', 'ml-ring');
+  const cursor = el('span', 'ml-cursor');
+  cursor.innerHTML = CURSOR_SVG;
+  stage.append(list, ring, cursor, el('span', 'ml-key', 'Shift'));
+}
+
+/** Where the pointer goes for a target: the middle of a small box, or into a row's text. */
+function howtoPoint(stage, target) {
+  if (target === 'rest') return [stage.clientWidth - 40, stage.clientHeight - 30];
+  const node = stage.querySelector(`[data-target="${target}"]`);
+  if (!node) return [stage.clientWidth / 2, stage.clientHeight / 2];
+  const s = stage.getBoundingClientRect();
+  const r = node.getBoundingClientRect();
+  const x = r.width < 40 ? r.left + r.width / 2 : r.left + Math.min(70, r.width / 2);
+  return [Math.round(x - s.left), Math.round(r.top + r.height / 2 - s.top)];
+}
+
+function moveHowtoCursor(stage, target, instant) {
+  const cursor = stage.querySelector('.ml-cursor');
+  const [x, y] = howtoPoint(stage, target);
+  cursor.classList.toggle('instant', !!instant);
+  cursor.style.transform = `translate(${x}px, ${y}px)`;
+  stage.dataset.at = target;
+  if (instant) void cursor.offsetWidth; // apply the jump before transitions come back
+  cursor.classList.remove('instant');
+}
+
+function howtoClick(stage) {
+  const ring = stage.querySelector('.ml-ring');
+  const [x, y] = howtoPoint(stage, stage.dataset.at || 'rest');
+  ring.style.left = `${x}px`;
+  ring.style.top = `${y}px`;
+  ring.classList.remove('go');
+  void ring.offsetWidth; // restart the ripple
+  ring.classList.add('go');
+}
+
+function markHowtoStep(index) {
+  [...$('howto-steps').children].forEach((item, i) => {
+    item.classList.toggle('on', i === index);
+    item.classList.toggle('done', index >= 0 && i < index);
+  });
+}
+
+function reducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (error) {
+    return false;
+  }
+}
+
+/** Plays the how-to over and over until the box closes (or the other Outlook is picked). */
+async function playHowto(token) {
+  const stage = $('howto-stage');
+  const plan = HOWTO[howto.client];
+  if (reducedMotion()) { // just the end result, with every step listed
+    stage.dataset.state = howto.client === 'classic' ? 'range' : 'all';
+    markHowtoStep(-1);
+    return;
+  }
+  moveHowtoCursor(stage, 'rest', true);
+  while (token === howto.token) {
+    for (const frame of plan.script) {
+      if (token !== howto.token) return;
+      if (frame.step !== undefined) markHowtoStep(frame.step);
+      if (frame.shift !== undefined) stage.classList.toggle('shift', frame.shift);
+      if (frame.cursor) moveHowtoCursor(stage, frame.cursor);
+      if (frame.click) howtoClick(stage);
+      if (frame.state) stage.dataset.state = frame.state;
+      await new Promise((resolve) => setTimeout(resolve, frame.wait));
+    }
+  }
+}
+
+function showHowtoFor(client) {
+  howto.client = client;
+  for (const [id, which] of [['howto-tab-new', 'new'], ['howto-tab-classic', 'classic']]) {
+    $(id).setAttribute('aria-selected', String(which === client));
+    $(id).tabIndex = which === client ? 0 : -1;
+  }
+  const plan = HOWTO[client];
+  const steps = $('howto-steps');
+  steps.textContent = '';
+  for (const text of plan.steps) steps.append(el('li', '', text));
+  $('howto-note').textContent = plan.note;
+  $('howto-note').hidden = !plan.note;
+  const label = hostLabel();
+  $('howto-you').textContent = label ? `You're using ${label}.` : '';
+  $('howto-you').hidden = !label;
+  buildHowtoStage(client);
+  const token = ++howto.token;
+  requestAnimationFrame(() => {
+    if (token === howto.token) playHowto(token).catch(() => {});
+  });
+}
+
+function positionHowto() {
+  const tip = $('one-tip').getBoundingClientRect();
+  const top = Math.max(8, Math.round(Math.min(tip.bottom + 6, window.innerHeight - 160)));
+  $('howto').style.top = `${top}px`;
+  $('howto').style.maxHeight = `${Math.max(150, window.innerHeight - top - 8)}px`;
+}
+
+function openHowto(pin) {
+  clearTimeout(howto.leaveTimer);
+  clearTimeout(howto.hoverTimer);
+  if (pin) howto.pinned = true;
+  if (!$('howto').hidden) return;
+  if ($('one-tip').hidden) return;
+  if (!howto.detected) {
+    howto.detected = detectOutlook();
+    howto.client = howto.detected || 'new';
+  }
+  positionHowto();
+  $('howto').hidden = false;
+  $('tip-info').setAttribute('aria-expanded', 'true');
+  showHowtoFor(howto.client);
+  log(`Tip: how-to opened (${HOWTO[howto.client].label}${pin ? ', clicked' : ', hovered'})`);
+}
+
+function closeHowto(returnFocus) {
+  clearTimeout(howto.hoverTimer);
+  clearTimeout(howto.leaveTimer);
+  howto.token += 1; // stops the animation
+  howto.pinned = false;
+  if ($('howto').hidden) return;
+  $('howto').hidden = true;
+  $('tip-info').setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('tip-info').focus();
+}
+
+/** Hovering opens the how-to; moving away closes it again, unless it was clicked open. */
+function laterCloseHowto() {
+  if (howto.pinned) return;
+  clearTimeout(howto.leaveTimer);
+  howto.leaveTimer = setTimeout(() => closeHowto(false), 350);
+}
+
+function wireHowto() {
+  const info = $('tip-info');
+  info.addEventListener('mouseenter', () => {
+    clearTimeout(howto.leaveTimer);
+    clearTimeout(howto.hoverTimer);
+    howto.hoverTimer = setTimeout(() => openHowto(false), 200);
+  });
+  info.addEventListener('mouseleave', () => {
+    clearTimeout(howto.hoverTimer);
+    laterCloseHowto();
+  });
+  info.addEventListener('click', () => {
+    if (!$('howto').hidden && howto.pinned) closeHowto(true);
+    else openHowto(true);
+  });
+  $('howto').addEventListener('mouseenter', () => clearTimeout(howto.leaveTimer));
+  $('howto').addEventListener('mouseleave', laterCloseHowto);
+  $('howto-close').addEventListener('click', () => closeHowto(true));
+  for (const [id, client] of [['howto-tab-new', 'new'], ['howto-tab-classic', 'classic']]) {
+    $(id).addEventListener('click', () => {
+      howto.pinned = true;
+      if (client !== howto.client) showHowtoFor(client);
+    });
+    $(id).addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      howto.pinned = true;
+      const other = client === 'new' ? 'classic' : 'new';
+      showHowtoFor(other);
+      $(other === 'new' ? 'howto-tab-new' : 'howto-tab-classic').focus();
+    });
+  }
+  document.addEventListener('pointerdown', (event) => {
+    if (!$('howto').hidden && !event.target.closest('#howto, #tip-info')) closeHowto(false);
+  });
+  window.addEventListener('resize', () => {
+    if (!$('howto').hidden) positionHowto();
+  });
+}
+
 // --------------------------------------------------------------------------- reading the thread
 
 let loadChain = Promise.resolve();
@@ -370,9 +698,11 @@ function loadThread() {
 
 async function loadThreadNow(token) {
   closePreview();
+  closeQuiz();
   hideNameForm();
   hideLoadForm();
   closeEmailMenu(false);
+  renderOneEmailTip(0);
   state.fileName = '';
   state.loadNumber = '';
   state.accessorials = emptyAccessorials();
@@ -457,6 +787,7 @@ async function loadThreadNow(token) {
   state.checked = new Set(); // nothing checked until you pick (or Select all)
   $('title').textContent = state.topic || 'Thread Attachments';
   renderSummary();
+  renderOneEmailTip(messages);
 
   if (!files.length) {
     showMessage(`No attachments in ${messages === 1 ? 'this email' : `these ${messages} emails`}.`);
@@ -467,6 +798,7 @@ async function loadThreadNow(token) {
   const dupes = files.reduce((sum, f) => sum + f.copies - 1, 0);
   log(`Found ${plural(files.length, 'file')}${dupes ? `, ${plural(dupes, 'duplicate')} merged` : ''}${failed ? `, ${failed} unreadable` : ''}`);
   fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
+  checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
 }
 
 // --------------------------------------------------------------------------- picking pages
@@ -521,16 +853,56 @@ function stopsOfFile(file) {
   return map;
 }
 
-/** [{ stop, entries: [{ file, only }] }] in stop order; files keep their list order within a stop. */
-function stopEntries() {
-  const byStop = new Map();
-  for (const file of checkedFiles()) {
-    for (const [stop, only] of stopsOfFile(file)) {
-      if (!byStop.has(stop)) byStop.set(stop, []);
-      byStop.get(stop).push({ file, only });
-    }
+/**
+ * How one checked file is divided up: [{ stop, lumper, pages }] (pages null = all its picked
+ * pages). Stops count only with Multi-stop on; lumper receipts only when `lumpers` is true.
+ */
+function partsOfFile(file, lumpers) {
+  const stopOf = (p) => (state.multiStop ? ((file.pageStops && file.pageStops.get(p)) || file.stop || 1) : 1);
+  const byPage = file.kind === 'PDF' && ((state.multiStop && file.pageStops && file.pageStops.size) || (lumpers && file.pageLumper && file.pageLumper.size));
+  const pages = byPage ? allIncludedPages(file) : null;
+  if (!pages) return [{ stop: state.multiStop ? (file.stop || 1) : 1, lumper: lumpers && !!file.lumper, pages: includedPages(file) }];
+  const parts = new Map();
+  for (const p of pages) {
+    const stop = stopOf(p);
+    const lumper = lumpers && pageLumperOf(file, p);
+    const key = `${stop}|${lumper}`;
+    if (!parts.has(key)) parts.set(key, { stop, lumper, pages: [] });
+    parts.get(key).pages.push(p);
   }
-  return [...byStop.entries()].sort((a, b) => a[0] - b[0]).map(([stop, entries]) => ({ stop, entries }));
+  return [...parts.values()];
+}
+
+/**
+ * The PDFs to make, before building them: [{ stop, lumper, entries: [{ file, only }] }], PODs
+ * first, then lumper receipts. splitStops: one PDF per stop (stop 0 = all stops together, in stop
+ * order). splitLumpers: lumper receipts in their own PDF(s) instead of with the PODs.
+ */
+function fileGroups(splitStops, splitLumpers) {
+  const groups = new Map();
+  checkedFiles().forEach((file, index) => {
+    for (const part of partsOfFile(file, splitLumpers)) {
+      const stop = splitStops ? part.stop : 0;
+      const key = `${part.lumper ? 'L' : 'P'}${stop}`;
+      if (!groups.has(key)) groups.set(key, { stop, lumper: part.lumper, items: [] });
+      groups.get(key).items.push({ file, only: part.pages, order: part.stop, index });
+    }
+  });
+  return [...groups.values()]
+    .sort((a, b) => (Number(a.lumper) - Number(b.lumper)) || (a.stop - b.stop))
+    .map((group) => ({
+      stop: group.stop,
+      lumper: group.lumper,
+      entries: group.items.sort((x, y) => (x.order - y.order) || (x.index - y.index)).map(({ file, only }) => ({ file, only })),
+    }));
+}
+
+/** What an email template does with stops and lumper receipts (t null: Save PDF and Blank email). */
+function layoutOf(t) {
+  return {
+    splitStops: state.multiStop && (!t || t.stopFiles !== false),
+    splitLumpers: !!(t && t.lumperSeparate),
+  };
 }
 
 /** Stop numbers used by the checked files that have one (leaving out `except`). */
@@ -611,6 +983,81 @@ function setPageStop(file, page, stop) {
   if (!file.pageStops) file.pageStops = new Map();
   file.pageStops.set(page, stop);
   normalizePageStops(file);
+  state.built.clear();
+  refreshRow(file);
+  syncPreviewPages();
+}
+
+// --------------------------------------------------------------------------- lumper receipts: which files (or pages) they are
+
+/** The templates this person can use. */
+function emailTemplates() {
+  return [...teamTemplates(), ...(canMakeOwn() ? state.myTemplates : [])];
+}
+
+/** "Lumper receipt" tags show up once some template saves lumper receipts in their own file. */
+function lumperTagging() {
+  return emailTemplates().some((t) => t.lumperSeparate);
+}
+
+function pageLumperOf(file, page) {
+  return file.pageLumper && file.pageLumper.has(page) ? file.pageLumper.get(page) : !!file.lumper;
+}
+
+/** When every picked page of a file is (or isn't) a lumper receipt, that's simply the file's tag again. */
+function normalizePageLumper(file) {
+  if (!file.pageLumper || !file.pageLumper.size) {
+    file.pageLumper = null;
+    return;
+  }
+  const pages = allIncludedPages(file);
+  if (!pages) return;
+  const values = new Set(pages.map((p) => pageLumperOf(file, p)));
+  if (values.size <= 1) {
+    if (values.size) file.lumper = [...values][0];
+    file.pageLumper = null;
+    return;
+  }
+  for (const [page, value] of [...file.pageLumper]) if (value === !!file.lumper) file.pageLumper.delete(page);
+}
+
+/** "Lumper receipt: page 3" for a file that's partly a lumper receipt, else null. */
+function lumperNote(file) {
+  if (!lumperTagging() || !state.checked.has(file.id) || !file.pageLumper || !file.pageLumper.size) return null;
+  const pages = (allIncludedPages(file) || []).filter((p) => pageLumperOf(file, p));
+  return pages.length ? `Lumper receipt: ${pagesLabel(pages).toLowerCase()}` : null;
+}
+
+/** A "Lumper receipt" tag: a checkbox in a small pill. */
+function lumperChip(on, mixed, label, onToggle) {
+  const chip = el('label', 'tag-chip');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = on && !mixed;
+  box.indeterminate = mixed;
+  box.disabled = state.busy;
+  box.setAttribute('aria-label', label);
+  box.addEventListener('change', () => onToggle(box.checked));
+  chip.classList.toggle('on', on || mixed);
+  chip.append(box, el('span', '', 'Lumper receipt'));
+  return chip;
+}
+
+/** Tagging a whole file as a lumper receipt (or not). This also undoes any page-by-page tags. */
+function setFileLumper(file, on) {
+  file.lumper = on;
+  file.pageLumper = null;
+  state.built.clear();
+  log(`Lumper receipt: ${file.name} ${on ? 'yes' : 'no'}`);
+  refreshRow(file);
+  if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
+}
+
+/** Tagging one page in the preview (a PDF with the POD and the lumper receipt in it). */
+function setPageLumper(file, page, on) {
+  if (!file.pageLumper) file.pageLumper = new Map();
+  file.pageLumper.set(page, on);
+  normalizePageLumper(file);
   state.built.clear();
   refreshRow(file);
   syncPreviewPages();
@@ -827,6 +1274,10 @@ function fileRow(file) {
   if (!canCombine(file)) text.append(el('span', 'file-note', WHY_NOT[file.kind] || "Can't go into the PDF"));
   const note = stopNote(file) || pageNote(file);
   if (note) text.append(el('span', 'file-note picked', note));
+  const lumperLine = lumperNote(file);
+  if (lumperLine) text.append(el('span', 'file-note lumper', lumperLine));
+  const rcLine = rcNote(file);
+  if (rcLine) text.append(el('span', `file-note rc${rcLine.going ? '' : ' out'}`, rcLine.text)); // grey once it's not going in
 
   // A small picture of the file, so a POD scan and a photo of the truck look different at a glance
   const thumb = el('span', 'thumb');
@@ -849,10 +1300,19 @@ function fileRow(file) {
   preview.innerHTML = EYE_SVG;
   preview.addEventListener('click', () => openPreview(file.id));
   row.append(label);
-  // Multi-stop: which stop this file is (kept outside the label so picking doesn't tick the box)
-  if (state.multiStop && canCombine(file) && state.checked.has(file.id)) {
-    const mixed = !!(file.pageStops && file.pageStops.size);
-    row.append(stopPicker(file.stop || 1, `Stop for ${file.name}`, mixed, (stop) => setFileStop(file, stop)));
+  // Which stop this file is, and whether it's a lumper receipt (outside the label, so using them
+  // doesn't tick the file's own box)
+  if (canCombine(file) && state.checked.has(file.id) && (state.multiStop || lumperTagging())) {
+    const tags = el('div', 'row-tags');
+    if (state.multiStop) {
+      const mixed = !!(file.pageStops && file.pageStops.size);
+      tags.append(stopPicker(file.stop || 1, `Stop for ${file.name}`, mixed, (stop) => setFileStop(file, stop)));
+    }
+    if (lumperTagging()) {
+      const mixed = !!(file.pageLumper && file.pageLumper.size);
+      tags.append(lumperChip(!!file.lumper, mixed, `${file.name} is a lumper receipt`, (on) => setFileLumper(file, on)));
+    }
+    row.append(tags);
   }
   row.append(preview);
   return row;
@@ -877,18 +1337,21 @@ function updateSelectionUi() {
   $('multi-stop').checked = state.multiStop;
   $('multi-stop').disabled = state.busy;
   const anyChecked = checkedFiles().length > 0;
-  for (const id of ['btn-save', 'name-save', 'load-go']) $(id).disabled = state.busy || !anyChecked;
-  $('btn-save').title = anyChecked ? '' : 'Check the files to save first.';
+  const problems = teamRateCon() ? rcProblems() : [];
+  renderRcBanner(problems);
+  for (const id of ['btn-save', 'name-save', 'load-go']) $(id).disabled = state.busy || !anyChecked || problems.length > 0;
+  $('btn-save').title = !anyChecked ? 'Check the files to save first.' : problems.length ? 'Leave out the rate confirmation first.' : '';
   $('btn-email').disabled = state.busy; // still opens, to reach Manage templates
-  for (const box of document.querySelectorAll('#file-list input[type="checkbox"]')) {
+  for (const box of document.querySelectorAll('#file-list .file-label > input[type="checkbox"]')) {
     const file = state.files[Number(box.closest('.file').dataset.id)];
     box.disabled = state.busy || !canCombine(file);
     box.checked = state.checked.has(file.id);
   }
-  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick')) pick.disabled = state.busy;
+  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .tag-chip input, #pv-body .tag-chip input')) pick.disabled = state.busy;
   if (!$('preview').hidden) syncPreviewInclude();
   // The open name box or create-email step lists the files it will make
   if (!$('name-form').hidden) updateNameHint();
+  if (emailDraft) syncAtChoices(); // the stops in the Shipper/Receiver drop-downs follow the files
   if (emailDraft && !$('load-hint').classList.contains('error')) updateLoadHint();
 }
 
@@ -914,9 +1377,437 @@ function refreshRow(file) {
     const focused = row.contains(document.activeElement) ? document.activeElement : null;
     const fresh = fileRow(file);
     row.replaceWith(fresh);
-    if (focused) (fresh.querySelector(focused.matches('.stop-pick') ? '.stop-pick' : 'input') || fresh.querySelector('input')).focus();
+    const same = focused && (focused.matches('.stop-pick') ? '.stop-pick' : focused.closest('.tag-chip') ? '.tag-chip input' : '.file-label > input');
+    if (focused) (fresh.querySelector(same) || fresh.querySelector('.file-label > input')).focus();
   }
   updateSelectionUi();
+}
+
+// --------------------------------------------------------------------------- rate confirmation check
+
+/** The team's sample rate confirmation (set by the team admin), or null when the check is off. */
+function teamRateCon() {
+  const settings = teamSettings();
+  return settings && settings.rateCon ? settings.rateCon : null;
+}
+
+/** Words of 4+ letters on a page, lower case. */
+function wordSet(text) {
+  return new Set(String(text || '').toLowerCase().match(/[a-z]{4,}/g) || []);
+}
+
+async function pageText(page) {
+  const content = await page.getTextContent();
+  return content.items.map((item) => item.str || '').join(' ');
+}
+
+/**
+ * A page's layout: how much ink is in each cell of a grid laid over its printed area (margins
+ * trimmed, so a scan that's shifted or a little smaller still lines up), and where that printed
+ * area is on the page: { grid, box: [top, left, bottom, right] as shares of the page }. Null for a
+ * blank page.
+ */
+function layoutGrid(canvas) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const px = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+  const n = w * h;
+  const lum = new Uint8Array(n);
+  const hist = new Uint32Array(256);
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    const v = (px[j] * 77 + px[j + 1] * 150 + px[j + 2] * 29) >> 8;
+    lum[i] = v;
+    hist[v] += 1;
+  }
+  let seen = 0;
+  let paper = 255;
+  for (let v = 0; v < 256; v++) {
+    seen += hist[v];
+    if (seen >= n * 0.9) { paper = v; break; } // the paper's brightness
+  }
+  const cut = Math.max(40, paper * 0.72);
+  const ink = new Uint8Array(n);
+  const rows = new Uint32Array(h);
+  const cols = new Uint32Array(w);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (lum[i] < cut) {
+        ink[i] = 1;
+        rows[y] += 1;
+        cols[x] += 1;
+      }
+    }
+  }
+  const rowMin = Math.max(2, w * 0.01);
+  const colMin = Math.max(2, h * 0.01);
+  let top = 0;
+  while (top < h && rows[top] < rowMin) top++;
+  let bottom = h - 1;
+  while (bottom > top && rows[bottom] < rowMin) bottom--;
+  let left = 0;
+  while (left < w && cols[left] < colMin) left++;
+  let right = w - 1;
+  while (right > left && cols[right] < colMin) right--;
+  if (bottom - top < 10 || right - left < 10) return null;
+  const { gridW: gw, gridH: gh } = RC;
+  const bw = right - left + 1;
+  const bh = bottom - top + 1;
+  const cells = new Float32Array(gw * gh);
+  for (let gy = 0; gy < gh; gy++) {
+    const y0 = top + Math.floor((gy * bh) / gh);
+    const y1 = Math.max(y0 + 1, top + Math.floor(((gy + 1) * bh) / gh));
+    for (let gx = 0; gx < gw; gx++) {
+      const x0 = left + Math.floor((gx * bw) / gw);
+      const x1 = Math.max(x0 + 1, left + Math.floor(((gx + 1) * bw) / gw));
+      let sum = 0;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) sum += ink[y * w + x];
+      cells[gy * gw + gx] = sum / ((y1 - y0) * (x1 - x0));
+    }
+  }
+  const out = new Uint8Array(gw * gh); // softened, so neighbouring cells blend a little
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      let sum = 0;
+      let count = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const yy = gy + dy;
+          const xx = gx + dx;
+          if (yy < 0 || xx < 0 || yy >= gh || xx >= gw) continue;
+          sum += cells[yy * gw + xx];
+          count += 1;
+        }
+      }
+      out[gy * gw + gx] = Math.min(255, Math.round((sum / count) * 510));
+    }
+  }
+  const share = (v, total) => Math.round((v / total) * 100) / 100;
+  return { grid: out, box: [share(top, h), share(left, w), share(bottom + 1, h), share(right + 1, w)] };
+}
+
+/** Draws a picture (photo, fax page) at the check's size and measures its layout. */
+function gridFromSource(source, w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = RC.renderW;
+  canvas.height = Math.max(1, Math.round((RC.renderW * h) / Math.max(1, w)));
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return layoutGrid(canvas);
+}
+
+async function pageGrid(page) {
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: RC.renderW / base.width });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+  await page.render({ canvas, viewport }).promise;
+  return layoutGrid(canvas);
+}
+
+/** How alike two grids are: correlation, from -1 to 1. */
+function likeness(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  const n = a.length;
+  let ma = 0;
+  let mb = 0;
+  for (let i = 0; i < n; i++) {
+    ma += a[i];
+    mb += b[i];
+  }
+  ma /= n;
+  mb /= n;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - ma;
+    const y = b[i] - mb;
+    num += x * y;
+    da += x * x;
+    db += y * y;
+  }
+  return da && db ? num / Math.sqrt(da * db) : 0;
+}
+
+const sampleGrids = new Map(); // base64 -> bytes
+function sampleGrid(base64) {
+  if (!base64) return null;
+  if (!sampleGrids.has(base64)) sampleGrids.set(base64, base64ToBytes(base64));
+  return sampleGrids.get(base64);
+}
+
+/** Share of a sample page's words found on this page (the best sample page counts). */
+function textLikeness(words, sample) {
+  let best = 0;
+  for (const page of sample.pages) {
+    const list = page.words ? page.words.split(' ') : [];
+    if (list.length < 10) continue;
+    let hits = 0;
+    for (const word of list) if (words.has(word)) hits += 1;
+    best = Math.max(best, hits / list.length);
+  }
+  return best;
+}
+
+/**
+ * How alike a scanned page's layout is to the sample's pages (the best one counts). A page whose
+ * printed area is a different size (say, two lines at the top of the page) doesn't count, since
+ * its few lines would otherwise be stretched to fill the grid.
+ */
+function layoutLikeness(layout, sample) {
+  if (!layout) return -1;
+  let best = -1;
+  for (const page of sample.pages) {
+    const box = page.box || [0, 0, 1, 1];
+    const tall = Math.abs((layout.box[2] - layout.box[0]) - (box[2] - box[0]));
+    const wide = Math.abs((layout.box[3] - layout.box[1]) - (box[3] - box[1]));
+    if (tall > RC.boxSlack || wide > RC.boxSlack) continue;
+    best = Math.max(best, likeness(layout.grid, sampleGrid(page.grid)));
+  }
+  return best;
+}
+
+/** Makes the team's sample from one of your rate confirmations (a PDF): its words and layout. */
+async function rateConSample(file) {
+  const doc = await openPdf(file.bytes);
+  try {
+    const pages = [];
+    for (let p = 1; p <= Math.min(doc.numPages, RC.samplePages); p++) {
+      const page = await doc.getPage(p);
+      const words = [...wordSet(await pageText(page))].slice(0, RC.sampleWords);
+      const layout = await pageGrid(page);
+      page.cleanup();
+      pages.push({ words: words.join(' '), grid: layout ? bytesToBase64(layout.grid) : '', box: layout ? layout.box : null });
+    }
+    return { v: 1, name: file.name.slice(0, 120), saved: Date.now(), pages };
+  } finally {
+    closePdf(doc);
+  }
+}
+
+function cleanRateCon(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.pages)) return null;
+  const pages = value.pages.slice(0, RC.samplePages).map((page) => {
+    const grid = /^[A-Za-z0-9+/=]+$/.test(String((page && page.grid) || '')) && base64ToBytes(page.grid).length === RC.gridW * RC.gridH ? page.grid : '';
+    const box = page && Array.isArray(page.box) && page.box.length === 4 && page.box.every((v) => typeof v === 'number' && v >= 0 && v <= 1) ? page.box : [0, 0, 1, 1];
+    return {
+      words: String((page && page.words) || '').split(' ').filter((w) => /^[a-z]{4,}$/.test(w)).slice(0, RC.sampleWords).join(' '),
+      grid,
+      box: grid ? box : null,
+    };
+  }).filter((page) => page.words || page.grid);
+  return pages.length ? { v: 1, name: String(value.name || 'rate confirmation').slice(0, 120), saved: Number(value.saved) || 0, pages } : null;
+}
+
+/** Checks one file's pages against the sample. Marks file.rcPages (0-based pages that look like it). */
+async function checkFileForRateCon(file, sample, token) {
+  const found = new Set();
+  const scores = [];
+  const judge = (label, score, limit) => {
+    const hit = score >= limit;
+    scores.push(`${label} ${score.toFixed(2)}${hit ? ' ⚑' : ''}`);
+    return hit;
+  };
+  if (file.kind === 'PDF') {
+    let doc;
+    try {
+      doc = await openPdf(file.bytes);
+    } catch (error) {
+      return; // password-protected or damaged: it can't be read, so it can't be sent either
+    }
+    try {
+      file.pages = doc.numPages;
+      for (let p = 1; p <= Math.min(doc.numPages, RC.maxPages); p++) {
+        if (token !== state.loadToken) return;
+        const page = await doc.getPage(p);
+        const text = await pageText(page);
+        const words = wordSet(text);
+        let hit;
+        if (/rate\s+confirmation/i.test(text)) hit = judge(`p${p} says "rate confirmation"`, 1, 0.5);
+        else if (words.size >= RC.minWords) hit = judge(`p${p} text`, textLikeness(words, sample), RC.textMatch);
+        else if (words.size >= RC.scanWords) hit = judge(`p${p} few words`, 0, 1); // a sparse digital page
+        else hit = judge(`p${p} layout`, layoutLikeness(await pageGrid(page), sample), RC.layoutMatch);
+        page.cleanup();
+        if (hit) found.add(p - 1);
+      }
+    } finally {
+      closePdf(doc);
+    }
+  } else if (file.kind === 'Image') {
+    const image = await decodeImage(file);
+    try {
+      const [w, h] = sizeOf(image);
+      if (judge('layout', layoutLikeness(gridFromSource(image, w, h), sample), RC.layoutMatch)) found.add(0);
+    } finally {
+      if (typeof image.close === 'function') image.close();
+    }
+  } else if (file.kind === 'TIFF') {
+    decodeTiffPages(file.bytes, 10).forEach((page, i) => {
+      const stretch = page.xres > 0 && page.yres > 0 ? page.yres / page.xres : 1;
+      if (judge(`p${i + 1} layout`, layoutLikeness(gridFromSource(page.canvas, page.w * stretch, page.h), sample), RC.layoutMatch)) found.add(0);
+    });
+  }
+  if (token !== state.loadToken) return;
+  file.rcPages = found;
+  if (scores.length) log(`Rate con check: ${file.name}: ${scores.join(', ')}`);
+}
+
+/** Runs the check over the thread's files in the background (only when the team has a sample). */
+async function checkRateCons(token) {
+  const sample = teamRateCon();
+  if (!sample) return;
+  state.rcPending = true;
+  try {
+    for (const file of state.files) {
+      if (token !== state.loadToken) return;
+      if (file.rcPages || !canCombine(file)) continue;
+      try {
+        await checkFileForRateCon(file, sample, token);
+      } catch (error) {
+        log(`Rate con check: couldn't check ${file.name} (${error.message})`);
+      }
+      if (token !== state.loadToken) return;
+      if (file.rcPages && file.rcPages.size) refreshRow(file);
+      else updateSelectionUi();
+      if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  } finally {
+    if (token === state.loadToken) {
+      state.rcPending = false;
+      updateSelectionUi();
+    }
+  }
+}
+
+/** Starts the check over (after the sample changes). */
+function recheckRateCons() {
+  for (const file of state.files) {
+    file.rcPages = null;
+    file.rcOk = false;
+  }
+  state.rcPending = false;
+  renderList();
+  checkRateCons(state.loadToken).catch((error) => log(`Rate con check: stopped (${error.message})`));
+}
+
+/** Pages that look like a rate confirmation, for the list and the preview (null when none). */
+function rcFlags(file) {
+  return teamRateCon() && file.rcPages && file.rcPages.size && !file.rcOk ? file.rcPages : null;
+}
+
+/** Checked files with pages that look like a rate confirmation and are still going in: [{ file, pages }]. */
+function rcProblems() {
+  const out = [];
+  for (const file of checkedFiles()) {
+    const flags = rcFlags(file);
+    if (!flags) continue;
+    if (file.kind !== 'PDF') {
+      out.push({ file, pages: null });
+      continue;
+    }
+    const pages = (allIncludedPages(file) || [...flags]).filter((p) => flags.has(p));
+    if (pages.length) out.push({ file, pages });
+  }
+  return out;
+}
+
+/** "(pages 2–3)" when only some of a PDF's pages are flagged, else '' (the whole file is). */
+function rcPagesText(file, pages) {
+  return pages && file.kind === 'PDF' && pages.length < file.pages ? pagesLabel(pages).toLowerCase() : '';
+}
+
+/** The list's note for a file with rate-con-like pages: { text, going } (going: those pages are checked to go in). */
+function rcNote(file) {
+  const flags = rcFlags(file);
+  if (!flags) return null;
+  const which = rcPagesText(file, [...flags]);
+  const going = state.checked.has(file.id) && (file.kind !== 'PDF' || (allIncludedPages(file) || [...flags]).some((p) => flags.has(p)));
+  return { text: `Looks like a rate confirmation${which ? `: ${which}` : ''}`, going };
+}
+
+/** Shows (or hides) the warning above the buttons. */
+function renderRcBanner(problems) {
+  const banner = $('rc-banner');
+  banner.hidden = !problems.length;
+  if (!problems.length) return;
+  const list = problems.slice(0, 3).map(({ file, pages }) => {
+    const which = rcPagesText(file, pages);
+    return which ? `${file.name} (${which})` : file.name;
+  });
+  if (problems.length > 3) list.push(`${problems.length - 3} more`);
+  const many = problems.length > 1;
+  $('rc-banner-text').textContent = many
+    ? `These look like rate confirmations: ${list.join(', ')}. They have to come out before you email or save.`
+    : `This looks like a rate confirmation: ${list[0]}. It has to come out before you email or save.`;
+  $('rc-leave-out').textContent = many ? 'Leave them out' : 'Leave it out';
+}
+
+/** "Leave it out": unticks the flagged pages (or the whole file). */
+function onRcLeaveOut() {
+  const problems = rcProblems();
+  for (const { file, pages } of problems) {
+    if (!pages) {
+      state.checked.delete(file.id);
+      continue;
+    }
+    const keep = (allIncludedPages(file) || []).filter((p) => !file.rcPages.has(p));
+    if (!keep.length) {
+      file.pageChoice = null;
+      state.checked.delete(file.id);
+    } else {
+      file.pageChoice = new Set(keep);
+      normalizePageStops(file);
+      normalizePageLumper(file);
+    }
+  }
+  state.built.clear();
+  log(`Rate con check: left out ${problems.map(({ file, pages }) => (pages ? `${file.name} ${pagesLabel(pages).toLowerCase()}` : file.name)).join(', ')}`);
+  renderList();
+  if (!$('preview').hidden) syncPreviewPages();
+  setStatus('Rate confirmation left out.', 'ok');
+}
+
+/** "Not a rate con": stops warning about these files for this thread. */
+function onRcKeep() {
+  const problems = rcProblems();
+  for (const { file } of problems) file.rcOk = true;
+  log(`Rate con check: kept ${problems.map(({ file }) => file.name).join(', ')} (not a rate con)`);
+  renderList();
+  if (!$('preview').hidden) syncPreviewPages();
+}
+
+/** Why sending or saving has to wait, or ''. */
+function rcBlock() {
+  if (!teamRateCon()) return '';
+  if (rcProblems().length) return 'Leave out the rate confirmation first, or tell the add-in it isn\'t one.';
+  if (state.rcPending) return 'Still checking the files for rate confirmations. Try again in a moment.';
+  return '';
+}
+
+/** The admin's "Use as rate con sample" in the preview. */
+async function onUseRateConSample() {
+  const file = state.files[state.previewIndex];
+  if (!file || file.kind !== 'PDF' || !isAdmin()) return;
+  const button = $('pv-rc-sample');
+  button.disabled = true;
+  try {
+    const sample = await rateConSample(file);
+    if (!sample.pages.some((page) => page.words || page.grid)) throw userError("nothing could be read from this file");
+    await saveTeamDraft({ rateCon: sample });
+    log(`Rate con check: sample set from ${file.name} (${plural(sample.pages.length, 'page')}), not published yet`);
+    button.textContent = 'Saved as the sample. Publish it in Manage templates.';
+    recheckRateCons();
+  } catch (error) {
+    button.textContent = `Couldn't use it: ${error.userMessage || error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // --------------------------------------------------------------------------- list pictures
@@ -1054,6 +1945,9 @@ async function openPreview(id) {
   $('pv-name').title = file.name;
   $('pv-meta').textContent = metaLine(file);
   $('pv-pages').textContent = '';
+  const sampleButton = $('pv-rc-sample');
+  sampleButton.hidden = !(isAdmin() && file.kind === 'PDF' && file.bytes);
+  sampleButton.textContent = 'Use as rate con sample';
   syncPreviewInclude();
   updatePreviewNav();
 
@@ -1153,7 +2047,12 @@ function pageHolder(file, index, canvas) {
   pick.className = 'stop-pick';
   pick.setAttribute('aria-label', `Stop for page ${index + 1}`);
   pick.addEventListener('change', () => setPageStop(file, index, Number(pick.value)));
-  top.append(bar, pick);
+  const chip = lumperChip(false, false, `Page ${index + 1} is a lumper receipt`, (on) => setPageLumper(file, index, on));
+  const tags = el('div', 'pv-page-tags');
+  const badge = el('span', 'rc-badge', 'Rate con?');
+  badge.title = 'This page looks like a rate confirmation';
+  tags.append(badge, pick, chip);
+  top.append(bar, tags);
   holder.append(top, canvas);
   syncPageHolder(holder, file); // right from the start, while later pages still render
   return holder;
@@ -1165,7 +2064,7 @@ function pageStopOf(file, index) {
 
 function syncPageHolder(holder, file) {
   const index = Number(holder.dataset.page);
-  const box = holder.querySelector('input');
+  const box = holder.querySelector('.pv-page-bar input');
   box.checked = isPageIncluded(file, index);
   box.disabled = state.busy || !canCombine(file);
   holder.classList.toggle('excluded', !box.checked);
@@ -1180,6 +2079,14 @@ function syncPageHolder(holder, file) {
     }
     pick.value = String(pageStopOf(file, index));
   }
+  const flags = rcFlags(file);
+  holder.querySelector('.rc-badge').hidden = !(flags && flags.has(index));
+  const chip = holder.querySelector('.tag-chip');
+  const lumper = pageLumperOf(file, index);
+  chip.hidden = !(lumperTagging() && box.checked);
+  chip.classList.toggle('on', lumper);
+  chip.querySelector('input').checked = lumper;
+  chip.querySelector('input').disabled = state.busy;
 }
 
 function isPageIncluded(file, index) {
@@ -1201,7 +2108,7 @@ function onPreviewPageToggle(file) {
   const shown = new Set(holders.map((h) => Number(h.dataset.page)));
   const pages = new Set();
   for (const holder of holders) {
-    if (holder.querySelector('input').checked) pages.add(Number(holder.dataset.page));
+    if (holder.querySelector('.pv-page-bar input').checked) pages.add(Number(holder.dataset.page));
   }
   // Pages past the preview limit keep whatever they had.
   const total = file.pages || holders.length;
@@ -1216,6 +2123,7 @@ function onPreviewPageToggle(file) {
     if (!state.checked.has(file.id)) setChecked(file.id, true);
   }
   normalizePageStops(file);
+  normalizePageLumper(file);
   state.built.clear();
   refreshRow(file);
   syncPreviewPages();
@@ -1556,31 +2464,34 @@ async function combineChecked() {
 }
 
 /**
- * The files to email or save, named after `base`: one per stop with Multi-stop on (base-1.pdf,
- * base-2.pdf… by stop number, whatever their size), otherwise one PDF split by `splitMb`.
+ * The files to email or save. `layout` says whether stops and lumper receipts get files of their
+ * own: base-1.pdf, base-2.pdf… per stop (whatever their size), and lumperStem.pdf (or
+ * lumperStem-1.pdf… per stop) for lumper receipts. A single POD PDF is split by `splitMb` instead.
  * Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
  */
-async function makeFiles(base, splitMb) {
-  if (!state.multiStop) {
-    const result = await combineChecked();
-    if (!result) return null;
-    return { files: await splitIntoFiles(result.bytes, base, splitMb), skipped: result.skipped, pages: result.pages };
-  }
+async function makeFiles(base, splitMb, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
   const files = [];
   const skipped = [];
-  for (const { stop, entries } of stopEntries()) {
-    const result = await buildPdf(entries, `Stop ${stop}`);
+  for (const group of fileGroups(layout.splitStops, layout.splitLumpers)) {
+    const label = `${group.lumper ? 'Lumper receipt' : group.stop ? 'Stop' : ''}${group.stop ? ` ${group.stop}` : ''}`;
+    const result = await buildPdf(group.entries, label);
     skipped.push(...result.skipped);
-    if (result.pages) files.push({ name: `${base}-${stop}.pdf`, bytes: result.bytes, pages: result.pages, stop, over: false });
+    if (!result.pages) continue;
+    const stem = `${group.lumper ? lumperStem : base}${group.stop ? `-${group.stop}` : ''}`;
+    if (!group.lumper && !group.stop) {
+      for (const part of await splitIntoFiles(result.bytes, stem, splitMb)) files.push({ ...part, pages: part.pages || result.pages });
+    } else {
+      files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, lumper: group.lumper, over: false });
+    }
   }
   if (!files.length) {
     setStatus(`None of the checked files could go into a PDF.${leftOutText({ skipped })}`, 'error');
     return null;
   }
   const limit = splitMb > 0 ? Math.floor(splitMb * MB) : 0;
-  for (const file of files) file.over = !!limit && file.bytes.length > limit;
-  log(`Stops: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
-  return { files, skipped, pages: files.reduce((sum, f) => sum + f.pages, 0) };
+  for (const file of files) if (file.stop || file.lumper) file.over = !!limit && file.bytes.length > limit;
+  if (layout.splitStops || layout.splitLumpers) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
+  return { files, skipped, pages: files.reduce((sum, f) => sum + (f.pages || 0), 0) };
 }
 
 // --------------------------------------------------------------------------- save, new email
@@ -1591,6 +2502,11 @@ async function makeFiles(base, splitMb) {
  */
 async function onSave() {
   if (!checkedFiles().length) return;
+  const blocked = rcBlock();
+  if (blocked) {
+    setStatus(blocked, 'error');
+    return;
+  }
   if (typeof window.showSaveFilePicker === 'function' && readSetting('saveDialog') === 'works' && !state.saveSplitMb && !state.multiStop) {
     const picked = await pickSaveLocation(pdfName());
     if (picked.cancelled) return;
@@ -1636,6 +2552,11 @@ function hideNameForm() {
 function onNameSubmit(event) {
   event.preventDefault();
   if (state.busy || !checkedFiles().length) return;
+  const blocked = rcBlock();
+  if (blocked) {
+    setStatus(blocked, 'error');
+    return;
+  }
   state.fileName = cleanFileName($('file-name').value);
   const splitMb = parseSplitMb($('save-split').value);
   if (splitMb !== state.saveSplitMb) {
@@ -1766,6 +2687,12 @@ function recipientsText(t, load = '') {
   return parseAddresses(fill(t.to, load)).join(', ');
 }
 
+/** "pods@example.com · 4 questions" under a template's name (in Email ▾ and the template list). */
+function templateSub(t) {
+  const n = questionCount(t);
+  return `${recipientsText(t) || 'No recipients set'}${n ? ` · ${plural(n, 'question')}` : ''}`;
+}
+
 /** Every email's subject, whatever the template: "3645493 POD(s)". */
 function emailSubject(load) {
   return `${String(load || '').trim()} POD(s)`.slice(0, 255);
@@ -1777,11 +2704,20 @@ function emailFileBase(t, load) {
   return safeName(base || load || state.topic || 'Combined attachments');
 }
 
-/** The files an email will get: base.pdf (maybe split by size), or base-1.pdf… per stop. */
-function plannedFiles(base, splitMb) {
-  if (!state.multiStop) return { names: [`${base}.pdf`], note: splitMb ? ` (split over ${splitMb} MB)` : '' };
-  const stops = [...stopsInUse()].sort((a, b) => a - b);
-  return stops.length ? { names: stops.map((stop) => `${base}-${stop}.pdf`), note: '' } : { names: [`${base}-1.pdf`], note: '…' };
+/** The lumper receipt PDF's name for an email, without .pdf: the template's lumper file name. */
+function lumperBase(t, load) {
+  const base = fill((t && t.lumperName) || '{load} Lumper', load).trim().replace(/\.pdf$/i, '');
+  return safeName(base || `${load} Lumper`);
+}
+
+/** The files an email will get, named before anything is built (for the hint under the load number). */
+function plannedFiles(base, splitMb, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
+  const groups = fileGroups(layout.splitStops, layout.splitLumpers);
+  if (!groups.length) return { names: [`${base}${layout.splitStops ? '-1' : ''}.pdf`], note: layout.splitStops ? '…' : '' };
+  const names = groups.map((g) => `${g.lumper ? lumperStem : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
+  let note = splitMb && groups.some((g) => !g.stop && !g.lumper) ? ` (split over ${splitMb} MB)` : '';
+  if (layout.splitLumpers && !groups.some((g) => g.lumper)) note += ' · no lumper receipt tagged';
+  return { names, note };
 }
 
 /** File names for a hint, each kept on one line ("5550123-2.pdf" doesn't break at its dash). */
@@ -1808,10 +2744,10 @@ function escapeHtml(text) {
 }
 
 /** The new email's message: the template's text, then any accessorials. '' when there's neither. */
-function bodyHtml(text, acc) {
+function bodyHtml(text, acc, t) {
   const parts = [];
   if (String(text || '').trim()) parts.push(escapeHtml(String(text).slice(0, 30000)).replace(/\r?\n/g, '<br>'));
-  const extra = accessorialHtml(acc);
+  const extra = accessorialHtml(acc, t);
   if (extra) parts.push(extra);
   if (!parts.length) return '';
   return `<div style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;">${parts.join('<br><br>')}</div>`;
@@ -1826,7 +2762,7 @@ function emailFields(t, load, acc) {
     if (to.length) form.toRecipients = to.slice(0, 100);
     if (cc.length) form.ccRecipients = cc.slice(0, 100);
   }
-  const html = bodyHtml(t ? fill(t.body, load) : '', acc);
+  const html = bodyHtml(t ? fill(t.body, load) : '', acc, t);
   if (html) form.htmlBody = html;
   return form;
 }
@@ -1872,6 +2808,33 @@ function syncAccessorialBoxes() {
   }
 }
 
+/**
+ * Where an accessorial was: Shipper or Receiver. With Multi-stop on, the receiver at each stop in
+ * use instead, as "Receiver (Stop 2)", which is also how the email body says it.
+ */
+function atChoices() {
+  if (!state.multiStop) return ['Shipper', 'Receiver'];
+  const stops = [...stopsInUse()].sort((a, b) => a - b);
+  return ['Shipper', ...(stops.length ? stops.map((stop) => `Receiver (Stop ${stop})`) : ['Receiver'])];
+}
+
+/** Brings the three Shipper/Receiver drop-downs in line with the stops, keeping each pick that's still there. */
+function syncAtChoices() {
+  const choices = atChoices();
+  for (const kind of Object.keys(ACC_FIELDS)) {
+    const select = $(`${kind}-at`);
+    const current = select.value;
+    const offered = [...select.options].slice(1).map((option) => option.value);
+    if (offered.join('\n') !== choices.join('\n')) {
+      select.length = 1; // keep the "Shipper or receiver?" prompt
+      for (const choice of choices) select.append(new Option(choice, choice));
+    }
+    select.options[0].textContent = state.multiStop ? 'Shipper or which stop?' : 'Shipper or receiver?';
+    select.value = choices.includes(current) ? current : '';
+    select.classList.toggle('empty', !select.value);
+  }
+}
+
 /** "350" -> "$350.00", "1,234.5" -> "$1,234.50", "" -> "". Null when it isn't an amount. */
 function money(text) {
   const raw = String(text || '').replace(/[$,\s]/g, '');
@@ -1882,18 +2845,22 @@ function money(text) {
 
 /** [field id, message] for the first thing to fix, or null. */
 function accessorialProblem(acc) {
-  if (acc.det.on && !acc.det.at) return ['det-at', 'Pick Shipper or Receiver for Detention.'];
-  if (acc.lum.on && !acc.lum.at) return ['lum-at', 'Pick Shipper or Receiver for Lumper.'];
+  const where = state.multiStop ? 'Shipper or a stop' : 'Shipper or Receiver';
+  if (acc.det.on && !acc.det.at) return ['det-at', `Pick ${where} for Detention.`];
+  if (acc.lum.on && !acc.lum.at) return ['lum-at', `Pick ${where} for Lumper.`];
   if (acc.lum.on && money(acc.lum.total) === null) return ['lum-total', 'The lumper total should be an amount, like 350.00.'];
-  if (acc.oth.on && !acc.oth.at) return ['oth-at', 'Pick Shipper or Receiver for Other.'];
+  if (acc.oth.on && !acc.oth.at) return ['oth-at', `Pick ${where} for Other.`];
   if (acc.oth.on && !acc.oth.type) return ['oth-type', 'Type what the other accessorial is.'];
   if (acc.oth.on && money(acc.oth.total) === null) return ['oth-total', 'The other total should be an amount, like 75.00.'];
   return null;
 }
 
-/** The ticked accessorials as lines for the email body (blank entries are left out). */
-function accessorialHtml(acc) {
-  if (!acc) return '';
+/**
+ * The ticked accessorials as lines for the email body (blank entries are left out). A template
+ * set to say "No Lumper" gets that line when Lumper isn't ticked.
+ */
+function accessorialHtml(acc, t) {
+  if (!acc) acc = emptyAccessorials();
   const blocks = [];
   const add = (title, at, entries) => {
     const lines = [`<b>${escapeHtml(title)}</b> – ${escapeHtml(at)}`];
@@ -1902,6 +2869,7 @@ function accessorialHtml(acc) {
   };
   if (acc.det.on) add('Detention', acc.det.at, [['IN', acc.det.in], ['APPT', acc.det.appt], ['OUT', acc.det.out], ['Hours requested', acc.det.hours]]);
   if (acc.lum.on) add('Lumper', acc.lum.at, [['Total', money(acc.lum.total)]]);
+  else if (t && t.noLumper) blocks.push('<b>No Lumper</b>');
   if (acc.oth.on) add('Other', acc.oth.at, [['Type', acc.oth.type], ['Total', money(acc.oth.total)]]);
   return blocks.join('<br><br>');
 }
@@ -1922,17 +2890,19 @@ function renderEmailMenu() {
   const menu = $('email-menu');
   menu.textContent = '';
   const nothing = checkedFiles().length === 0;
-  const ready = !state.busy && !nothing;
+  const blocked = !nothing && teamRateCon() && rcProblems().length > 0;
+  const ready = !state.busy && !nothing && !blocked;
   if (nothing) menu.append(el('div', 'menu-note', 'Check the files to send first.'));
+  if (blocked) menu.append(el('div', 'menu-note', 'Leave out the rate confirmation first.'));
   const teamList = teamTemplates();
   const mine = canMakeOwn() ? state.myTemplates : []; // a rep's own templates stay saved, just unused, while it's off
   if (teamList.length) {
     menu.append(el('div', 'menu-group', 'Team'));
-    for (const t of teamList) menu.append(menuItem(t.name, recipientsText(t) || 'No recipients set', () => startEmail(t), !ready));
+    for (const t of teamList) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
   }
   if (mine.length) {
     menu.append(el('div', 'menu-group', 'Mine'));
-    for (const t of mine) menu.append(menuItem(t.name, recipientsText(t) || 'No recipients set', () => startEmail(t), !ready));
+    for (const t of mine) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
   }
   if (teamList.length || mine.length) menu.append(el('div', 'menu-sep'));
   menu.append(menuItem('Blank email', 'Just the PDF, no recipients', () => startEmail(null), !ready));
@@ -1982,19 +2952,59 @@ function onMenuKeys(event) {
 
 let emailDraft = null; // { template } while the step is open; template is null for a blank email
 
+/** Picking a template (or Blank email) from Email ▾: its questions first, if it has any, then the step. */
 function startEmail(t) {
+  const blocked = rcBlock();
+  if (blocked) {
+    setStatus(blocked, 'error');
+    return;
+  }
+  if (questionCount(t)) {
+    hideNameForm();
+    setStatus('');
+    askQuestions(t);
+    return;
+  }
+  openLoadForm(t);
+}
+
+function openLoadForm(t) {
   emailDraft = { template: t };
   hideNameForm();
   $('save-actions').hidden = true;
   $('load-form').hidden = false;
   setStatus('');
   $('load-number').value = state.loadNumber || guessLoadNumber(state.fileName) || guessLoadNumber(state.topic) || '';
+  syncAtChoices(); // before the remembered picks go back in, so a stop picked earlier can be found
   fillAccessorials(state.accessorials);
+  fillChecklist(t);
   $('acc-error').textContent = '';
   updateLoadHint();
   updateSelectionUi();
   $('load-number').focus();
   $('load-number').select();
+}
+
+/** The template's checklist as checkboxes, all unticked (it's asked fresh for every email). */
+function fillChecklist(t) {
+  const items = t && t.checklist ? t.checklist.split('\n').filter(Boolean) : [];
+  const list = $('checklist-items');
+  list.textContent = '';
+  $('checklist-box').hidden = !items.length;
+  if (!items.length) return;
+  $('checklist-title').textContent = `Before sending to ${t.name}, check:`;
+  items.forEach((item) => {
+    const row = el('label', 'checklist-item');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    row.append(box, el('span', '', item));
+    list.append(row);
+  });
+}
+
+/** The first checklist item not ticked yet, or null. */
+function uncheckedItem() {
+  return $('checklist-box').hidden ? null : [...$('checklist-items').querySelectorAll('input')].find((box) => !box.checked) || null;
 }
 
 function hideLoadForm() {
@@ -2010,7 +3020,7 @@ function updateLoadHint() {
   const hint = $('load-hint');
   hint.classList.remove('error');
   const load = $('load-number').value.trim();
-  const { names, note } = plannedFiles(emailFileBase(t, load || '…'), t ? t.splitMb : 0);
+  const { names, note } = plannedFiles(emailFileBase(t, load || '…'), t ? t.splitMb : 0, layoutOf(t), lumperBase(t, load || '…'));
   const to = t ? recipientsText(t, load) : '';
   hint.textContent = '';
   hint.append(`${t ? t.name : 'Blank email'}: attaches `, namesFragment(names), `${note}${to ? ` · to ${to}` : ''}`);
@@ -2033,6 +3043,17 @@ function onLoadSubmit(event) {
   if (problem) {
     $('acc-error').textContent = problem[1];
     $(problem[0]).focus();
+    return;
+  }
+  const blocked = rcBlock();
+  if (blocked) {
+    $('acc-error').textContent = blocked;
+    return;
+  }
+  const unticked = uncheckedItem();
+  if (unticked) {
+    $('acc-error').textContent = 'Tick every item on the checklist first.';
+    unticked.focus();
     return;
   }
   state.loadNumber = load;
@@ -2058,6 +3079,153 @@ function onLoadCancel() {
   $('btn-email').focus();
 }
 
+// ---- a template's questions: a pop-up before the create-email step
+
+let quiz = null; // { template, at, path: [{ at, answer }], stopped } while the pop-up is open
+
+function questionCount(t) {
+  return t && t.questions ? t.questions.items.length : 0;
+}
+
+/** Fills in {company}: the template's customer name (or its name when that's blank). */
+function withCompany(text, t) {
+  const company = String((t && (t.customer || t.name)) || '').trim();
+  return String(text || '').replace(/\{company\}/gi, company);
+}
+
+function askQuestions(t) {
+  quiz = { template: t, at: 0, path: [], stopped: null };
+  $('quiz').hidden = false;
+  renderQuiz();
+}
+
+function renderQuiz() {
+  const t = quiz.template;
+  const items = t.questions.items;
+  const intro = withCompany(t.questions.intro, t).trim();
+  $('quiz-intro').hidden = !intro;
+  $('quiz-intro-text').textContent = intro;
+  const body = $('quiz-body');
+  body.textContent = '';
+  if (quiz.path.length) { // the answers so far, so going back makes sense
+    const trail = el('ul', 'quiz-trail');
+    for (const step of quiz.path) {
+      const q = items[step.at];
+      const line = el('li');
+      line.append(el('span', '', withCompany(q.text, t)), ' ', el('b', '', q.answers[step.answer].label));
+      trail.append(line);
+    }
+    body.append(trail);
+  }
+  if (quiz.stopped !== null) {
+    const box = el('div', 'quiz-stop');
+    box.setAttribute('role', 'alert');
+    box.innerHTML = STOP_SVG;
+    box.append(el('p', '', withCompany(quiz.stopped, t).trim() || "You can't continue with this answer."));
+    const row = el('div', 'btn-row');
+    const change = el('button', 'btn', 'Change my answer');
+    change.type = 'button';
+    change.addEventListener('click', quizBack);
+    const close = el('button', 'btn primary', 'Close');
+    close.type = 'button';
+    close.id = 'quiz-close';
+    close.addEventListener('click', cancelQuiz);
+    row.append(change, close);
+    body.append(box, row);
+    $('quiz-foot').hidden = true;
+    close.focus();
+    return;
+  }
+  const q = items[quiz.at];
+  body.append(el('p', 'quiz-q', withCompany(q.text, t)));
+  const answers = el('div', 'quiz-answers');
+  q.answers.forEach((a, j) => {
+    const button = el('button', 'btn quiz-ans', a.label);
+    button.type = 'button';
+    button.addEventListener('click', () => answerQuiz(j));
+    answers.append(button);
+  });
+  body.append(answers);
+  $('quiz-foot').hidden = false;
+  $('quiz-back').hidden = !quiz.path.length;
+  const first = answers.querySelector('button');
+  if (first) first.focus();
+}
+
+/** What an answer does: on to the next question, ahead to a later one, on to the email, or stop. */
+function answerQuiz(j) {
+  if (!quiz) return;
+  const t = quiz.template;
+  const items = t.questions.items;
+  const a = items[quiz.at].answers[j];
+  quiz.path.push({ at: quiz.at, answer: j });
+  if (a.go === 'stop') {
+    quiz.stopped = a.message || '';
+    log(`Questions for "${t.name}": ${quizTrail()} -> stopped`);
+    renderQuiz();
+    return;
+  }
+  let next = -1;
+  if (a.go === 'next') next = quiz.at + 1;
+  else if (a.go !== 'continue') next = items.findIndex((q) => q.id === a.go);
+  if (next > quiz.at && next < items.length) {
+    quiz.at = next;
+    renderQuiz();
+    return;
+  }
+  log(`Questions for "${t.name}": ${quizTrail()} -> continue`);
+  closeQuiz();
+  openLoadForm(t);
+}
+
+function quizTrail() {
+  const items = quiz.template.questions.items;
+  return quiz.path.map((step) => `${items[step.at].text} ${items[step.at].answers[step.answer].label}`).join(' · ');
+}
+
+function quizBack() {
+  if (!quiz || !quiz.path.length) return;
+  quiz.at = quiz.path.pop().at;
+  quiz.stopped = null;
+  renderQuiz();
+}
+
+function closeQuiz() {
+  $('quiz').hidden = true;
+  $('quiz-body').textContent = '';
+  quiz = null;
+}
+
+/** Cancel (or Close after a stop): no email. A stop's message stays in the status line as a reminder. */
+function cancelQuiz() {
+  if (!quiz) return;
+  const { template, stopped } = quiz;
+  closeQuiz();
+  if (stopped !== null) {
+    setStatus(`Stopped: ${withCompany(stopped, template).trim() || "this load's answers don't allow an email yet"}`, 'error');
+  } else {
+    log(`Questions for "${template.name}": cancelled`);
+    setStatus('');
+  }
+  $('btn-email').focus();
+}
+
+/** Keeps Tab inside the pop-up while it's open. */
+function onQuizKeys(event) {
+  if (event.key !== 'Tab') return;
+  const buttons = [...$('quiz').querySelectorAll('button')].filter((b) => !b.disabled && b.offsetParent !== null);
+  if (!buttons.length) return;
+  const first = buttons[0];
+  const last = buttons[buttons.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 // ---- creating the email
 
 /**
@@ -2069,12 +3237,12 @@ function onLoadCancel() {
 async function createEmail(template, load, acc) {
   const base = emailFileBase(template, load);
   const splitMb = template ? template.splitMb : 0;
-  const result = await withBusy(() => makeFiles(base, splitMb));
+  const result = await withBusy(() => makeFiles(base, splitMb, layoutOf(template), lumperBase(template, load)));
   if (!result) return;
   const { files } = result;
   const names = files.map((f) => f.name).join(', ');
   const form = emailFields(template, load, acc);
-  const extras = accessorialSummary(acc);
+  const extras = [accessorialSummary(acc), acc && !acc.lum.on && template && template.noLumper ? 'No Lumper' : ''].filter(Boolean).join(', ');
 
   let links = null;
   let azureProblem = '';
@@ -2126,6 +3294,7 @@ async function createEmail(template, load, acc) {
     return;
   }
   const to = (form.toRecipients || []).join(', ');
+  if (template && template.checklist) log(`Checklist: all ${plural(template.checklist.split('\n').length, 'item')} ticked for "${template.name}"`);
   log(`New email: opened (${template ? `template "${template.name}"` : 'blank'}; ${names}${to ? `; to ${to}` : ''}${extras ? `; ${extras}` : ''}${links ? '; attached through Azure' : ''})`);
   const accNote = extras ? ` In the message: ${extras}.` : '';
   const extra = `${accNote}${oversizeNote(files, splitMb)}${leftOutText(result)}`;
@@ -2220,7 +3389,7 @@ async function splitIntoFiles(bytes, base, splitMb) {
 function oversizeNote(files, splitMb) {
   const over = files.filter((f) => f.over);
   if (!over.length) return '';
-  const why = over[0].stop ? ' (with Multi-stop, each stop stays one file)' : ' because a single page is that big';
+  const why = over[0].stop || over[0].lumper ? ' (stop and lumper receipt files are never split by size)' : ' because a single page is that big';
   return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over the ${splitMb} MB limit${why}.`;
 }
 
@@ -2332,7 +3501,57 @@ function cleanTemplates(list) {
       body: String(t.body || ''),
       file: String(t.file || ''),
       splitMb: parseSplitMb(t.splitMb),
+      stopFiles: t.stopFiles !== false,             // Multi-stop: each stop its own file (else all stops in one)
+      lumperSeparate: !!t.lumperSeparate,           // lumper receipts in their own file
+      lumperName: String(t.lumperName || '').trim() || '{load} Lumper',
+      noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't ticked
+      checklist: cleanChecklist(t.checklist),       // things to tick before the email is created
+      customer: String(t.customer || '').trim().slice(0, 60), // fills in {company} in the questions
+      questions: cleanQuestions(t.questions),       // asked in a pop-up before the create-email step
     }));
+}
+
+/**
+ * A template's questions: { intro, items: [{ id, text, answers: [{ label, go, message }] }] }, or
+ * null. An answer's `go` is 'next', 'continue', 'stop' (with a message), or the id of a LATER
+ * question, so the questions always come to an end.
+ */
+function cleanQuestions(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.items)) return null;
+  const items = value.items
+    .filter((q) => q && typeof q === 'object')
+    .slice(0, QUIZ.maxQuestions)
+    .map((q) => ({
+      id: /^[A-Za-z0-9_-]{1,24}$/.test(String(q.id || '')) ? String(q.id) : newId(),
+      text: oneLine(q.text).slice(0, 200),
+      answers: (Array.isArray(q.answers) ? q.answers : [])
+        .filter((a) => a && typeof a === 'object' && oneLine(a.label))
+        .slice(0, QUIZ.maxAnswers)
+        .map((a) => ({ label: oneLine(a.label).slice(0, 60), go: String(a.go || 'next'), message: oneLine(a.message).slice(0, 300) })),
+    }))
+    .filter((q) => q.text && q.answers.length);
+  const seen = new Set();
+  for (const q of items) {
+    while (seen.has(q.id)) q.id = newId();
+    seen.add(q.id);
+  }
+  items.forEach((q, i) => {
+    for (const a of q.answers) {
+      if (!['next', 'continue', 'stop'].includes(a.go) && !(items.findIndex((x) => x.id === a.go) > i)) a.go = 'next';
+      if (a.go !== 'stop') a.message = '';
+    }
+  });
+  return items.length ? { intro: oneLine(value.intro).slice(0, 300), items } : null;
+}
+
+/** Text with its line breaks and runs of spaces turned into single spaces. */
+function oneLine(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+/** A template's checklist: one item per line, at most 12 items of 200 characters. */
+function cleanChecklist(text) {
+  return String(text || '').split(/\r?\n/).map((line) => line.trim().slice(0, 200)).filter(Boolean).slice(0, 12).join('\n');
 }
 
 /** Outlook's roaming settings follow the person's mailbox (classic, new Outlook and the web). */
@@ -2403,6 +3622,7 @@ function cleanTeam(data) {
     templates: cleanTemplates(data && data.templates),
     azure: cleanAzure(data && data.azure),
     repTemplates: !!(data && data.repTemplates), // reps may make their own templates (off to start)
+    rateCon: cleanRateCon(data && data.rateCon),  // the sample rate confirmation (null: check is off)
   };
 }
 
@@ -2513,6 +3733,7 @@ function openTemplates() {
 function closeTemplates() {
   $('templates').hidden = true;
   editing = null;
+  if (!$('read-view').hidden) renderList(); // a template may have turned lumper receipt tags on or off
   $('btn-email').focus();
 }
 
@@ -2540,9 +3761,35 @@ function renderTemplateSheet() {
   $('azure-section').hidden = !admin;
   if (admin) renderAzureBox();
   if (admin) $('team-rep-templates').checked = !!(teamSettings() && teamSettings().repTemplates);
+  $('rc-section').hidden = !admin;
+  if (admin) renderRcBox();
   $('mine-section').hidden = !canMakeOwn();
   fillTemplateList($('mine-list'), state.myTemplates, 'mine');
   $('mine-empty').hidden = state.myTemplates.length > 0;
+}
+
+/** The rate confirmation check's status, for the team admin. */
+function renderRcBox(message) {
+  const sample = teamRateCon();
+  $('rc-note').textContent = sample ? 'On' : 'Off';
+  $('rc-remove').hidden = !sample;
+  const saved = sample && sample.saved ? new Date(sample.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+  $('rc-text').textContent = message || (sample
+    ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}). Pages that look like it are flagged, and have to be left out before anyone emails or saves.`
+    : 'Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click Use as rate con sample at the bottom of the preview.');
+}
+
+async function onRcRemove() {
+  try {
+    await saveTeamDraft({ rateCon: null });
+  } catch (error) {
+    renderRcBox(`Couldn't remove it: ${error.message}`);
+    return;
+  }
+  log('Rate con check: sample removed (not published yet)');
+  renderPublishBox();
+  renderRcBox('Removed. Publish to turn the check off for your team.');
+  recheckRateCons();
 }
 
 /** The admin's switch for letting reps make their own templates. Published with the team templates. */
@@ -2563,7 +3810,7 @@ function fillTemplateList(list, templates, scope) {
   for (const t of templates) {
     const row = el('li', 'tpl-row');
     const text = el('div', 'tpl-text');
-    text.append(el('div', 'tpl-name', t.name), el('div', 'tpl-sub', recipientsText(t) || 'No recipients set'));
+    text.append(el('div', 'tpl-name', t.name), el('div', 'tpl-sub', templateSub(t)));
     row.append(text);
     if (scope) {
       const edit = el('button', 'btn', 'Edit');
@@ -2600,16 +3847,203 @@ function editTemplate(scope, id) {
   $('tpl-message').value = t ? t.body : NEW_TEMPLATE.body;
   $('tpl-file').value = t ? (t.file || '{load}') : NEW_TEMPLATE.file;
   $('tpl-split').value = t && t.splitMb ? String(t.splitMb) : '';
+  $('tpl-no-lumper').checked = !!(t && t.noLumper);
+  $('tpl-checklist').value = t ? t.checklist || '' : '';
+  $('tpl-stop-files').checked = !t || t.stopFiles !== false;
+  $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
+  $('tpl-lumper-name').value = (t && t.lumperName) || NEW_TEMPLATE.lumperName;
+  syncLumperNameRow();
+  $('tpl-customer').value = t ? t.customer || '' : '';
+  qDraft = t && t.questions ? JSON.parse(JSON.stringify(t.questions)) : { intro: '', items: [] };
+  renderQuestionBuilder();
   $('tpl-delete').hidden = !t;
   $('tpl-delete').textContent = 'Delete this template';
   $('tpl-error').textContent = '';
   renderTemplateSheet();
+  fitQuestionBoxes(); // now that the form is showing, the question boxes can be measured
   $('tpl-title').textContent = `${t ? 'Edit' : 'New'} ${scope === 'team' ? 'team template' : 'template'}`;
   $('tpl-name').focus();
 }
 
+/** Shows the lumper file name box only when lumper receipts get their own file. */
+function syncLumperNameRow() {
+  $('tpl-lumper-row').hidden = !$('tpl-lumper-sep').checked;
+}
+
+// ---- the question builder (in the template form)
+
+let qDraft = { intro: '', items: [] }; // the questions of the template being edited
+
+function clearTplError() {
+  $('tpl-error').textContent = '';
+}
+
+function iconButton(svg, label, onClick) {
+  const button = el('button', 'icon-btn');
+  button.type = 'button';
+  button.innerHTML = svg;
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+/** [value, text] choices for what an answer to question i does. Jumps only go forward. */
+function goChoices(i) {
+  const items = qDraft.items;
+  const choices = [['next', i < items.length - 1 ? `Next question (Q${i + 2})` : 'Next question (or the email)']];
+  for (let k = i + 2; k < items.length; k++) choices.push([items[k].id, `Go to Q${k + 1}`]);
+  choices.push(['continue', 'Continue to the email'], ['stop', 'Stop with a message']);
+  return choices;
+}
+
+/** Redraws the builder from qDraft (after adding or removing something), focusing `focus` if given. */
+function renderQuestionBuilder(focus) {
+  const items = qDraft.items;
+  $('q-intro-row').hidden = !items.length;
+  $('q-intro').value = qDraft.intro;
+  const list = $('q-list');
+  list.textContent = '';
+  items.forEach((q, i) => list.append(questionEditor(q, i)));
+  $('q-add').disabled = items.length >= QUIZ.maxQuestions;
+  $('q-add').textContent = items.length ? 'Add another question' : 'Add a question';
+  fitQuestionBoxes();
+  const target = focus ? document.querySelector(focus) : null;
+  if (target) target.focus();
+}
+
+/** Grows a builder text box to fit what's in it (one line to start). Hidden boxes wait until shown. */
+function fitHeight(area) {
+  if (!area.offsetParent) return;
+  area.style.height = 'auto';
+  area.style.height = `${area.scrollHeight + 2}px`;
+}
+
+function fitQuestionBoxes() {
+  for (const area of document.querySelectorAll('#q-list textarea')) fitHeight(area);
+}
+
+function questionEditor(q, i) {
+  const item = el('li', 'q-item');
+  item.dataset.qid = q.id;
+  const head = el('div', 'q-item-head');
+  const text = document.createElement('textarea');
+  text.className = 'q-text';
+  text.rows = 1;
+  text.maxLength = 200;
+  text.value = q.text;
+  text.placeholder = i === 0 ? 'Did the driver sign the POD?' : 'Type the question';
+  text.setAttribute('aria-label', `Question ${i + 1}`);
+  text.addEventListener('input', () => {
+    q.text = text.value;
+    fitHeight(text);
+    clearTplError();
+  });
+  head.append(el('span', 'q-num', `Q${i + 1}`), text, iconButton(X_SVG, `Remove question ${i + 1}`, () => removeQuestion(i)));
+  const answers = el('div', 'q-answers');
+  q.answers.forEach((a, j) => answers.append(answerEditor(q, i, a, j)));
+  const add = el('button', 'link-btn q-ans-add', 'Add an answer');
+  add.type = 'button';
+  add.disabled = q.answers.length >= QUIZ.maxAnswers;
+  add.addEventListener('click', () => {
+    q.answers.push({ label: '', go: 'next', message: '' });
+    renderQuestionBuilder(`[data-qid="${q.id}"] .q-ans:last-child .q-ans-label`);
+  });
+  item.append(head, answers, add);
+  return item;
+}
+
+function answerEditor(q, i, a, j) {
+  const row = el('div', 'q-ans');
+  const label = document.createElement('input');
+  label.type = 'text';
+  label.className = 'q-ans-label';
+  label.maxLength = 60;
+  label.value = a.label;
+  label.placeholder = 'Answer';
+  label.setAttribute('aria-label', `Question ${i + 1}, answer ${j + 1}`);
+  label.addEventListener('input', () => {
+    a.label = label.value;
+    clearTplError();
+  });
+  const go = document.createElement('select');
+  go.className = 'q-ans-go';
+  go.setAttribute('aria-label', `What answer ${j + 1} to question ${i + 1} does`);
+  const choices = goChoices(i);
+  for (const [value, text] of choices) go.append(new Option(text, value));
+  if (!choices.some(([value]) => value === a.go)) a.go = 'next'; // its question was removed
+  go.value = a.go;
+  const message = document.createElement('textarea');
+  message.className = 'q-ans-msg';
+  message.rows = 1;
+  message.maxLength = 300;
+  message.value = a.message || '';
+  message.placeholder = 'Message to show, e.g. Please get the exit slip from the carrier before continuing';
+  message.setAttribute('aria-label', `Stop message for answer ${j + 1} to question ${i + 1}`);
+  message.hidden = a.go !== 'stop';
+  message.addEventListener('input', () => {
+    a.message = message.value;
+    fitHeight(message);
+    clearTplError();
+  });
+  go.addEventListener('change', () => {
+    a.go = go.value;
+    message.hidden = a.go !== 'stop';
+    if (!message.hidden) {
+      fitHeight(message);
+      message.focus();
+    }
+    clearTplError();
+  });
+  const remove = iconButton(X_SVG, `Remove answer ${j + 1} from question ${i + 1}`, () => {
+    q.answers.splice(j, 1);
+    renderQuestionBuilder(`[data-qid="${q.id}"] .q-ans-add`);
+  });
+  row.append(label, go, remove, message);
+  return row;
+}
+
+function addQuestion() {
+  if (qDraft.items.length >= QUIZ.maxQuestions) return;
+  if (!qDraft.items.length && !qDraft.intro.trim()) qDraft.intro = QUIZ.intro;
+  const q = { id: newId(), text: '', answers: [{ label: 'Yes', go: 'next', message: '' }, { label: 'No', go: 'stop', message: '' }] };
+  qDraft.items.push(q);
+  renderQuestionBuilder(`[data-qid="${q.id}"] .q-text`);
+}
+
+/** Removing a question: answers that jumped to it go to the next question instead. */
+function removeQuestion(i) {
+  const [gone] = qDraft.items.splice(i, 1);
+  for (const q of qDraft.items) for (const a of q.answers) if (a.go === gone.id) a.go = 'next';
+  const near = qDraft.items[i] || qDraft.items[i - 1];
+  renderQuestionBuilder(near ? `[data-qid="${near.id}"] .q-text` : '#q-add');
+  clearTplError();
+}
+
+/** What's wrong with the questions being edited, or ''. Blank answers are simply left out. */
+function questionsProblem(draft) {
+  for (let i = 0; i < draft.items.length; i++) {
+    const q = draft.items[i];
+    const n = `Q${i + 1}`;
+    if (!q.text.trim()) return `${n}: type the question, or remove it.`;
+    const answers = q.answers.filter((a) => a.label.trim());
+    if (!answers.length) return `${n}: add at least one answer.`;
+    const seen = new Set();
+    for (const a of answers) {
+      const name = a.label.trim();
+      if (seen.has(name.toLowerCase())) return `${n}: two answers are called "${name}".`;
+      seen.add(name.toLowerCase());
+      if (a.go === 'stop' && !String(a.message || '').trim()) return `${n}: type the message to show when someone answers "${name}".`;
+    }
+  }
+  return '';
+}
+
 function templateProblem(t) {
   if (!t.name) return 'Give the template a name.';
+  if (t.lumperSeparate && fill(t.lumperName, 'X').toLowerCase() === fill(t.file || '{load}', 'X').toLowerCase()) {
+    return 'The lumper receipt file needs a different name from the PDF name.';
+  }
   for (const [label, text] of [['To', t.to], ['CC', t.cc]]) {
     for (const address of parseAddresses(text)) {
       if (/\{load\}/i.test(address)) continue;
@@ -2632,7 +4066,8 @@ async function saveTeamDraft(changes) {
   const templates = changes.templates || (base ? base.templates : []);
   const azure = 'azure' in changes ? changes.azure : (base ? base.azure || null : null);
   const repTemplates = 'repTemplates' in changes ? !!changes.repTemplates : !!(base && base.repTemplates);
-  const draft = { v: 1, updated: Date.now(), by: team.me, admins, templates, azure, repTemplates };
+  const rateCon = 'rateCon' in changes ? changes.rateCon : (base ? base.rateCon || null : null);
+  const draft = { v: 1, updated: Date.now(), by: team.me, admins, templates, azure, repTemplates, rateCon };
   await writeRoaming(DRAFT_KEY, draft);
   team.draft = draft;
   team.justPublished = false;
@@ -2649,16 +4084,24 @@ async function onTemplateSubmit(event) {
     body: $('tpl-message').value.replace(/\s+$/, ''),
     file: $('tpl-file').value.trim().replace(/\.pdf$/i, '') || '{load}',
     splitMb: parseSplitMb($('tpl-split').value),
+    noLumper: $('tpl-no-lumper').checked,
+    checklist: cleanChecklist($('tpl-checklist').value),
+    stopFiles: $('tpl-stop-files').checked,
+    lumperSeparate: $('tpl-lumper-sep').checked,
+    lumperName: $('tpl-lumper-name').value.trim().replace(/\.pdf$/i, '') || NEW_TEMPLATE.lumperName,
+    customer: $('tpl-customer').value.trim().slice(0, 60),
+    questions: null,
   };
   if ($('tpl-split').value.trim() && !data.splitMb) {
     $('tpl-error').textContent = 'Split size should be a number of MB, like 10.';
     return;
   }
-  const problem = templateProblem(data);
+  const problem = templateProblem(data) || questionsProblem(qDraft);
   if (problem) {
     $('tpl-error').textContent = problem;
     return;
   }
+  data.questions = cleanQuestions(qDraft);
   try {
     if (editing.scope === 'mine') {
       const list = state.myTemplates.slice();
@@ -2713,7 +4156,7 @@ async function onPublish() {
     return;
   }
   const admins = source.admins.length ? source.admins : [team.me];
-  const payload = { v: 1, updated: source.updated || Date.now(), by: team.me, admins, templates: source.templates, azure: source.azure || null, repTemplates: !!source.repTemplates };
+  const payload = { v: 1, updated: source.updated || Date.now(), by: team.me, admins, templates: source.templates, azure: source.azure || null, repTemplates: !!source.repTemplates, rateCon: source.rateCon || null };
   downloadText(await encryptTeam(payload, team.key), TEAM_FILE, 'application/json');
   team.justPublished = true;
   log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)`);
@@ -2981,7 +4424,7 @@ function wireReadUi() {
       if (on && !was && state.multiStop) assignStop(file); // in list order: the next free stop each
     }
     state.built.clear();
-    if (state.multiStop) renderList(); // stop pickers come and go with the ticks
+    if (state.multiStop || lumperTagging()) renderList(); // stop pickers and lumper tags come and go with the ticks
     else updateSelectionUi();
     if (!$('preview').hidden) syncPreviewPages();
   });
@@ -3009,11 +4452,25 @@ function wireReadUi() {
   $('tpl-back').addEventListener('click', () => (editing ? cancelEdit() : closeTemplates()));
   $('tpl-form').addEventListener('submit', (event) => onTemplateSubmit(event).catch(fail));
   $('tpl-cancel').addEventListener('click', cancelEdit);
+  $('tpl-lumper-sep').addEventListener('change', syncLumperNameRow);
+  $('q-add').addEventListener('click', addQuestion);
+  $('q-intro').addEventListener('input', (event) => { qDraft.intro = event.target.value; });
+  $('q-list').addEventListener('keydown', (event) => { // Enter in a question box doesn't save the template (or add a line)
+    if (event.key === 'Enter' && event.target.matches('input, textarea')) event.preventDefault();
+  });
+  $('quiz-back').addEventListener('click', quizBack);
+  $('quiz-cancel').addEventListener('click', cancelQuiz);
+  $('quiz').addEventListener('keydown', onQuizKeys);
+  wireHowto();
   $('tpl-delete').addEventListener('click', () => onTemplateDelete().catch(fail));
   $('team-new').addEventListener('click', () => editTemplate('team', null));
   $('mine-new').addEventListener('click', () => editTemplate('mine', null));
   $('team-publish').addEventListener('click', () => onPublish().catch(fail));
   $('team-rep-templates').addEventListener('change', (event) => onRepTemplatesToggle(event.target.checked).catch(fail));
+  $('rc-remove').addEventListener('click', () => onRcRemove().catch(fail));
+  $('rc-leave-out').addEventListener('click', onRcLeaveOut);
+  $('rc-keep').addEventListener('click', onRcKeep);
+  $('pv-rc-sample').addEventListener('click', () => onUseRateConSample().catch(fail));
   $('team-share').addEventListener('click', () => onShareInstall().catch(fail));
   $('az-gen').addEventListener('click', onAzureGenerate);
   $('az-copy').addEventListener('click', () => onAzureCopy().catch(fail));
@@ -3031,7 +4488,9 @@ function wireReadUi() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if (!$('preview').hidden) closePreview();
+    if (!$('quiz').hidden) cancelQuiz();
+    else if (!$('howto').hidden) closeHowto(true);
+    else if (!$('preview').hidden) closePreview();
     else if (!$('templates').hidden) {
       if (editing) cancelEdit();
       else closeTemplates();

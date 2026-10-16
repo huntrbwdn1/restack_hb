@@ -50,7 +50,7 @@ input[type="checkbox"]:disabled { cursor: default; }
 .file-label > input { grid-area: check; }
 .file .thumb { grid-area: thumb; }
 .file .file-text { grid-area: text; }
-.file > .stop-pick { grid-area: stop; justify-self: start; margin-top: 4px; }
+.file > .row-tags { grid-area: stop; justify-self: start; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .file > .icon-btn { grid-area: eye; }
 .file:hover { background: var(--hover); }
 .file-label { display: contents; cursor: pointer; }
@@ -263,3 +263,186 @@ input[type="checkbox"]:disabled { cursor: default; }
 .stop-pick:disabled { opacity: .5; cursor: default; }
 .nowrap { white-space: nowrap; }
 .check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* ---- lumper receipt tags and template options */
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px 0 7px;
+  border: 1px solid #c8c8c8; border-radius: 12px; background: #fff; color: var(--muted);
+  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.tag-chip input { width: 14px; height: 14px; accent-color: #8a5300; }
+.tag-chip.on { border-color: #c78b00; background: #fff4ce; color: #6b4300; }
+.pv-page-tags { display: flex; align-items: center; gap: 6px; }
+.file-note.lumper { font-style: normal; color: #8a5300; }
+.tpl-check { align-items: flex-start; font-size: 13px; font-weight: 400; }
+.tpl-check input { margin-top: 2px; }
+.tpl-sub { display: grid; gap: 4px; padding-left: 24px; font-weight: 400; }
+
+/* ---- a template's checklist in the create-email step */
+.checklist { display: grid; gap: 6px; padding: 10px; border-radius: 6px; background: #fff8e6; border: 1px solid #f3dfae; }
+.checklist-title { margin: 0; font-weight: 600; }
+.checklist-items { display: grid; gap: 6px; }
+.checklist-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.checklist-item input { margin-top: 2px; }
+
+/* ---- rate confirmation check */
+.rc-banner { display: grid; gap: 8px; padding: 10px; border-radius: 6px; background: #fde7e9; border: 1px solid #f1bbbc; }
+.rc-banner p { margin: 0; color: #751d1f; font-weight: 600; overflow-wrap: anywhere; }
+.rc-banner .btn.primary { background: var(--danger); border-color: var(--danger); }
+.rc-banner .btn.primary:hover { background: #8e0b17; }
+.file-note.rc { font-style: normal; font-weight: 600; color: var(--danger); }
+.rc-badge { padding: 1px 7px; border-radius: 10px; background: #fde7e9; color: var(--danger); font-size: 11px; font-weight: 700; }
+.pv-admin { padding: 0 14px 8px; }
+.pv-admin:has(> [hidden]:only-child) { display: none; }
+.file-note.rc.out { color: var(--muted); font-weight: 400; }
+
+/* ---- Multi-stop: the Shipper/Receiver drop-downs list the stops ("Receiver (Stop 2)") */
+.acc-head select { max-width: 62%; }
+
+/* ---- only one email came through: the tip, and the how-to behind its info icon */
+.one-tip {
+  display: flex; align-items: flex-start; gap: 6px; margin: 6px 0 0; padding: 5px 8px 5px 5px;
+  border-radius: 6px; background: var(--accent-soft); color: #0e4775; font-size: 12px; line-height: 1.35;
+}
+.one-tip > span { padding-top: 2px; }
+.info-btn {
+  flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: transparent; color: var(--accent); cursor: pointer;
+}
+.info-btn:hover, .info-btn[aria-expanded="true"] { background: #cfe4fa; }
+.info-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.howto {
+  position: fixed; left: 8px; right: 8px; z-index: 20; overflow: auto;
+  display: grid; gap: 10px; padding: 12px;
+  background: var(--bg); border: 1px solid #d1d1d1; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.18), 0 0 2px rgba(0,0,0,.12);
+}
+.howto-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.howto-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.howto-head .icon-btn { width: 26px; height: 26px; }
+.howto-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border-radius: 6px; background: #efefef; }
+.howto-tabs button {
+  height: 26px; border: 0; border-radius: 4px; background: transparent; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+}
+.howto-tabs button[aria-selected="true"] { background: #fff; color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.16); }
+.howto-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.howto-steps { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.howto-steps li { transition: color .2s; }
+.howto-steps li.on { color: var(--fg); font-weight: 600; }
+.howto-steps li.done { color: var(--fg); }
+
+/* the little made-up message list the pointer works on */
+.howto-stage { position: relative; height: 176px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #f6f6f6; }
+.ml { position: absolute; top: 10px; left: 10px; right: 10px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; }
+.ml-row { position: relative; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; font-size: 11px; transition: background .2s; }
+.ml-kid { border-top: 1px solid #f0f0f0; padding-left: 30px; }
+.ml-lines { flex: 1; min-width: 0; display: flex; gap: 6px; white-space: nowrap; overflow: hidden; }
+.ml-lines b { font-weight: 600; }
+.ml-lines i { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; color: var(--muted); }
+.ml-chev { flex: none; width: 14px; height: 14px; display: grid; place-items: center; color: #424242; transition: transform .25s ease; }
+.ml-chev svg { width: 10px; height: 10px; }
+.howto-stage:not([data-state="collapsed"]) .ml-chev { transform: rotate(90deg); }
+.ml-check { flex: none; width: 13px; height: 13px; border: 1px solid #8a8a8a; border-radius: 3px; background: #fff; transition: background .15s, border-color .15s; }
+.ml-clip { flex: none; width: 11px; height: 11px; color: var(--muted); }
+.ml-clip svg { display: block; width: 11px; height: 11px; }
+.ml-kids { max-height: 0; opacity: 0; transition: max-height .3s ease, opacity .3s ease; }
+.howto-stage:not([data-state="collapsed"]) .ml-kids { max-height: 140px; opacity: 1; }
+/* new Outlook: the conversation's checkbox ticks every email in it */
+.howto-stage[data-client="new"][data-state="all"] .ml-check {
+  border-color: var(--accent);
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m2.6 6.2 2.2 2.2 4.6-4.8' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 11px no-repeat;
+}
+.howto-stage[data-client="new"][data-state="all"] .ml-row { background: var(--accent-soft); }
+/* classic Outlook: click the first email, Shift+click the last */
+.howto-stage[data-client="classic"] .ml-kid { padding-left: 26px; }
+.howto-stage[data-client="classic"] .ml-kid::before { content: ""; position: absolute; left: 14px; top: 0; bottom: 0; border-left: 1px solid #d0d0d0; }
+.howto-stage[data-client="classic"][data-state="first"] .ml-kid[data-target="first"],
+.howto-stage[data-client="classic"][data-state="range"] .ml-kid { background: #cce4f7; }
+.ml-cursor {
+  position: absolute; left: 0; top: 0; z-index: 3; width: 16px; height: 22px; pointer-events: none;
+  transition: transform .75s cubic-bezier(.45, .05, .3, 1); filter: drop-shadow(0 1px 1px rgba(0,0,0,.25));
+}
+.ml-cursor svg { display: block; }
+.ml-cursor.instant { transition: none; }
+.ml-ring {
+  position: absolute; z-index: 2; width: 24px; height: 24px; margin: -12px 0 0 -12px; pointer-events: none;
+  border: 2px solid var(--accent); border-radius: 50%; opacity: 0;
+}
+.ml-ring.go { animation: ml-click .5s ease-out; }
+@keyframes ml-click { from { opacity: .9; transform: scale(.3); } to { opacity: 0; transform: scale(1.35); } }
+.ml-key {
+  position: absolute; left: 10px; bottom: 7px; padding: 1px 8px; border: 1px solid #8a8a8a; border-bottom-width: 3px;
+  border-radius: 4px; background: #fff; font-size: 11px; font-weight: 700; opacity: 0; transform: translateY(4px);
+  transition: opacity .2s, transform .2s;
+}
+.howto-stage.shift .ml-key { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ml-cursor, .ml-ring, .ml-key { display: none; }
+  .ml-kids, .ml-chev, .ml-row, .howto-steps li { transition: none; }
+  .howto-steps li { color: var(--fg); }
+}
+
+/* ---- a template's questions: the pop-up before the Create email step */
+.quiz { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 12px; background: rgba(0,0,0,.4); }
+.quiz-card {
+  width: 100%; max-width: 380px; max-height: 100%; overflow: auto; display: grid; gap: 12px; padding: 14px;
+  background: var(--bg); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.28);
+}
+.quiz-intro {
+  margin: 0; display: flex; align-items: flex-start; gap: 8px; padding: 10px;
+  border-radius: 6px; background: #fff8e6; border: 1px solid #f3dfae; color: #4d3200; font-weight: 600;
+}
+.quiz-intro svg { flex: none; margin-top: 1px; }
+.quiz-body { display: grid; gap: 10px; }
+.quiz-trail { margin: 0; padding: 0 0 0 16px; display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.quiz-trail b { color: var(--fg); font-weight: 600; }
+.quiz-q { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.quiz-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.quiz-ans { height: auto; min-height: 36px; padding: 6px 12px; white-space: normal; overflow-wrap: anywhere; }
+.quiz-ans:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.quiz-stop {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px;
+  border-radius: 6px; background: #fde7e9; border: 1px solid #f1bbbc; color: #751d1f;
+}
+.quiz-stop svg { flex: none; }
+.quiz-stop p { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.quiz-foot { display: flex; justify-content: space-between; gap: 8px; }
+.quiz-foot .link-btn { color: var(--muted); font-size: 13px; }
+.quiz-foot #quiz-cancel { margin-left: auto; }
+
+/* ---- the question builder in the template form */
+.q-field { gap: 6px; }
+.q-intro-row { display: grid; gap: 4px; }
+.q-sub-label { font-size: 12px; font-weight: 600; }
+.q-intro {
+  width: 100%; min-height: 50px; padding: 6px 8px; border: 1px solid #8a8a8a; border-radius: 4px;
+  font-size: 13px; font-weight: 400; line-height: 1.4; resize: vertical; background: #fff;
+}
+.q-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.q-list:empty { display: none; }
+.q-item { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fafafa; font-weight: 400; }
+.q-item-head { display: flex; align-items: center; gap: 6px; }
+.q-num {
+  flex: none; min-width: 28px; height: 22px; padding: 0 4px; display: grid; place-items: center;
+  border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700;
+}
+.q-item input[type="text"], .q-item select, .q-item textarea {
+  height: 28px; min-width: 0; padding: 0 6px; border: 1px solid #8a8a8a; border-radius: 4px;
+  background: #fff; font: inherit; font-size: 13px; font-weight: 400; color: inherit;
+}
+.q-item textarea { display: block; width: 100%; padding: 4px 6px; line-height: 18px; resize: none; overflow: hidden; }
+.q-item select { font-size: 12px; padding: 0 2px 0 4px; }
+.q-item input[type="text"]:focus, .q-item select:focus, .q-item textarea:focus, .q-intro:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.q-item-head { align-items: flex-start; }
+.q-item-head .q-num { margin-top: 3px; }
+.q-text { flex: 1; }
+.q-item .q-text { font-weight: 600; }
+.q-item .icon-btn { width: 24px; height: 24px; }
+.q-item-head .icon-btn { margin-top: 2px; }
+.q-answers { display: grid; gap: 6px; padding-left: 14px; }
+.q-ans { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.45fr) 24px; gap: 4px 6px; align-items: center; }
+.q-ans .q-ans-msg { grid-column: 1 / 3; }
+.q-ans-add { margin-left: 14px; color: var(--accent); }
+.q-ans-add:disabled { opacity: .5; cursor: default; }

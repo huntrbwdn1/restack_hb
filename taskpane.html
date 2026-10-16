@@ -9,14 +9,20 @@
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.8.1">
-  <script type="module" src="taskpane.js?v=0.8.1"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.11.0">
+  <script type="module" src="taskpane.js?v=0.11.0"></script>
 </head>
 <body>
   <div id="app">
     <header class="top">
       <h1 id="title">Thread Attachments</h1>
       <p id="summary" class="muted">Starting…</p>
+      <p id="one-tip" class="one-tip" hidden>
+        <button id="tip-info" class="info-btn" type="button" aria-label="How to include every email in the thread" aria-expanded="false" aria-controls="howto" title="How to include every email">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="6.3" r="1.05" fill="currentColor"/></svg>
+        </button>
+        <span>Only 1 email came through. To include the whole thread, select every email in it.</span>
+      </p>
     </header>
 
     <!-- Reading emails: the attachment list -->
@@ -55,6 +61,13 @@
     </main>
 
     <footer id="actions" class="actions" hidden>
+      <div id="rc-banner" class="rc-banner" role="alert" hidden>
+        <p id="rc-banner-text"></p>
+        <div class="btn-row">
+          <button id="rc-leave-out" class="btn primary" type="button">Leave it out</button>
+          <button id="rc-keep" class="btn" type="button">Not a rate con</button>
+        </div>
+      </div>
       <div id="save-actions" class="save-actions">
         <div class="menu-wrap">
           <button id="btn-email" class="btn primary menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="email-menu">
@@ -137,6 +150,10 @@
             <label class="acc-field acc-inline"><span>Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
           </div>
         </fieldset>
+        <div id="checklist-box" class="checklist" hidden>
+          <p id="checklist-title" class="checklist-title"></p>
+          <div id="checklist-items" class="checklist-items"></div>
+        </div>
         <p id="acc-error" class="hint error" role="alert"></p>
         <div class="btn-row">
           <button id="load-go" class="btn primary" type="submit">Create email</button>
@@ -179,6 +196,9 @@
         <span id="pv-include-label">Include in PDF</span>
       </label>
       <span id="pv-pages" class="muted small"></span>
+    </div>
+    <div class="pv-admin">
+      <button id="pv-rc-sample" class="link-btn" type="button" hidden>Use as rate con sample</button>
     </div>
   </section>
 
@@ -245,6 +265,16 @@
             </div>
           </div>
         </section>
+        <section id="rc-section" class="tpl-section" hidden>
+          <div class="tpl-head">
+            <h2>Rate confirmation check</h2>
+            <span id="rc-note" class="muted small"></span>
+          </div>
+          <div class="azure-form">
+            <p id="rc-text" class="hint"></p>
+            <div><button id="rc-remove" class="btn" type="button" hidden>Remove the sample</button></div>
+          </div>
+        </section>
         <section id="mine-section" class="tpl-section">
           <div class="tpl-head">
             <h2>My templates</h2>
@@ -275,6 +305,30 @@
           <span>Message</span>
           <textarea id="tpl-message" rows="5"></textarea>
         </label>
+        <label class="check-row tpl-check">
+          <input type="checkbox" id="tpl-no-lumper">
+          <span>Say <b>No Lumper</b> in the message when Lumper isn't ticked</span>
+        </label>
+        <label class="field">
+          <span>Checklist before sending <span class="muted">(optional)</span></span>
+          <textarea id="tpl-checklist" rows="3" placeholder="One item per line, e.g. Receiver's printed name and signature on the POD"></textarea>
+          <small class="hint">One item per line. Each one has to be ticked before Create email will open the email.</small>
+        </label>
+        <label class="field">
+          <span>Customer name <span class="muted">(optional)</span></span>
+          <input id="tpl-customer" type="text" maxlength="60" autocomplete="off" placeholder="Walgreens">
+          <small class="hint">Fills in <b>{company}</b> in the questions below.</small>
+        </label>
+        <div class="field q-field">
+          <span>Questions before Create email <span class="muted">(optional)</span></span>
+          <small class="hint">Asked in a pop-up when someone picks this template. Each answer goes to the next question, jumps ahead to a later one, continues to the email, or stops with your message.</small>
+          <div id="q-intro-row" class="q-intro-row" hidden>
+            <label for="q-intro" class="q-sub-label">Opening line</label>
+            <textarea id="q-intro" class="q-intro" rows="2" maxlength="300"></textarea>
+          </div>
+          <ol id="q-list" class="q-list"></ol>
+          <div><button id="q-add" class="btn" type="button">Add a question</button></div>
+        </div>
         <label class="field">
           <span>PDF name</span>
           <span class="name-field">
@@ -290,6 +344,24 @@
           </span>
           <small class="hint">Bigger PDFs are split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Leave it blank to never split.</small>
         </label>
+        <div class="field">
+          <span>Files</span>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-stop-files">
+            <span>Multi-stop loads: each stop in its own file (-1, -2…). Off: all stops in one file, in stop order.</span>
+          </label>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-lumper-sep">
+            <span>Lumper receipts in their own file</span>
+          </label>
+          <div id="tpl-lumper-row" class="tpl-sub" hidden>
+            <span class="name-field">
+              <input id="tpl-lumper-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Lumper receipt file name">
+              <span class="name-ext" aria-hidden="true">.pdf</span>
+            </span>
+            <small class="hint">Tick <b>Lumper receipt</b> on those files in the list, or on their pages in the preview.</small>
+          </div>
+        </div>
         <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>.</p>
         <p id="tpl-error" class="status error" role="alert"></p>
         <div class="btn-row">
@@ -300,6 +372,39 @@
       </form>
     </div>
   </section>
+
+  <!-- How to select every email in a thread (the one-email tip's info icon) -->
+  <section id="howto" class="howto" role="dialog" aria-labelledby="howto-title" hidden>
+    <div class="howto-head">
+      <h2 id="howto-title">Select every email in the thread</h2>
+      <button id="howto-close" class="icon-btn" type="button" aria-label="Close" title="Close">
+        <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="howto-tabs" role="tablist" aria-label="Outlook version">
+      <button id="howto-tab-new" type="button" role="tab" aria-selected="true" aria-controls="howto-stage">New Outlook</button>
+      <button id="howto-tab-classic" type="button" role="tab" aria-selected="false" aria-controls="howto-stage" tabindex="-1">Classic Outlook</button>
+    </div>
+    <div id="howto-stage" class="howto-stage" role="tabpanel" aria-label="How it looks" data-client="new" data-state="collapsed"></div>
+    <ol id="howto-steps" class="howto-steps"></ol>
+    <p id="howto-note" class="hint" hidden></p>
+    <p id="howto-you" class="hint" hidden></p>
+  </section>
+
+  <!-- A template's questions, asked before the Create email step -->
+  <div id="quiz" class="quiz" hidden>
+    <div class="quiz-card" role="dialog" aria-modal="true" aria-label="Questions before the email">
+      <p id="quiz-intro" class="quiz-intro">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 2.6 18 16.5H2Z" fill="#f2b000" stroke="#a86b00" stroke-width="1.1" stroke-linejoin="round"/><path d="M10 7.6v4.4" stroke="#3b2600" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="1" fill="#3b2600"/></svg>
+        <span id="quiz-intro-text"></span>
+      </p>
+      <div id="quiz-body" class="quiz-body"></div>
+      <div id="quiz-foot" class="quiz-foot">
+        <button id="quiz-back" class="link-btn" type="button" hidden>Back</button>
+        <button id="quiz-cancel" class="link-btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>
