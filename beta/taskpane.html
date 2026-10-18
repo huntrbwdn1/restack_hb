@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restack</title>
+  <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
+  <meta name="restack-version" content="0.16.0">
+  <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
+  <script src="mode.js?v=0.16.0"></script>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="pdf-lib.min.js"></script>
+  <script src="pako_inflate.min.js"></script>
+  <script src="UTIF.js"></script>
+  <!-- ?v= makes Outlook load the matching versions after an update -->
+  <link rel="stylesheet" href="taskpane.css?v=0.16.0">
+  <script type="module" src="taskpane.js?v=0.16.0"></script>
+</head>
+<body>
+  <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
+  <div id="app">
+    <header class="top">
+      <div class="brand-row">
+        <img class="for-light" src="brand/axle-logo.png" alt="Axle Logistics">
+        <img class="for-dark" src="brand/axle-logo-white.png" alt="Axle Logistics">
+        <span id="beta-badge" class="beta-badge" hidden>Beta</span>
+      </div>
+      <h1 id="title">Restack</h1>
+      <p id="summary">Starting…</p>
+      <p id="one-tip" class="one-tip" hidden>
+        <button id="tip-info" class="info-btn" type="button" aria-label="How to include every email in the thread" aria-expanded="false" aria-controls="howto" title="How to include every email">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="6.3" r="1.05" fill="currentColor"/></svg>
+        </button>
+        <span><span data-w="oneEmailTip">Only 1 email came through. To include the whole thread, select every email in it.</span>
+          <button id="tip-keep" class="tip-keep" type="button" data-w="keepAddingTip">Or keep adding as you click each one</button></span>
+      </p>
+      <!-- Keep adding (for mail that isn't shown as conversations): each email clicked adds its files -->
+      <div id="keep-bar" class="keep-bar" hidden>
+        <svg class="keep-icon" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="11" height="9.5" rx="1.6"/><path d="M3.5 6.5v9a1.6 1.6 0 0 0 1.6 1.6h9.4"/><path d="M9.3 7.2h4.4M11.5 5v4.4"/></svg>
+        <p class="keep-main"><b data-w="keepAdding">Keep adding</b> <span id="keep-count" class="keep-count"></span><br><span id="keep-text" class="keep-text" role="status" data-w="keepAddingNote">Click each email in the thread to add its files.</span></p>
+        <span class="keep-actions">
+          <button id="keep-restart" class="link-btn" type="button">Start over</button>
+          <button id="keep-off" class="link-btn" type="button">Turn off</button>
+        </span>
+      </div>
+      <div id="keep-ask" class="keep-ask" role="alert" hidden>
+        <p id="keep-ask-text"></p>
+        <div class="btn-row">
+          <button id="keep-add-anyway" class="btn" type="button">Add its files</button>
+          <button id="keep-ask-restart" class="btn primary" type="button">Start over with it</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Reading emails: the attachment list -->
+    <main id="read-view" class="view" hidden>
+      <div class="list-tools">
+        <div class="tools-row">
+          <label class="check-all">
+            <input type="checkbox" id="check-all">
+            <span data-w="selectAll">Select all</span>
+          </label>
+          <span id="selected-count" class="muted"></span>
+        </div>
+        <label class="multi-stop">
+          <input type="checkbox" id="multi-stop">
+          <span><b data-w="multiStop">Multi-stop</b> <span class="muted">· <span data-w="multiStopNote">one PDF per stop: -1, -2…</span></span></span>
+        </label>
+      </div>
+      <div class="list-wrap">
+        <div id="details-head" class="details-head" aria-hidden="true" hidden><span></span><span>Name</span><span class="h-from">From</span><span>Received</span><span class="h-size">Size</span><span></span></div>
+        <ul id="file-list" class="file-list" data-view="medium"></ul>
+        <div id="drop-line" class="drop-line" hidden></div>
+      </div>
+      <label id="logos-toggle" class="logos-toggle" hidden>
+        <input type="checkbox" id="show-logos">
+        <span><span data-w="showLogos">Show logos &amp; icons</span> (<span id="logo-count">0</span>)</span>
+      </label>
+    </main>
+
+    <!-- Writing an email: attach the PDF made with the Email button -->
+    <main id="compose-view" class="view" hidden>
+      <div class="compose-card">
+        <p id="compose-text">Looking for a combined PDF…</p>
+        <button id="btn-attach" class="btn primary" hidden data-w="attachPdf">Attach PDF</button>
+      </div>
+    </main>
+
+    <!-- Nothing to show -->
+    <main id="message-view" class="view" hidden>
+      <p id="message-text" class="notice"></p>
+    </main>
+
+    <footer id="actions" class="actions" hidden>
+      <div id="rc-banner" class="rc-banner" role="alert" hidden>
+        <p id="rc-banner-text"></p>
+        <div class="btn-row">
+          <button id="rc-leave-out" class="btn primary" type="button">Leave it out</button>
+          <button id="rc-keep" class="btn" type="button" data-w="notARateCon">Not a rate con</button>
+        </div>
+      </div>
+      <div id="save-actions" class="save-actions">
+        <div class="menu-wrap">
+          <button id="btn-email" class="btn primary menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="email-menu">
+            <span data-w="email">Email</span>
+            <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="email-menu" class="menu" role="menu" aria-label="Email" hidden></div>
+        </div>
+        <button id="btn-save" class="btn" type="button" data-w="savePdf">Save PDF…</button>
+      </div>
+      <form id="name-form" class="name-form" hidden>
+        <label for="file-name" class="name-label" data-w="nameThePdf">Name the PDF</label>
+        <div class="name-field">
+          <input id="file-name" type="text" autocomplete="off" spellcheck="false" maxlength="120">
+          <span class="name-ext" aria-hidden="true">.pdf</span>
+        </div>
+        <p id="name-hint" class="hint" hidden></p>
+        <div class="btn-row">
+          <button id="name-save" class="btn primary" type="submit" data-w="save">Save</button>
+          <button id="name-cancel" class="btn" type="button" data-w="cancel">Cancel</button>
+        </div>
+      </form>
+      <form id="load-form" class="name-form load-form" hidden novalidate>
+        <div id="load-row" class="field-stack">
+          <label for="load-number" class="name-label" data-w="loadNumber">Load number</label>
+          <div class="name-field">
+            <input id="load-number" type="text" autocomplete="off" spellcheck="false" maxlength="60">
+          </div>
+        </div>
+        <p id="load-hint" class="hint"></p>
+        <fieldset class="acc">
+          <legend class="name-label"><span data-w="accessorials">Accessorials</span> <span class="muted">(optional)</span></legend>
+          <div class="acc-picks">
+            <label class="acc-pick"><input type="checkbox" id="acc-det"><span data-w="detention">Detention</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-lay"><span data-w="layover">Layover</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-lum"><span data-w="lumper">Lumper</span></label>
+            <label class="acc-pick"><input type="checkbox" id="acc-oth"><span data-w="other">Other</span></label>
+          </div>
+          <div id="acc-det-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title" data-w="detention">Detention</span>
+              <select id="det-at" aria-label="Detention at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <div class="acc-grid3">
+              <label class="acc-field"><span data-w="timeIn">IN</span><input id="det-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="appointment">APPT</span><input id="det-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="timeOut">OUT</span><input id="det-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            </div>
+            <label class="acc-field acc-inline"><span data-w="hoursRequested">Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
+          </div>
+          <div id="acc-lay-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title" data-w="layover">Layover</span>
+              <select id="lay-at" aria-label="Layover at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <div class="acc-grid3">
+              <label class="acc-field"><span data-w="timeIn">IN</span><input id="lay-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="appointment">APPT</span><input id="lay-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+              <label class="acc-field"><span data-w="timeOut">OUT</span><input id="lay-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            </div>
+          </div>
+          <div id="acc-lum-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title" data-w="lumper">Lumper</span>
+              <select id="lum-at" aria-label="Lumper at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="lum-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+          </div>
+          <div id="acc-oth-box" class="acc-box" hidden>
+            <div class="acc-head">
+              <span class="acc-title" data-w="other">Other</span>
+              <select id="oth-at" aria-label="Other accessorial at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+            </div>
+            <label class="acc-field acc-inline"><span data-w="otherType">Type</span><input id="oth-type" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Driver assist"></label>
+            <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+          </div>
+        </fieldset>
+        <div id="checklist-box" class="checklist" hidden>
+          <p id="checklist-title" class="checklist-title"></p>
+          <div id="checklist-items" class="checklist-items"></div>
+        </div>
+        <p id="acc-error" class="hint error" role="alert"></p>
+        <div class="btn-row">
+          <button id="load-go" class="btn primary" type="submit" data-w="createEmail">Create email</button>
+          <button id="load-cancel" class="btn" type="button" data-w="cancel">Cancel</button>
+        </div>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div id="parts" class="parts" hidden></div>
+    </footer>
+
+    <div class="foot-row">
+      <details id="diagnostics" class="diagnostics">
+        <summary data-w="testReport">Test report</summary>
+        <p class="muted small">Try the buttons above, then copy this and paste it into the chat.</p>
+        <textarea id="report" readonly spellcheck="false" aria-label="Test report"></textarea>
+        <button id="btn-copy-report" class="btn" type="button" data-w="copyReport">Copy report</button>
+      </details>
+      <!-- Settings: Manage templates, Team (the admin), Appearance, Text size, View, and two switches. Always at hand. -->
+      <div class="foot-settings">
+        <button id="btn-settings" class="icon-btn settings-btn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-pop" data-w-aria="settings" data-w-title="settings" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M8.7 2.6h2.6l.45 2.05c.55.2 1.06.5 1.5.86l2-.65 1.3 2.25-1.56 1.4a5.6 5.6 0 0 1 0 1.74l1.56 1.4-1.3 2.25-2-.65c-.44.37-.95.66-1.5.86l-.45 2.05H8.7l-.45-2.05a5.4 5.4 0 0 1-1.5-.86l-2 .65-1.3-2.25 1.56-1.4a5.6 5.6 0 0 1 0-1.74l-1.56-1.4 1.3-2.25 2 .65c.44-.37.95-.66 1.5-.86z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+        </button>
+        <div id="settings-pop" class="settings-pop" role="dialog" aria-label="Settings" data-w-aria="settings" hidden>
+          <button id="set-templates" class="menu-item" type="button" hidden><span class="mi-name" data-w="manageTemplates">Manage templates…</span></button>
+          <!-- Team: only the team admin sees this -->
+          <div id="set-team-group" hidden>
+            <button id="set-team" class="menu-item set-row" type="button" aria-expanded="false" aria-controls="team-menu">
+              <span id="set-team-name" class="mi-name">Team</span>
+              <span class="set-now"><span id="set-team-now"></span></span>
+              <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div id="team-menu" class="set-list" role="group" aria-labelledby="set-team-name" hidden>
+              <button id="team-publish" class="set-opt" type="button"><span class="opt-name">Publish to team</span><span id="team-publish-state" class="opt-val"></span></button>
+              <button id="team-share" class="set-opt" type="button"><span class="opt-name">Share install file</span></button>
+              <button id="team-share-beta" class="set-opt" type="button"><span class="opt-name">Share beta install file</span></button>
+              <button id="team-rep-templates" class="set-opt" type="button" role="switch" aria-checked="false"><span class="opt-name">Reps can make templates</span><span class="switch" aria-hidden="true"></span></button>
+              <button id="team-open-rc" class="set-opt" type="button"><span class="opt-name">Rate con check…</span><span id="team-rc-state" class="opt-val"></span></button>
+              <button id="team-open-azure" class="set-opt" type="button"><span class="opt-name">Attach automatically…</span><span id="team-azure-state" class="opt-val"></span></button>
+              <button id="team-open-receipts" class="set-opt" type="button"><span class="opt-name">Receipt file names…</span><span id="team-receipts-state" class="opt-val"></span></button>
+              <button id="team-open-usage" class="set-opt" type="button"><span class="opt-name">Usage counts…</span><span id="team-usage-state" class="opt-val"></span></button>
+              <button id="team-console" class="set-opt" type="button"><span class="opt-name">Open admin console</span><svg class="opt-ext" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5 9.5 10.5M8 5H4.5v10.5H15V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <p id="team-menu-note" class="set-note" role="status" hidden></p>
+            </div>
+          </div>
+          <div id="set-sep-look" class="menu-sep" hidden></div>
+          <button id="set-appearance" class="menu-item set-row" type="button" aria-expanded="false" aria-controls="appearance-list">
+            <span id="set-appearance-name" class="mi-name" data-w="appearance">Appearance</span>
+            <span class="set-now"><span id="set-appearance-icon" class="set-now-icon" aria-hidden="true"></span><span id="set-appearance-now">Match Outlook</span></span>
+            <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="appearance-list" class="set-list" role="listbox" aria-labelledby="set-appearance-name" hidden>
+              <button class="set-opt" type="button" role="option" data-value="light" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="3.3"/><path d="M10 2.3v1.9M10 15.8v1.9M2.3 10h1.9M15.8 10h1.9M4.6 4.6l1.35 1.35M14.05 14.05l1.35 1.35M4.6 15.4l1.35-1.35M14.05 5.95l1.35-1.35"/></svg></span><span class="opt-name" data-w="light">Light</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="dark" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 12.6A6.6 6.6 0 0 1 7.4 4a6.6 6.6 0 1 0 8.6 8.6Z"/></svg></span><span class="opt-name" data-w="dark">Dark</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="match" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="3.6" width="14.4" height="9.8" rx="1.6"/><path d="M7.4 16.7h5.2M10 13.6v3"/></svg></span><span class="opt-name" data-w="matchOutlook">Match Outlook</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+          <button id="set-size" class="menu-item set-row" type="button" aria-expanded="false" aria-controls="size-list">
+            <span id="set-size-name" class="mi-name" data-w="textSize">Text size</span>
+            <span class="set-now"><span id="set-size-icon" class="set-now-icon" aria-hidden="true"></span><span id="set-size-now">Small</span></span>
+            <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="size-list" class="set-list" role="listbox" aria-labelledby="set-size-name" hidden>
+              <button class="set-opt" type="button" role="option" data-value="small" aria-selected="false" tabindex="-1"><span class="opt-icon"><span class="size-a" style="font-size:11px">A</span></span><span class="opt-name" data-w="textSmall">Small</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="medium" aria-selected="false" tabindex="-1"><span class="opt-icon"><span class="size-a" style="font-size:14px">A</span></span><span class="opt-name" data-w="textMedium">Medium</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="large" aria-selected="false" tabindex="-1"><span class="opt-icon"><span class="size-a" style="font-size:17px">A</span></span><span class="opt-name" data-w="textLarge">Large</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+          <button id="set-view" class="menu-item set-row" type="button" aria-expanded="false" aria-controls="view-list">
+            <span id="set-view-name" class="mi-name" data-w="view">View</span>
+            <span class="set-now"><span id="set-view-icon" class="set-now-icon" aria-hidden="true"></span><span id="set-view-now">Medium pictures</span></span>
+            <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="view-list" class="set-list" role="listbox" aria-labelledby="set-view-name" hidden>
+              <button class="set-opt" type="button" role="option" data-value="large" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.4" height="6.4" rx="1.2"/><rect x="11.1" y="2.5" width="6.4" height="6.4" rx="1.2"/><rect x="2.5" y="11.1" width="6.4" height="6.4" rx="1.2"/><rect x="11.1" y="11.1" width="6.4" height="6.4" rx="1.2"/></svg></span><span class="opt-name" data-w="viewLarge">Large pictures</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="medium" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="4.5" height="4.5" rx=".8"/><path d="M9.5 4.2h8M9.5 6.6h5"/><rect x="2.5" y="12" width="4.5" height="4.5" rx=".8"/><path d="M9.5 13.2h8M9.5 15.6h5"/></svg></span><span class="opt-name" data-w="viewMedium">Medium pictures</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="small" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.2" width="3" height="3" rx=".6"/><path d="M8 4.7h9.5"/><rect x="2.5" y="8.5" width="3" height="3" rx=".6"/><path d="M8 10h9.5"/><rect x="2.5" y="13.8" width="3" height="3" rx=".6"/><path d="M8 15.3h9.5"/></svg></span><span class="opt-name" data-w="viewSmall">Small pictures</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="list" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.5h11M6.5 10h11M6.5 15.5h11"/><circle cx="3.4" cy="4.5" r=".9" fill="currentColor" stroke="none"/><circle cx="3.4" cy="10" r=".9" fill="currentColor" stroke="none"/><circle cx="3.4" cy="15.5" r=".9" fill="currentColor" stroke="none"/></svg></span><span class="opt-name" data-w="viewList">List</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="details" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="15" height="14" rx="1.4"/><path d="M2.5 7.5h15M2.5 12.2h15M9.5 3v14"/></svg></span><span class="opt-name" data-w="viewDetails">Details</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button class="set-opt" type="button" role="option" data-value="tiles" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.4" height="7" rx="1.2"/><rect x="11.1" y="2.5" width="6.4" height="7" rx="1.2"/><path d="M2.5 13h6.4M11.1 13h6.4M2.5 16h4M11.1 16h4"/></svg></span><span class="opt-name" data-w="viewTiles">Tiles</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+          <div id="set-sep-prefs" class="menu-sep" hidden></div>
+          <button id="set-tag-receipts" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="tagReceipts">Tag receipts by file name</span><span class="switch" aria-hidden="true"></span></button>
+          <button id="set-keep-adding" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="keepAdding">Keep adding</span><span class="switch" aria-hidden="true"></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full-panel preview -->
+  <section id="preview" class="preview" hidden aria-label="Preview">
+    <div class="preview-head">
+      <button id="pv-close" class="icon-btn" type="button" aria-label="Back to the list" title="Back">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="pv-title">
+        <div id="pv-name" class="pv-name"></div>
+        <div id="pv-meta" class="muted small"></div>
+      </div>
+      <button id="pv-prev" class="icon-btn" type="button" aria-label="Previous file" title="Previous file">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M5 12.5 10 7.5l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="pv-next" class="icon-btn" type="button" aria-label="Next file" title="Next file">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div id="pv-body" class="preview-body"></div>
+    <div class="preview-foot">
+      <label class="check-all">
+        <input type="checkbox" id="pv-include">
+        <span id="pv-include-label" data-w="includeInPdf">Include in PDF</span>
+      </label>
+      <span class="pv-foot-end">
+        <button id="pv-order-reset" class="link-btn" type="button" hidden data-w="resetOrder">Reset page order</button>
+        <span id="pv-pages" class="muted small"></span>
+      </span>
+    </div>
+    <div class="pv-admin">
+      <button id="pv-rc-sample" class="link-btn" type="button" hidden data-w="useAsRcSample">Use as rate con sample</button>
+    </div>
+  </section>
+
+  <!-- Email templates: list and editor -->
+  <section id="templates" class="preview" hidden aria-label="Email templates">
+    <div class="preview-head">
+      <button id="tpl-back" class="icon-btn" type="button" aria-label="Back to the list" title="Back">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="pv-title">
+        <div id="tpl-title" class="pv-name">Email templates</div>
+        <div id="tpl-subtitle" class="muted small">Team templates and your own</div>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <div id="tpl-list-view">
+        <section class="tpl-section">
+          <div class="tpl-head">
+            <h2>Team templates <span id="team-count" class="tpl-count"></span></h2>
+            <span id="team-note" class="muted small"></span>
+          </div>
+          <div id="con-tpl-tools" class="con-tpl-tools" hidden>
+            <input id="tpl-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search templates" aria-label="Search templates">
+            <button id="con-new" class="btn" type="button">New template</button>
+          </div>
+          <p id="team-empty" class="tpl-empty" hidden></p>
+          <ul id="team-list" class="tpl-list"></ul>
+          <div id="team-admin" class="tpl-actions" hidden>
+            <button id="team-new" class="btn" type="button">New team template</button>
+            <div id="tpl-publish-box" class="publish-box" hidden>
+              <p id="tpl-publish-text" class="hint"></p>
+              <div><button id="tpl-publish" class="btn primary" type="button">Publish to team</button></div>
+            </div>
+          </div>
+        </section>
+        <section id="mine-section" class="tpl-section">
+          <div class="tpl-head">
+            <h2>My templates</h2>
+            <span class="muted small">Only you see these</span>
+          </div>
+          <p id="mine-empty" class="tpl-empty" hidden>Make your own templates for addresses you send to often. They're saved to your Outlook account.</p>
+          <ul id="mine-list" class="tpl-list"></ul>
+          <div class="tpl-actions">
+            <button id="mine-new" class="btn" type="button">New template</button>
+          </div>
+        </section>
+      </div>
+      <div id="tpl-pick" class="tpl-pick" hidden>
+        <p>Pick a template to edit it, or make a new one.</p>
+      </div>
+      <form id="tpl-form" class="tpl-form" hidden novalidate>
+        <h2 id="tpl-form-title" class="tpl-form-title" hidden></h2>
+        <label class="field">
+          <span>Template name</span>
+          <input id="tpl-name" type="text" maxlength="60" autocomplete="off" placeholder="Walmart PODs">
+        </label>
+        <label class="field">
+          <span>To</span>
+          <input id="tpl-to" type="text" autocomplete="off" spellcheck="false" placeholder="pods@example.com">
+          <small class="hint">Separate addresses with ; or ,</small>
+        </label>
+        <label class="field">
+          <span>CC <span class="muted">(optional)</span></span>
+          <input id="tpl-cc" type="text" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>Message</span>
+          <textarea id="tpl-message" rows="5"></textarea>
+        </label>
+        <label class="check-row tpl-check">
+          <input type="checkbox" id="tpl-no-lumper">
+          <span>Say <b>No Lumper</b> in the message when Lumper isn't ticked</span>
+        </label>
+        <div class="field">
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-acc-sep">
+            <span>Accessorials in a separate email</span>
+          </label>
+          <div id="tpl-acc-row" class="tpl-sub tpl-acc" hidden>
+            <small class="hint">When Detention, Layover, Lumper or Other is ticked, Create email opens two emails: the PODs, and a request like <b>3645493 - Detention/Lumper Request</b> with the PODs and receipts attached and the details in it.</small>
+            <label class="field">
+              <span>To <span class="muted">(blank: the same as above)</span></span>
+              <input id="tpl-acc-to" type="text" autocomplete="off" spellcheck="false" placeholder="accessorials@example.com">
+            </label>
+            <label class="field">
+              <span>CC <span class="muted">(optional)</span></span>
+              <input id="tpl-acc-cc" type="text" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span>Message <span class="muted">(optional)</span></span>
+              <textarea id="tpl-acc-message" rows="3"></textarea>
+              <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Detention, Lumper and so on.</small>
+            </label>
+          </div>
+        </div>
+        <label class="field">
+          <span>Checklist before sending <span class="muted">(optional)</span></span>
+          <textarea id="tpl-checklist" rows="3" placeholder="One item per line, e.g. Receiver's printed name and signature on the POD"></textarea>
+          <small class="hint">One item per line. Each one has to be ticked before Create email will open the email.</small>
+        </label>
+        <label class="field">
+          <span>Customer name <span class="muted">(optional)</span></span>
+          <input id="tpl-customer" type="text" maxlength="60" autocomplete="off" placeholder="Walgreens">
+          <small class="hint">Fills in <b>{company}</b> in the questions below.</small>
+        </label>
+        <div class="field q-field">
+          <span>Questions before Create email <span class="muted">(optional)</span></span>
+          <small class="hint">Asked in a pop-up when someone picks this template. Each answer goes to the next question, jumps ahead to a later one, continues to the email, or stops with your message.</small>
+          <div id="q-intro-row" class="q-intro-row" hidden>
+            <label for="q-intro" class="q-sub-label">Opening line</label>
+            <textarea id="q-intro" class="q-intro" rows="2" maxlength="300"></textarea>
+          </div>
+          <ol id="q-list" class="q-list"></ol>
+          <div><button id="q-add" class="btn" type="button">Add a question</button></div>
+        </div>
+        <label class="field">
+          <span>PDF name</span>
+          <span class="name-field">
+            <input id="tpl-file" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+            <span class="name-ext" aria-hidden="true">.pdf</span>
+          </span>
+        </label>
+        <div class="field">
+          <span>Files</span>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-stop-files">
+            <span>Multi-stop loads: each stop in its own file (-1, -2…). Off: all stops in one file, in stop order.</span>
+          </label>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-lumper-sep">
+            <span>Receipts in their own file</span>
+          </label>
+          <div id="tpl-lumper-row" class="tpl-sub" hidden>
+            <span class="name-field">
+              <input id="tpl-lumper-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Receipt file name">
+              <span class="name-ext" aria-hidden="true">.pdf</span>
+            </span>
+            <small class="hint">Tick <b data-w="receipt">Receipt</b> on those files in the list, or on their pages in the preview.</small>
+          </div>
+        </div>
+        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>. A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files and receipt files are kept whole.</p>
+        <p id="tpl-error" class="status error" role="alert"></p>
+        <div class="btn-row">
+          <button id="tpl-save" class="btn primary" type="submit">Save template</button>
+          <button id="tpl-cancel" class="btn" type="button">Cancel</button>
+        </div>
+        <div class="tpl-more">
+          <button id="tpl-duplicate" class="link-btn" type="button" hidden>Make a copy</button>
+          <button id="tpl-delete" class="link-btn danger" type="button" hidden>Delete this template</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Team settings (the team admin, from Settings → Team): one at a time -->
+  <section id="team-sheet" class="preview" hidden aria-label="Team settings">
+    <div class="preview-head">
+      <button id="team-back" class="icon-btn" type="button" aria-label="Back" title="Back">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="pv-title">
+        <div id="team-title" class="pv-name">Team</div>
+        <div id="team-subtitle" class="muted small"></div>
+      </div>
+    </div>
+    <div class="sheet-body">
+      <section id="rc-section" class="team-section" hidden>
+        <div class="azure-form">
+          <p id="rc-text" class="hint"></p>
+          <div class="btn-row rc-buttons">
+            <button id="rc-choose" class="btn" type="button" hidden>Choose a rate con PDF…</button>
+            <button id="rc-remove" class="btn" type="button" hidden>Remove the sample</button>
+          </div>
+          <input id="rc-file" type="file" accept="application/pdf,.pdf" hidden>
+        </div>
+      </section>
+      <section id="azure-section" class="team-section" hidden>
+        <div class="azure-form">
+          <p class="hint">With your PDF Emails Azure function set up, Create email opens with the PDF already attached, for everyone on your team.</p>
+          <label class="field">
+            <span>Function address</span>
+            <input id="az-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="yourapp.azurewebsites.net">
+            <small class="hint">Your PDF Emails Function App's Default domain, from its Overview page in the Azure portal.</small>
+          </label>
+          <label class="field">
+            <span>Upload key</span>
+            <span class="name-field">
+              <input id="az-key" type="text" autocomplete="off" spellcheck="false" placeholder="Generate one">
+              <button id="az-gen" class="link-btn" type="button">Generate</button>
+              <button id="az-copy" class="link-btn" type="button">Copy</button>
+            </span>
+            <small class="hint">The same value goes in that Function App's THREAD_ATTACHMENTS_UPLOAD_KEY setting.</small>
+          </label>
+          <p id="az-status" class="hint" role="status"></p>
+          <div class="btn-row">
+            <button id="az-save" class="btn primary" type="button">Save</button>
+            <button id="az-test" class="btn" type="button">Test connection</button>
+          </div>
+        </div>
+      </section>
+      <section id="receipts-section" class="team-section" hidden>
+        <div class="azure-form">
+          <p class="hint">Files with one of these words in their name start out tagged <b>Receipt</b>, so they go after the PODs (or into their own file) without a click. It works for each rep who turns on <b>Tag receipts by file name</b> in their Settings.</p>
+          <label class="field">
+            <span>Words</span>
+            <input id="rw-words" type="text" autocomplete="off" spellcheck="false" maxlength="300" placeholder="lumper, receipt">
+            <small class="hint">Separate them with commas. Capital letters don't matter, and a word can be part of a longer name: <b>receipt</b> also tags <b>Receipts 3645493.pdf</b>. A <b>Delivery Receipt</b> is a POD, so that "receipt" doesn't count.</small>
+          </label>
+          <p id="rw-status" class="hint" role="status"></p>
+          <div class="btn-row">
+            <button id="rw-save" class="btn primary" type="button">Save</button>
+            <button id="rw-default" class="btn" type="button">Use lumper, receipt</button>
+          </div>
+        </div>
+      </section>
+      <section id="usage-section" class="team-section" hidden>
+        <div class="azure-form">
+          <p class="hint">With your Restack Usage Azure function set up, each rep's panel counts the PDFs it makes and saves and the emails it creates, and the admin console's Usage tab shows everyone's numbers. Only counts are sent: no files, file names, load numbers or customer addresses.</p>
+          <label class="field">
+            <span>Function address</span>
+            <input id="us-url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="yourusageapp.azurewebsites.net">
+            <small class="hint">Your Restack Usage Function App's Default domain, from its Overview page in the Azure portal.</small>
+          </label>
+          <label class="field">
+            <span>Counting key</span>
+            <span class="name-field">
+              <input id="us-key" type="text" autocomplete="off" spellcheck="false" placeholder="Generate one">
+              <button id="us-gen" class="link-btn" type="button">Generate</button>
+              <button id="us-copy" class="link-btn" type="button">Copy</button>
+            </span>
+            <small class="hint">Goes in the Function App's RESTACK_USAGE_KEY setting. It's published with your templates, so reps' panels can send their counts.</small>
+          </label>
+          <label class="field">
+            <span>Admin key</span>
+            <span class="name-field">
+              <input id="us-admin" type="text" autocomplete="off" spellcheck="false" placeholder="Generate one">
+              <button id="us-admin-gen" class="link-btn" type="button">Generate</button>
+              <button id="us-admin-copy" class="link-btn" type="button">Copy</button>
+            </span>
+            <small class="hint">Goes in RESTACK_USAGE_ADMIN_KEY. It's what lets the admin console read everyone's numbers, so it stays in your Outlook and isn't published.</small>
+          </label>
+          <p id="us-status" class="hint" role="status"></p>
+          <div class="btn-row">
+            <button id="us-save" class="btn primary" type="button">Save</button>
+            <button id="us-test" class="btn" type="button">Test connection</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+
+  <!-- The admin console (console.html opens this page as taskpane.html?console): the team's templates,
+       settings and usage at full size, in a browser window. The panel's own screens move in here. -->
+  <div id="console" class="console" hidden>
+    <header class="con-top">
+      <div class="con-top-in">
+        <div class="con-brand">
+          <img class="for-light" src="brand/axle-logo.png" alt="Axle Logistics">
+          <img class="for-dark" src="brand/axle-logo-white.png" alt="Axle Logistics">
+          <span class="con-title">Restack <span class="con-title-sub">admin console</span></span>
+          <span id="con-beta" class="beta-badge" hidden>Beta</span>
+        </div>
+        <div id="con-publish-box" class="con-publish" hidden>
+          <p id="con-publish-text" class="con-publish-text"></p>
+          <button id="con-publish" class="btn primary" type="button">Publish to team</button>
+        </div>
+      </div>
+      <nav id="con-tabs" class="con-tabs" role="tablist" aria-label="Admin console" hidden>
+        <button id="con-tab-templates" class="con-tab" type="button" role="tab" aria-selected="true" aria-controls="con-templates">Templates</button>
+        <button id="con-tab-team" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-team" tabindex="-1">Team settings</button>
+        <button id="con-tab-usage" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-usage" tabindex="-1">Usage</button>
+      </nav>
+    </header>
+    <div class="con-main">
+      <p id="con-note" class="con-note" role="status" hidden></p>
+      <div id="con-locked" class="con-locked" hidden></div>
+
+      <section id="con-templates" class="con-panel" role="tabpanel" aria-labelledby="con-tab-templates" hidden></section>
+
+      <section id="con-team" class="con-panel" role="tabpanel" aria-labelledby="con-tab-team" hidden>
+        <div class="con-cards">
+          <article class="con-card" id="con-card-publishing">
+            <header class="con-card-head"><h2>Publishing</h2><span id="github-state" class="con-chip"></span></header>
+            <div class="con-card-body azure-form">
+              <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
+              <label class="field">
+                <span>Repository</span>
+                <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
+              </label>
+              <label class="field">
+                <span>GitHub token <span class="muted">(optional)</span></span>
+                <input id="gh-token" type="text" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+                <small class="hint">A fine-grained personal access token for this one repository, with <b>Contents: Read and write</b>. Make one on GitHub under Settings → Developer settings → Personal access tokens → Fine-grained tokens.</small>
+              </label>
+              <label class="check-row tpl-check"><input id="gh-remember" type="checkbox"><span>Remember it in this browser (otherwise it's forgotten when you close this tab)</span></label>
+              <p id="gh-status" class="hint" role="status"></p>
+              <div class="btn-row">
+                <button id="gh-save" class="btn primary" type="button">Save</button>
+                <button id="gh-test" class="btn" type="button">Test</button>
+                <button id="gh-forget" class="btn" type="button">Remove the token</button>
+              </div>
+            </div>
+          </article>
+          <article class="con-card" id="con-card-install">
+            <header class="con-card-head"><h2>Install files</h2></header>
+            <div class="con-card-body azure-form">
+              <p class="hint"><b>restack-team.xml</b> is what reps install. <b>restack-beta.xml</b> is Restack Beta, for you: it runs whatever is in your repository's <b>beta</b> folder, next to Restack, so you can try a new version before reps get it. Both carry your team key, so keep them within your team.</p>
+              <div class="btn-row">
+                <button id="con-share" class="btn" type="button">Download restack-team.xml</button>
+                <button id="con-share-beta" class="btn" type="button">Download restack-beta.xml</button>
+              </div>
+            </div>
+          </article>
+          <article class="con-card" id="con-card-reps">
+            <header class="con-card-head"><h2>Reps' own templates</h2></header>
+            <div class="con-card-body azure-form">
+              <button id="con-rep-templates" class="con-switch" type="button" role="switch" aria-checked="false"><span>Reps can make their own templates</span><span class="switch" aria-hidden="true"></span></button>
+              <p class="hint">Off: reps use only the team templates. Their own templates stay in their Outlook either way.</p>
+            </div>
+          </article>
+          <article class="con-card" data-section="rc-section">
+            <header class="con-card-head"><h2>Rate confirmation check</h2><span id="rc-state" class="con-chip"></span></header>
+            <div class="con-card-body"></div>
+          </article>
+          <article class="con-card" data-section="azure-section">
+            <header class="con-card-head"><h2>Attach automatically</h2><span id="azure-state" class="con-chip"></span></header>
+            <div class="con-card-body"></div>
+          </article>
+          <article class="con-card" data-section="receipts-section">
+            <header class="con-card-head"><h2>Receipt file names</h2><span id="receipts-state" class="con-chip"></span></header>
+            <div class="con-card-body"></div>
+          </article>
+          <article class="con-card" data-section="usage-section" id="con-card-usage">
+            <header class="con-card-head"><h2>Usage counts</h2><span id="usage-state" class="con-chip"></span></header>
+            <div class="con-card-body"></div>
+          </article>
+          <article class="con-card" id="con-card-browser">
+            <header class="con-card-head"><h2>This browser</h2></header>
+            <div class="con-card-body azure-form">
+              <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
+              <p id="forget-status" class="hint" role="status"></p>
+              <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="con-usage" class="con-panel" role="tabpanel" aria-labelledby="con-tab-usage" hidden>
+        <div class="us-bar">
+          <div class="us-ranges" role="group" aria-label="Dates">
+            <button class="us-range" type="button" data-range="7" aria-pressed="false">Last 7 days</button>
+            <button class="us-range" type="button" data-range="30" aria-pressed="true">Last 30 days</button>
+            <button class="us-range" type="button" data-range="month" aria-pressed="false">This month</button>
+            <button class="us-range" type="button" data-range="last-month" aria-pressed="false">Last month</button>
+            <button class="us-range" type="button" data-range="year" aria-pressed="false">This year</button>
+          </div>
+          <div class="us-dates">
+            <label><span>From</span><input id="us-from" type="date"></label>
+            <label><span>To</span><input id="us-to" type="date"></label>
+          </div>
+          <div class="us-actions">
+            <button id="us-refresh" class="btn" type="button">Refresh</button>
+            <button id="us-csv" class="btn" type="button" disabled>Download CSV</button>
+          </div>
+        </div>
+        <p id="us-line" class="us-line" role="status"></p>
+        <div id="us-empty" class="us-empty" hidden></div>
+        <div id="us-report" hidden>
+          <dl id="us-figures" class="us-figures"></dl>
+          <section class="us-block">
+            <div class="us-block-head"><h2>Per day</h2><span class="us-key"><i class="k-email"></i>Emails <i class="k-save"></i>Saved PDFs</span></div>
+            <div id="us-chart" class="us-chart"></div>
+          </section>
+          <div class="us-tables">
+            <section class="us-block"><div class="us-block-head"><h2>By rep</h2></div><div class="us-scroll"><table id="us-reps" class="us-table"></table></div></section>
+            <section class="us-block"><div class="us-block-head"><h2>By template</h2></div><div class="us-scroll"><table id="us-templates" class="us-table"></table></div></section>
+          </div>
+          <section class="us-block us-versions"><div class="us-block-head"><h2>Versions in use</h2></div><div class="us-scroll"><table id="us-versions" class="us-table"></table></div></section>
+          <p class="hint us-about">Counted when a rep's panel saves a PDF, creates an email or leaves out a rate confirmation. Only counts are kept: the rep's email address, when, how many files, pages and PDFs, the template's name and which accessorials. Never the files, file names, load numbers or customer addresses. <label class="us-minutes">Time saved counts <input id="us-minutes" type="number" min="0" max="60" step="0.5" value="3"> minutes per PDF saved or email created.</label></p>
+        </div>
+      </section>
+    </div>
+    <footer id="con-foot" class="con-foot"></footer>
+  </div>
+
+  <!-- How to select every email in a thread (the one-email tip's info icon) -->
+  <section id="howto" class="howto" role="dialog" aria-labelledby="howto-title" hidden>
+    <div class="howto-head">
+      <h2 id="howto-title">Select every email in the thread</h2>
+      <button id="howto-close" class="icon-btn" type="button" aria-label="Close" title="Close">
+        <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="howto-tabs" role="tablist" aria-label="Outlook version">
+      <button id="howto-tab-new" type="button" role="tab" aria-selected="true" aria-controls="howto-stage">New Outlook</button>
+      <button id="howto-tab-classic" type="button" role="tab" aria-selected="false" aria-controls="howto-stage" tabindex="-1">Classic Outlook</button>
+      <button id="howto-tab-flat" type="button" role="tab" aria-selected="false" aria-controls="howto-stage" tabindex="-1">No conversations</button>
+    </div>
+    <div id="howto-stage" class="howto-stage" role="tabpanel" aria-label="How it looks" data-client="new" data-state="collapsed"></div>
+    <ol id="howto-steps" class="howto-steps"></ol>
+    <p id="howto-note" class="hint" hidden></p>
+    <p id="howto-you" class="hint" hidden></p>
+  </section>
+
+  <!-- A template's questions, asked before the Create email step -->
+  <div id="quiz" class="quiz" hidden>
+    <div class="quiz-card" role="dialog" aria-modal="true" aria-label="Questions before the email">
+      <p id="quiz-intro" class="quiz-intro">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 2.6 18 16.5H2Z" fill="#f2b000" stroke="#a86b00" stroke-width="1.1" stroke-linejoin="round"/><path d="M10 7.6v4.4" stroke="#3b2600" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="14.2" r="1" fill="#3b2600"/></svg>
+        <span id="quiz-intro-text"></span>
+      </p>
+      <div id="quiz-body" class="quiz-body"></div>
+      <div id="quiz-foot" class="quiz-foot">
+        <button id="quiz-back" class="link-btn" type="button" hidden>Back</button>
+        <button id="quiz-cancel" class="link-btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
