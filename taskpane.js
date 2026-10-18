@@ -6,14 +6,15 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.15.0';
+const VERSION = '0.16.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
-const MAX_IMAGE_SIDE = 2400;          // photos are scaled to this before going into a PDF
+const MAX_IMAGE_SIDE = 2400;          // fax scans and locked PDF pages are drawn at most this big
+const PHOTO_MAX_SIDE = 2000;          // photos are scaled to this (long side) before going into a PDF: the whole photo, smaller
 const LOCKED_PDF_DPI = 200;           // locked PDFs are copied in as page images at this quality
 const PREVIEW_PAGE_LIMIT = 40;
-const THUMB_PX = 96;                  // list pictures are drawn this big and shown at 40 px (sharp on high-DPI screens)
+const THUMB_PX = 240;                 // list pictures are drawn this big: sharp at every View and text size
 const PENDING_KEY = 'pending-pdf';
 const PENDING_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const MB = 1000 * 1000;                // sizes are in MB as people read them (not MiB)
@@ -22,9 +23,19 @@ const SPLIT_LIMIT = SPLIT_MB * MB - 1;
 const AZURE_FUNCTION = 'PdfEmails';    // the function's name in the team admin's Function App
 const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }];
 const TEAM_FILE = 'team.json';
+// The beta: the site's beta folder, installed as "Restack Beta" next to Restack, for trying a new
+// version before reps get it. It reads the main site's team.json and keeps its own saved settings.
+const BETA = /\/beta\/[^/]*$/.test(window.location.pathname);
+const SITE_ROOT = new URL(BETA ? '../' : './', window.location.href).href; // the main site
+const BETA_ID = '8f3a2c71-5d4e-4b6a-9c2f-71e0d4b85a93';                      // Restack Beta's add-in ID (never changes)
+// The admin console: this page opened in a browser (console.html), for the team's templates, settings and usage
+const CONSOLE = new URLSearchParams(window.location.search).has('console');
+// This browser's saved bits: thread-attachments.* (the beta's under .beta., the console's under .console.)
+const STORE_PREFIX = `thread-attachments.${BETA ? 'beta.' : ''}${CONSOLE ? 'console.' : ''}`;
 const MY_TEMPLATES_KEY = 'myTemplates'; // each person's own templates (Outlook roaming settings)
 const DRAFT_KEY = 'teamDraft';          // the team admin's unpublished edits
-const NEW_TEMPLATE = { body: 'Attached are the POD(s) for load {load}.', file: '{load}', lumperName: '{load} Lumper' };
+const NEW_TEMPLATE = { body: 'Attached are the POD(s) for load {load}.', file: '{load}', lumperName: '{load} Receipt' };
+const OLD_RECEIPT_NAME = '{load} Lumper'; // the receipt file's name before 0.16; templates still on it get the new one
 const STOP_CHOICES = 9;                 // the stop picker offers at least Stop 1-9
 const QUIZ = {                          // a template's questions, asked before the Create email step
   maxQuestions: 12,
@@ -73,6 +84,8 @@ const STOP_SVG = '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="t
 const CURSOR_SVG = '<svg viewBox="0 0 16 22" width="16" height="22" aria-hidden="true"><path d="M1 1v17.5l4.4-4.2 2.9 6.6 2.7-1.2-2.9-6.5h6.1Z" fill="#fff" stroke="#242424" stroke-width="1.3" stroke-linejoin="round"/></svg>';
 const CHEVRON_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m3.5 1.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const TRIANGLE_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5v7L8 5Z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>';
+// A pushpin: Axle's orange on a pinned template, an outline on the others
+const PIN_SVG = '<svg class="pin-icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><g transform="rotate(45 10 10)"><rect x="6.2" y="1.8" width="7.6" height="2.8" rx="1.3"/><path d="M7.3 4.6h5.4l-.7 4.9 2.7 2.5v1.5H5.3V12l2.7-2.5z"/><path class="pin-needle" d="M10 13.6v4.6"/></g></svg>';
 const CLIP_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M8.2 3.6 4.6 7.2a.9.9 0 0 0 1.3 1.3l3.9-3.9a1.9 1.9 0 0 0-2.7-2.7L3.2 5.8a2.9 2.9 0 0 0 4.1 4.1L9.6 7.6" fill="none" stroke="currentColor" stroke-width=".9" stroke-linecap="round"/></svg>';
 
 const $ = (id) => document.getElementById(id);
@@ -95,6 +108,8 @@ const WORDS = {
   receipt: "Receipt",                              // the tag on each checked file, and on pages in the preview
   receiptPages: "Receipt: {pages}",                // under a file that's only partly a receipt, like "Receipt: page 2"
   oneEmailTip: "Only 1 email came through. To include the whole thread, select every email in it.",
+  keepAddingTip: "Or keep adding as you click each one",  // the button under that tip
+  keepAddingNote: "Click each email in the thread to add its files.", // in the Keep adding bar
   showLogos: "Show logos & icons",                 // under the list, when emails have logos in them
 
   // The buttons under the list, and the Email menu
@@ -104,6 +119,10 @@ const WORDS = {
   blankEmailNote: "Just the PDF, no recipients",   // under Blank email
   team: "Team",                                    // the menu's headings over the templates
   mine: "Mine",
+  pinned: "Pinned",                                // the heading over your pinned templates
+  otherTemplates: "Other templates",               // under them: opens the rest, A to Z
+  pin: "Pin to the top",                           // the pin on each template
+  unpin: "Unpin",
   manageTemplates: "Manage templates…",
   createTemplate: "Create a template…",            // in place of Manage templates, before there are any
 
@@ -116,9 +135,10 @@ const WORDS = {
   loadNumber: "Load number",
   accessorials: "Accessorials",
   detention: "Detention",
+  layover: "Layover",
   lumper: "Lumper",
   other: "Other",
-  timeIn: "IN",                                    // Detention's times
+  timeIn: "IN",                                    // Detention's and Layover's times
   appointment: "APPT",
   timeOut: "OUT",
   hoursRequested: "Hours requested",
@@ -147,15 +167,32 @@ const WORDS = {
   // The preview
   includeInPdf: "Include in PDF",
   rotate: "Rotate",                                // the button on each page and photo (turns it a quarter clockwise)
+  movePageUp: "Move page up",                      // the arrows on each page of a PDF or fax in the preview
+  movePageDown: "Move page down",
+  pageOrder: "New page order: {pages}",            // under a file whose pages were moved, like "New page order: 2, 1, 3"
+  resetOrder: "Reset page order",                  // in the preview, once pages have been moved
 
-  // The bottom of the panel
+  // The bottom of the panel, and Settings (the gear across from Test report)
   testReport: "Test report",
   copyReport: "Copy report",
-  settings: "Settings",                            // the gear button across from Test report
-  appearance: "Appearance",                        // in Settings, over Light, Dark and Match Outlook
+  settings: "Settings",
+  appearance: "Appearance",                        // drops down Light, Dark and Match Outlook
   light: "Light",
   dark: "Dark",
   matchOutlook: "Match Outlook",
+  textSize: "Text size",                           // drops down Small, Medium and Large
+  textSmall: "Small",
+  textMedium: "Medium",
+  textLarge: "Large",
+  view: "View",                                    // how the list shows files, like File Explorer's View menu
+  viewLarge: "Large pictures",
+  viewMedium: "Medium pictures",
+  viewSmall: "Small pictures",
+  viewList: "List",
+  viewDetails: "Details",
+  viewTiles: "Tiles",
+  tagReceipts: "Tag receipts by file name",        // a switch: files named like receipts start out tagged Receipt
+  keepAdding: "Keep adding",                       // a switch: each email you click adds its files to the list
 
   // A new email
   attachPdf: "Attach PDF",                         // in the panel and messages (the ribbon's is in the install file)
@@ -177,7 +214,10 @@ function applyWords() {
 /** The team key from the install file (?team=… in the add-in's address). Read first thing. */
 function readTeamKey() {
   try {
-    const key = new URLSearchParams(window.location.search).get('team');
+    // The console: from the link Outlook opened (#k=…), or kept in this browser from last time
+    const key = CONSOLE
+      ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('k') || readSetting('teamKey')
+      : new URLSearchParams(window.location.search).get('team');
     return key && /^[A-Za-z0-9_-]{22}$/.test(key) ? key : null;
   } catch (error) {
     return null;
@@ -208,6 +248,9 @@ const state = {
   places: new Map(),     // each checked file's place in its PDF (1, 2, 3…), worked out by renderList
   messages: 0,
   failed: 0,
+  seen: new Set(),       // the emails the list was read from (Keep adding skips them)
+  keepWaiting: new Map(), // Keep adding: emails clicked that haven't gone in yet (itemId -> pick), so quick clicks all count
+  fresh: false,          // the next load starts a new list even with Keep adding on (Start over)
   loadToken: 0,
   busy: false,
   reloadPending: false,
@@ -313,7 +356,7 @@ function cleanFileName(text) {
 
 function readSetting(key) {
   try {
-    return localStorage.getItem(`thread-attachments.${key}`);
+    return localStorage.getItem(`${STORE_PREFIX}${key}`);
   } catch (error) {
     return null;
   }
@@ -321,11 +364,19 @@ function readSetting(key) {
 
 function writeSetting(key, value) {
   try {
-    if (value === null) localStorage.removeItem(`thread-attachments.${key}`);
-    else localStorage.setItem(`thread-attachments.${key}`, value);
+    if (value === null) localStorage.removeItem(`${STORE_PREFIX}${key}`);
+    else localStorage.setItem(`${STORE_PREFIX}${key}`, value);
   } catch (error) {
     // not remembered; harmless
   }
+}
+
+/** "10/14 3:00 PM": short enough for the Details view's column. */
+function shortDate(date) {
+  if (!date || isNaN(date.getTime())) return '';
+  const day = date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day} ${time}`;
 }
 
 function fmtDate(date) {
@@ -422,7 +473,7 @@ function renderReport() {
 }
 
 function collectEnvironment() {
-  const lines = [`Restack ${VERSION} (test build)`];
+  const lines = [`Restack ${VERSION}${BETA ? ' beta' : ''}${CONSOLE ? ' admin console' : ''} (test build)`];
   try {
     const diag = Office.context.diagnostics || {};
     const mailDiag = (Office.context.mailbox && Office.context.mailbox.diagnostics) || {};
@@ -473,7 +524,8 @@ function flashCopy(text) {
 function fail(error) {
   const message = (error && (error.userMessage || error.message)) || String(error);
   log(`Error: ${message}`);
-  setStatus(message, 'error');
+  if (CONSOLE) consoleNote(message, 'error');
+  else setStatus(message, 'error');
 }
 
 // --------------------------------------------------------------------------- views
@@ -496,7 +548,7 @@ function showMessage(text) {
  * plays a short how-to for selecting every email, for new Outlook or classic Outlook.
  */
 function renderOneEmailTip(messages) {
-  const show = messages === 1;
+  const show = messages === 1 && !prefs.keepAdding; // with Keep adding on, its bar says what to do
   $('one-tip').hidden = !show;
   if (!show) closeHowto(false);
   else log('Tip: only 1 email came through');
@@ -540,7 +592,28 @@ const HOWTO = {
       { step: 3, shift: false, cursor: 'rest', wait: 2800 },
     ],
   },
+  flat: { // mail shown as individual messages, not conversations: Keep adding
+    label: 'No conversations',
+    steps: [
+      'Pin Restack: click the pin at the top of its panel, so it stays open.',
+      'Turn on Keep adding (under this tip, or in Settings).',
+      'Click each email in the thread. Restack adds its files to the list.',
+    ],
+    note: 'Or search for the load number and press Ctrl+A to select every result at once. They have to be in the same folder.',
+    script: [
+      { step: 0, state: 'flat', cursor: 'rest', wait: 1300 },
+      { step: 1, wait: 1300 },
+      { step: 2, cursor: 'r1', wait: 850 },
+      { click: true, mark: 'r1', wait: 900 },
+      { cursor: 'r3', wait: 850 },
+      { click: true, mark: 'r3', wait: 900 },
+      { cursor: 'r5', wait: 850 },
+      { click: true, mark: 'r5', wait: 700 },
+      { cursor: 'rest', wait: 2600 },
+    ],
+  },
 };
+const HOWTO_TABS = [['howto-tab-new', 'new'], ['howto-tab-classic', 'classic'], ['howto-tab-flat', 'flat']];
 
 // The made-up conversation the how-to plays with
 const HOWTO_EMAILS = [
@@ -548,6 +621,14 @@ const HOWTO_EMAILS = [
   { who: 'You', what: 'Got it, thanks!', clip: false },
   { who: 'Driver', what: 'Lumper receipt', clip: true },
   { who: 'Dispatch', what: 'POD stop 2', clip: true },
+];
+// ...and the same load's emails among others, for mail that isn't shown as conversations
+const HOWTO_FLAT = [
+  { who: 'Dispatch', what: 'Load 3645493 PODs', files: 2 },
+  { who: 'Billing', what: 'Invoice 88123', files: 0 },
+  { who: 'Driver', what: 'RE: Load 3645493 PODs', files: 1 },
+  { who: 'Broker', what: 'New load offer', files: 0 },
+  { who: 'Dispatch', what: 'RE: Load 3645493 PODs', files: 1 },
 ];
 
 const howto = { client: 'new', detected: '', pinned: false, token: 0, hoverTimer: 0, leaveTimer: 0 };
@@ -580,6 +661,10 @@ function buildHowtoStage(client) {
   stage.dataset.client = client;
   stage.dataset.state = 'collapsed';
   stage.classList.remove('shift');
+  if (client === 'flat') {
+    buildFlatStage(stage);
+    return;
+  }
   const list = el('div', 'ml');
   const head = el('div', 'ml-row ml-head');
   const chev = el('span', 'ml-chev');
@@ -617,6 +702,44 @@ function buildHowtoStage(client) {
   stage.append(list, ring, cursor, el('span', 'ml-key', 'Shift'));
 }
 
+/** The individual-messages picture: the load's emails among others, and what Restack has added so far. */
+function buildFlatStage(stage) {
+  stage.dataset.state = 'flat';
+  const list = el('div', 'ml ml-flat');
+  HOWTO_FLAT.forEach((email, i) => {
+    const row = el('div', 'ml-row');
+    row.dataset.target = `r${i + 1}`;
+    row.dataset.files = String(email.files);
+    const text = el('span', 'ml-lines');
+    text.append(el('b', '', email.who), el('i', '', email.what));
+    row.append(text);
+    if (email.files) {
+      const clip = el('span', 'ml-clip');
+      clip.innerHTML = CLIP_SVG;
+      row.append(clip, el('span', 'ml-add', `+${email.files}`));
+    }
+    list.append(row);
+  });
+  const ring = el('span', 'ml-ring');
+  const cursor = el('span', 'ml-cursor');
+  cursor.innerHTML = CURSOR_SVG;
+  stage.append(list, el('span', 'ml-tally', ''), ring, cursor);
+  markFlat(stage, null);
+}
+
+/** Marks an email as added in the individual-messages picture (null starts over), and counts its files. */
+function markFlat(stage, target) {
+  if (!target) for (const row of stage.querySelectorAll('.ml-row.added')) row.classList.remove('added');
+  else {
+    const row = stage.querySelector(`[data-target="${target}"]`);
+    if (row) row.classList.add('added');
+  }
+  const rows = [...stage.querySelectorAll('.ml-row.added')];
+  const files = rows.reduce((sum, row) => sum + Number(row.dataset.files || 0), 0);
+  const tally = stage.querySelector('.ml-tally');
+  if (tally) tally.textContent = rows.length ? `Restack: ${plural(files, 'file')} from ${plural(rows.length, 'email')}` : 'Restack: Keep adding is on';
+}
+
 /** Where the pointer goes for a target: the middle of a small box, or into a row's text. */
 function howtoPoint(stage, target) {
   if (target === 'rest') return [stage.clientWidth - 40, stage.clientHeight - 30];
@@ -624,8 +747,9 @@ function howtoPoint(stage, target) {
   if (!node) return [stage.clientWidth / 2, stage.clientHeight / 2];
   const s = stage.getBoundingClientRect();
   const r = node.getBoundingClientRect();
-  const x = r.width < 40 ? r.left + r.width / 2 : r.left + Math.min(70, r.width / 2);
-  return [Math.round(x - s.left), Math.round(r.top + r.height / 2 - s.top)];
+  const zoom = pageZoom(); // (positions on the page are zoomed with the text size; the stage's own aren't)
+  const x = r.width < 40 * zoom ? r.left + r.width / 2 : r.left + Math.min(70 * zoom, r.width / 2);
+  return [Math.round((x - s.left) / zoom), Math.round((r.top + r.height / 2 - s.top) / zoom)];
 }
 
 function moveHowtoCursor(stage, target, instant) {
@@ -668,12 +792,17 @@ async function playHowto(token) {
   const stage = $('howto-stage');
   const plan = HOWTO[howto.client];
   if (reducedMotion()) { // just the end result, with every step listed
-    stage.dataset.state = howto.client === 'classic' ? 'range' : 'all';
+    if (howto.client === 'flat') {
+      for (const frame of plan.script) if (frame.mark) markFlat(stage, frame.mark);
+    } else {
+      stage.dataset.state = howto.client === 'classic' ? 'range' : 'all';
+    }
     markHowtoStep(-1);
     return;
   }
   moveHowtoCursor(stage, 'rest', true);
   while (token === howto.token) {
+    if (howto.client === 'flat') markFlat(stage, null);
     for (const frame of plan.script) {
       if (token !== howto.token) return;
       if (frame.step !== undefined) markHowtoStep(frame.step);
@@ -681,6 +810,7 @@ async function playHowto(token) {
       if (frame.cursor) moveHowtoCursor(stage, frame.cursor);
       if (frame.click) howtoClick(stage);
       if (frame.state) stage.dataset.state = frame.state;
+      if (frame.mark) markFlat(stage, frame.mark);
       await new Promise((resolve) => setTimeout(resolve, frame.wait));
     }
   }
@@ -688,7 +818,7 @@ async function playHowto(token) {
 
 function showHowtoFor(client) {
   howto.client = client;
-  for (const [id, which] of [['howto-tab-new', 'new'], ['howto-tab-classic', 'classic']]) {
+  for (const [id, which] of HOWTO_TABS) {
     $(id).setAttribute('aria-selected', String(which === client));
     $(id).tabIndex = which === client ? 0 : -1;
   }
@@ -698,7 +828,7 @@ function showHowtoFor(client) {
   for (const text of plan.steps) steps.append(el('li', '', text));
   $('howto-note').textContent = plan.note;
   $('howto-note').hidden = !plan.note;
-  const label = hostLabel();
+  const label = client === 'flat' ? '' : hostLabel();
   $('howto-you').textContent = label ? `You're using ${label}.` : '';
   $('howto-you').hidden = !label;
   buildHowtoStage(client);
@@ -709,10 +839,11 @@ function showHowtoFor(client) {
 }
 
 function positionHowto() {
+  const zoom = pageZoom(); // the tip's position is in zoomed pixels; the box's own style isn't
   const tip = $('one-tip').getBoundingClientRect();
   const top = Math.max(8, Math.round(Math.min(tip.bottom + 6, window.innerHeight - 160)));
-  $('howto').style.top = `${top}px`;
-  $('howto').style.maxHeight = `${Math.max(150, window.innerHeight - top - 8)}px`;
+  $('howto').style.top = `${Math.round(top / zoom)}px`;
+  $('howto').style.maxHeight = `${Math.round(Math.max(150, window.innerHeight - top - 8) / zoom)}px`;
 }
 
 function openHowto(pin) {
@@ -768,7 +899,7 @@ function wireHowto() {
   $('howto').addEventListener('mouseenter', () => clearTimeout(howto.leaveTimer));
   $('howto').addEventListener('mouseleave', laterCloseHowto);
   $('howto-close').addEventListener('click', () => closeHowto(true));
-  for (const [id, client] of [['howto-tab-new', 'new'], ['howto-tab-classic', 'classic']]) {
+  HOWTO_TABS.forEach(([id, client], i) => {
     $(id).addEventListener('click', () => {
       howto.pinned = true;
       if (client !== howto.client) showHowtoFor(client);
@@ -777,11 +908,11 @@ function wireHowto() {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
       howto.pinned = true;
-      const other = client === 'new' ? 'classic' : 'new';
-      showHowtoFor(other);
-      $(other === 'new' ? 'howto-tab-new' : 'howto-tab-classic').focus();
+      const [nextId, next] = HOWTO_TABS[(i + (event.key === 'ArrowRight' ? 1 : HOWTO_TABS.length - 1)) % HOWTO_TABS.length];
+      showHowtoFor(next);
+      $(nextId).focus();
     });
-  }
+  });
   document.addEventListener('pointerdown', (event) => {
     if (!$('howto').hidden && !event.target.closest('#howto, #tip-info')) closeHowto(false);
   });
@@ -810,6 +941,14 @@ function loadThread() {
 }
 
 async function loadThreadNow(token) {
+  // Keep adding: once there's a list, each email clicked adds its files instead of replacing it
+  if (prefs.keepAdding && !state.fresh && state.seen.size) {
+    await addFromSelection(token);
+    return;
+  }
+  state.fresh = false;
+  state.keepWaiting.clear();
+  hideKeepAsk();
   closePreview();
   closeQuiz();
   hideNameForm();
@@ -825,6 +964,69 @@ async function loadThreadNow(token) {
   setStatus('');
   setSummary('Reading the selected emails…');
 
+  const picks = await selectedEmails();
+  if (token !== state.loadToken) return;
+  if (!picks) {
+    state.files = [];
+    state.seen = new Set();
+    setSummary('');
+    renderKeepBar();
+    showMessage('Select an email, or click a whole conversation, to see its attachments.');
+    return;
+  }
+  const read = await readEmails(picks, token);
+  if (!read) return;
+
+  // Oldest first, so a file sent around several times is credited to whoever sent it first.
+  read.found.sort(byDate);
+  const files = await mergeDuplicates(read.found);
+  if (token !== state.loadToken) return;
+  files.forEach((file, index) => {
+    file.id = index;
+    file.smallLogo = looksLikeLogo(file);
+  });
+
+  state.files = files;
+  state.messages = read.messages;
+  state.failed = read.failed;
+  state.seen = new Set(picks.map((pick) => pick.itemId).filter(Boolean));
+  state.topic = stripPrefixes(read.subjects[0] || '');
+  state.checked = new Set(); // nothing checked until you pick (or Select all)
+  applyReceiptNames(false);
+  $('title').textContent = state.topic || 'Restack';
+  renderSummary();
+  renderOneEmailTip(read.messages);
+  renderKeepBar();
+
+  if (!files.length) {
+    showMessage(`No attachments in ${read.messages === 1 ? 'this email' : `these ${read.messages} emails`}.`);
+    return;
+  }
+  showView('read-view');
+  renderList();
+  const dupes = files.reduce((sum, f) => sum + f.copies - 1, 0);
+  log(`Found ${plural(files.length, 'file')}${dupes ? `, ${plural(dupes, 'duplicate')} merged` : ''}${read.failed ? `, ${read.failed} unreadable` : ''}`);
+  logScans(files);
+  fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
+  checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
+}
+
+function byDate(a, b) {
+  return (a.date ? a.date.getTime() : 0) - (b.date ? b.date.getTime() : 0);
+}
+
+function logScans(files) {
+  for (const file of files) {
+    const scans = file.kind === 'PDF' && file.bytes ? scanFormats(file.bytes) : '';
+    if (scans) log(`${file.name}: has ${scans} images`);
+  }
+}
+
+/**
+ * The selected emails ([{ itemId, subject, itemMode, hasAttachment }]), or the open one where
+ * Outlook can't say what's selected ([{ itemId, subject, open }]), or null when nothing is.
+ */
+async function selectedEmails() {
   const mailbox = Office.context.mailbox;
   let selected = [];
   if (supports('1.13') && typeof mailbox.getSelectedItemsAsync === 'function') {
@@ -834,97 +1036,342 @@ async function loadThreadNow(token) {
       log(`Couldn't read the selection: ${error.message}`);
     }
   }
+  if (selected.length && supports('1.15') && typeof mailbox.loadItemByIdAsync === 'function') {
+    return selected.map((pick) => ({ itemId: pick.itemId, subject: pick.subject, itemMode: pick.itemMode, hasAttachment: pick.hasAttachment, multi: true }));
+  }
+  if (mailbox.item) {
+    if (selected.length > 1) log('Multi-select not available here: reading the open email');
+    return [{ itemId: String(mailbox.item.itemId || ''), subject: mailbox.item.subject || '', open: mailbox.item }];
+  }
+  return null;
+}
 
+/** Reads the emails' attachments. Returns { found, subjects, failed, messages }, or null when a newer load took over. */
+async function readEmails(picks, token) {
+  const mailbox = Office.context.mailbox;
   const found = [];
   const subjects = [];
   let failed = 0;
   let messages = 0;
-
-  if (selected.length && supports('1.15') && typeof mailbox.loadItemByIdAsync === 'function') {
-    for (let i = 0; i < selected.length; i++) {
-      if (token !== state.loadToken) return;
-      const pick = selected[i];
-      messages += 1;
-      if (pick.subject) subjects.push(pick.subject);
-      if (String(pick.itemMode || '').toLowerCase() === 'compose') {
-        log(`Skipped a draft: ${pick.subject || '(no subject)'}`);
-        continue;
-      }
-      // No skipping on hasAttachment: classic Outlook reports false when the only
-      // attachments are pictures pasted into the body.
-      setSummary(`Reading email ${i + 1} of ${selected.length}…`);
-      let item;
+  for (let i = 0; i < picks.length; i++) {
+    if (token !== state.loadToken) return null;
+    const pick = picks[i];
+    messages += 1;
+    if (pick.subject) subjects.push(pick.subject);
+    if (pick.open) {
+      failed += await readAttachments(pick.open, found, token, 'Open email');
+      continue;
+    }
+    if (String(pick.itemMode || '').toLowerCase() === 'compose') {
+      log(`Skipped a draft: ${pick.subject || '(no subject)'}`);
+      continue;
+    }
+    // No skipping on hasAttachment: classic Outlook reports false when the only
+    // attachments are pictures pasted into the body.
+    setSummary(`Reading email ${i + 1} of ${picks.length}…`);
+    let item;
+    try {
+      item = await call((done) => mailbox.loadItemByIdAsync(pick.itemId, done));
+    } catch (error) {
+      failed += 1;
+      log(`Couldn't open "${pick.subject || 'an email'}": ${error.message}`);
+      continue;
+    }
+    try {
+      failed += await readAttachments(item, found, token, `Email ${i + 1} (paperclip: ${pick.hasAttachment === false ? 'no' : pick.hasAttachment ? 'yes' : '?'})`);
+    } finally {
       try {
-        item = await call((done) => mailbox.loadItemByIdAsync(pick.itemId, done));
+        await call((done) => item.unloadAsync(done));
       } catch (error) {
-        failed += 1;
-        log(`Couldn't open "${pick.subject || 'an email'}": ${error.message}`);
-        continue;
-      }
-      try {
-        failed += await readAttachments(item, found, token, `Email ${i + 1} (paperclip: ${pick.hasAttachment === false ? 'no' : pick.hasAttachment ? 'yes' : '?'})`);
-      } finally {
-        try {
-          await call((done) => item.unloadAsync(done));
-        } catch (error) {
-          log(`Couldn't close an email after reading it: ${error.message}`);
-        }
+        log(`Couldn't close an email after reading it: ${error.message}`);
       }
     }
-    log(`Read ${plural(selected.length, 'selected email')} (multi-select)`);
-  } else if (mailbox.item) {
-    messages = 1;
-    if (mailbox.item.subject) subjects.push(mailbox.item.subject);
-    failed += await readAttachments(mailbox.item, found, token, 'Open email');
-    log(`Read the open email${selected.length > 1 ? ' (multi-select not available here)' : ''}`);
-  } else {
-    state.files = [];
-    setSummary('');
-    showMessage('Select an email, or click a whole conversation, to see its attachments.');
-    return;
   }
-  if (token !== state.loadToken) return;
+  if (token !== state.loadToken) return null;
+  log(picks.some((pick) => pick.multi) ? `Read ${plural(picks.length, 'selected email')} (multi-select)` : 'Read the open email');
+  return { found, subjects, failed, messages };
+}
 
-  // Oldest first, so a file sent around several times is credited to whoever sent it first.
-  found.sort((a, b) => (a.date ? a.date.getTime() : 0) - (b.date ? b.date.getTime() : 0));
-  const files = await mergeDuplicates(found);
-  if (token !== state.loadToken) return;
-  files.forEach((file, index) => {
-    file.id = index;
-    file.smallLogo = looksLikeLogo(file);
-  });
+// ---- Keep adding: for people who don't show their mail as conversations. With the panel pinned,
+// each email clicked adds its files to the list, until Start over (or another load's email).
 
-  state.files = files;
-  state.messages = messages;
-  state.failed = failed;
-  state.topic = stripPrefixes(subjects[0] || '');
-  state.checked = new Set(); // nothing checked until you pick (or Select all)
-  $('title').textContent = state.topic || 'Restack';
-  renderSummary();
-  renderOneEmailTip(messages);
+/** Whether an email goes with the list's: the same load number, or else the same subject. */
+function sameThread(subject) {
+  if (!state.topic) return true;
+  const ours = guessLoadNumber(state.topic);
+  const theirs = guessLoadNumber(subject);
+  if (ours && theirs) return ours.toLowerCase() === theirs.toLowerCase();
+  const plain = (text) => stripPrefixes(text).toLowerCase().replace(/\s+/g, ' ').trim();
+  return plain(subject) === plain(state.topic);
+}
 
-  if (!files.length) {
-    showMessage(`No attachments in ${messages === 1 ? 'this email' : `these ${messages} emails`}.`);
-    return;
+/** Keep adding: notes the emails selected right now, so a quick run of clicks adds every one of them. */
+async function noteSelection() {
+  if (!prefs.keepAdding || state.fresh || !state.seen.size) return;
+  const picks = await selectedEmails();
+  for (const pick of picks || []) {
+    if (pick.itemId && !state.seen.has(pick.itemId) && !state.keepWaiting.has(pick.itemId)) state.keepWaiting.set(pick.itemId, pick);
   }
-  showView('read-view');
-  renderList();
-  const dupes = files.reduce((sum, f) => sum + f.copies - 1, 0);
-  log(`Found ${plural(files.length, 'file')}${dupes ? `, ${plural(dupes, 'duplicate')} merged` : ''}${failed ? `, ${failed} unreadable` : ''}`);
-  for (const file of files) {
-    const scans = file.kind === 'PDF' && file.bytes ? scanFormats(file.bytes) : '';
-    if (scans) log(`${file.name}: has ${scans} images`);
-  }
+}
+
+/** Starts the pictures and the rate con check again for files still without them (a newer load stopped them). */
+function resumeChecks(token) {
   fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
   checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
 }
 
+/** Keep adding: the clicked emails' files go into the list (asking first about one that looks like another load). */
+async function addFromSelection(token, force = false) {
+  const picks = (await selectedEmails()) || [];
+  if (token !== state.loadToken) return;
+  const current = new Set(picks.map((pick) => pick.itemId).filter(Boolean));
+  for (const pick of picks) if (pick.itemId && !state.seen.has(pick.itemId)) state.keepWaiting.set(pick.itemId, pick);
+  const waiting = [...state.keepWaiting.values(), ...picks.filter((pick) => !pick.itemId)];
+  const fits = (pick) => force || sameThread(pick.subject || '');
+  const fresh = waiting.filter(fits);
+  const other = waiting.filter((pick) => !fits(pick));
+  for (const pick of other) if (!current.has(pick.itemId)) state.keepWaiting.delete(pick.itemId); // clicked past it: skipped
+  const asking = other.filter((pick) => current.has(pick.itemId));
+  if (asking.length) askKeep(asking[0].subject || '');
+  else hideKeepAsk();
+  if (!fresh.length) {
+    if (!asking.length && picks.length) keepFlash(picks.length > 1 ? 'Those emails are in the list already.' : 'That email is in the list already.');
+    resumeChecks(token); // this load stopped the ones that were running
+    return;
+  }
+  keepFlash(`Reading ${fresh.length > 1 ? `${fresh.length} emails` : 'the email'}…`);
+  const read = await readEmails(fresh, token);
+  if (!read) return; // a newer click took over: these stay waiting, and it adds them too
+  const added = await mergeInto(read.found, token);
+  if (added === null) return;
+  for (const pick of fresh) {
+    if (!pick.itemId) continue;
+    state.seen.add(pick.itemId);
+    state.keepWaiting.delete(pick.itemId);
+  }
+  state.messages += read.messages;
+  state.failed += read.failed;
+  if (!state.topic) {
+    state.topic = stripPrefixes(read.subjects[0] || '');
+    $('title').textContent = state.topic || 'Restack';
+  }
+  applyReceiptNames(false);
+  renderSummary();
+  renderKeepBar();
+  const from = added.length && added[0].from ? ` from ${added[0].from}` : '';
+  keepFlash(added.length ? `Added ${plural(added.length, 'file')}${from}.` : `Nothing new in ${read.messages > 1 ? 'those emails' : 'that email'}.`);
+  log(`Keep adding: ${plural(read.messages, 'email')}, ${plural(added.length, 'new file')}`);
+  if (!state.files.length) {
+    showMessage(`No attachments in ${state.messages === 1 ? 'this email' : `these ${state.messages} emails`}.`);
+    return;
+  }
+  showView('read-view');
+  renderList();
+  updateSelectionUi();
+  for (const file of added) flashRow(file);
+  logScans(added);
+  fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
+  checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
+}
+
+/**
+ * Adds newly read files to the list. A copy of a file that's already there just counts as a copy;
+ * the rest go in by date, oldest first (or at the end, once you've put the list in your own order).
+ * Returns the files added, or null when a newer load took over.
+ */
+async function mergeInto(found, token) {
+  const byKey = new Map();
+  for (const file of state.files) {
+    if (!file.fp) file.fp = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
+    byKey.set(file.fp, file);
+  }
+  found.sort(byDate);
+  const added = [];
+  for (const file of found) {
+    file.fp = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
+    const first = byKey.get(file.fp);
+    if (first) {
+      first.copies += 1;
+      first.inline = first.inline && file.inline; // a real attachment anywhere wins
+      continue;
+    }
+    byKey.set(file.fp, file);
+    file.smallLogo = looksLikeLogo(file);
+    added.push(file);
+  }
+  if (token !== state.loadToken) return null;
+  if (!added.length) return added;
+  const before = new Map(state.files.map((file) => [file, file.id]));
+  const previewed = state.files[state.previewIndex];
+  const all = [...state.files, ...added].sort(byDate);
+  all.forEach((file, index) => { file.id = index; });
+  const moved = new Map([...before].map(([file, old]) => [old, file.id]));
+  state.checked = new Set([...state.checked].map((id) => moved.get(id)).filter((id) => id !== undefined));
+  if (state.order) state.order = [...state.order.map((id) => moved.get(id)).filter((id) => id !== undefined), ...added.map((file) => file.id)];
+  state.files = all;
+  state.previewIndex = previewed ? all.indexOf(previewed) : -1;
+  state.built.clear();
+  return added;
+}
+
+/** The Keep adding bar under the header, while it's on. */
+function renderKeepBar() {
+  const bar = $('keep-bar');
+  if (!bar) return;
+  const on = prefs.keepAdding && readUiWired;
+  bar.hidden = !on;
+  if (!on) {
+    hideKeepAsk();
+    return;
+  }
+  $('keep-count').textContent = state.seen.size ? `· ${plural(state.seen.size, 'email')}` : '';
+}
+
+/** A moment's note in the Keep adding bar (what was just added), then back to the how-to line. */
+function keepFlash(text) {
+  const line = $('keep-text');
+  if (!line) return;
+  line.textContent = text;
+  clearTimeout(keepFlash.timer);
+  keepFlash.timer = setTimeout(() => { line.textContent = word('keepAddingNote'); }, 5000);
+}
+
+/** The clicked email looks like another load: add it anyway, or start over with it? */
+function askKeep(subject) {
+  $('keep-ask-text').textContent = `“${stripPrefixes(subject) || 'This email'}” looks like a different load from “${state.topic}”.`;
+  $('keep-ask').hidden = false;
+  log('Keep adding: the clicked email looks like another load, asked first');
+}
+
+function hideKeepAsk() {
+  const box = $('keep-ask');
+  if (box) box.hidden = true;
+}
+
+/** "Add its files": the asked-about email goes into the list after all. */
+function keepAddAnyway() {
+  if (state.busy) {
+    keepFlash('Wait for the PDF to finish, then click Add its files again.');
+    return Promise.resolve();
+  }
+  hideKeepAsk();
+  const token = ++state.loadToken;
+  const run = loadChain.then(() => (token === state.loadToken ? addFromSelection(token, true) : undefined));
+  loadChain = run.catch(() => {});
+  return run;
+}
+
+/** "Start over": a fresh list from the selected email(s), as if the panel had just opened on them. */
+function keepStartOver() {
+  hideKeepAsk();
+  state.keepWaiting.clear();
+  state.fresh = true;
+  log('Keep adding: start over');
+  return loadThread();
+}
+
+function setKeepAdding(on) {
+  savePref('keepAdding', on);
+  markSwitch('set-keep-adding', on);
+  state.keepWaiting.clear();
+  hideKeepAsk();
+  renderKeepBar();
+  renderOneEmailTip(state.messages);
+  if (on) keepFlash(word('keepAddingNote'));
+  log(`Keep adding: ${on ? 'on' : 'off'}`);
+}
+
+// ---- receipts by file name (a switch in Settings; the team admin sets the words)
+
+/** Whether a file's name has one of the team's receipt words in it. */
+function namedLikeReceipt(file) {
+  const name = String(file.name || '').toLowerCase();
+  const pod = name.replace(/delivery[\s_-]*receipt/g, ' '); // "Delivery Receipt" is a POD: its "receipt" doesn't count
+  return receiptWords().some((w) => w && pod.includes(w));
+}
+
+/**
+ * With Tag receipts by file name on, files named like receipts start out tagged Receipt, and lose the
+ * tag again when it's turned off. A tag set by hand stays as it was set.
+ */
+function applyReceiptNames(render = true) {
+  let changed = false;
+  for (const file of state.files) {
+    if (file.lumperByHand || file.pageLumper || !canCombine(file)) continue;
+    const want = prefs.tagReceipts && namedLikeReceipt(file);
+    if (!!file.lumperByName === want) continue;
+    file.lumperByName = want;
+    file.lumper = want;
+    changed = true;
+  }
+  if (!changed) return;
+  state.built.clear();
+  normalizeOrder();
+  if (render && readUiWired && !$('read-view').hidden) renderList();
+}
+
+function setTagReceipts(on) {
+  savePref('tagReceipts', on);
+  markSwitch('set-tag-receipts', on);
+  log(`Tag receipts by file name: ${on ? `on (${receiptWords().join(', ') || 'no words set'})` : 'off'}`);
+  applyReceiptNames();
+}
+
 // --------------------------------------------------------------------------- picking pages
 
-/** 0-based pages of a PDF that go into the combined file, or null for "every page". */
+/**
+ * 0-based pages of a PDF that go into the combined file, in the order they go in (as moved in the
+ * preview), or null for "every page, as it came".
+ */
 function includedPages(file) {
-  if (file.kind !== 'PDF' || !file.pageChoice) return null;
-  return [...file.pageChoice].sort((a, b) => a - b);
+  if (file.kind !== 'PDF') return null;
+  const order = movedPages(file);
+  if (!file.pageChoice) return order;
+  return order ? order.filter((p) => file.pageChoice.has(p)) : [...file.pageChoice].sort((a, b) => a - b);
+}
+
+// ---- page order (moved in the preview, like Rotate: the attachment itself isn't changed)
+
+/** How many pages a PDF or fax (TIFF) has, once it's known. */
+function pageTotal(file) {
+  return file.kind === 'TIFF' ? file.tiffPages || 0 : file.pages || 0;
+}
+
+/** The order a file's pages go into the PDF (0-based page numbers), as moved in the preview. */
+function pageSeq(file) {
+  const total = pageTotal(file);
+  const order = file.pageOrder;
+  if (order && order.length === total) return order.slice();
+  return Array.from({ length: total }, (_, i) => i);
+}
+
+/** The pages in their new order, or null when they haven't been moved. */
+function movedPages(file) {
+  const order = file.pageOrder;
+  return order && order.length === pageTotal(file) && order.some((p, i) => p !== i) ? order.slice() : null;
+}
+
+/** The page that goes in first (0-based): the list's picture shows it. */
+function firstPage(file) {
+  const order = movedPages(file);
+  return order ? order[0] : 0;
+}
+
+/** Draws the list's picture again (after the first page changed). */
+function refreshThumb(file) {
+  makeThumb(file)
+    .then((thumb) => { file.thumb = thumb; })
+    .catch(() => { file.thumb = null; })
+    .then(() => placeThumb(file));
+}
+
+/** "2, 1, 3" (the pages going in, in their new order), or '' when they haven't been moved. */
+function orderText(file) {
+  const order = movedPages(file);
+  if (!order) return '';
+  const going = file.kind === 'PDF' && file.pageChoice ? order.filter((p) => file.pageChoice.has(p)) : order;
+  const shown = going.slice(0, 12).map((p) => p + 1).join(', ');
+  return going.length > 12 ? `${shown}…` : shown;
 }
 
 /** [0, 1, 3] -> "Pages 1–2, 4" */
@@ -941,8 +1388,11 @@ function pagesLabel(pages) {
 }
 
 function pageNote(file) {
-  if (!file.pageChoice) return null;
-  return `${pagesLabel([...file.pageChoice])} of ${file.pages} picked`;
+  const order = orderText(file);
+  const moved = order ? word('pageOrder', { pages: order }) : '';
+  if (!file.pageChoice) return moved || null;
+  const picked = `${pagesLabel([...file.pageChoice])} of ${file.pages} picked`;
+  return moved ? `${picked} · ${moved}` : picked;
 }
 
 // --------------------------------------------------------------------------- Multi-stop: which stop each file (or page) is
@@ -1170,6 +1620,7 @@ function lumperChip(on, mixed, label, onToggle) {
 /** Tagging a whole file as a lumper receipt (or not). This also undoes any page-by-page tags. */
 function setFileLumper(file, on) {
   file.lumper = on;
+  file.lumperByHand = true; // Tag receipts by file name leaves it as you set it
   file.pageLumper = null;
   state.built.clear();
   log(`Receipt: ${file.name} ${on ? 'yes' : 'no'}`);
@@ -1181,6 +1632,7 @@ function setFileLumper(file, on) {
 
 /** Tagging one page in the preview (a PDF with the POD and the lumper receipt in it). */
 function setPageLumper(file, page, on) {
+  file.lumperByHand = true;
   if (!file.pageLumper) file.pageLumper = new Map();
   file.pageLumper.set(page, on);
   normalizePageLumper(file);
@@ -1331,6 +1783,7 @@ async function mergeDuplicates(found) {
   const byKey = new Map();
   for (const file of found) {
     const key = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
+    file.fp = key;
     const first = byKey.get(key);
     if (!first) {
       byKey.set(key, file);
@@ -1381,6 +1834,8 @@ function renderList() {
   const spot = focusedSpot();
   state.places = orderPlaces();
   const list = $('file-list');
+  list.dataset.view = prefs.view;
+  $('details-head').hidden = prefs.view !== 'details';
   list.textContent = '';
   for (const file of visibleFiles()) list.append(fileRow(file));
   const logos = state.files.filter((f) => f.smallLogo).length;
@@ -1529,10 +1984,12 @@ function startDrag(event, file, grip) {
   drag = {
     file, grip, row,
     rows: [...document.querySelectorAll('#file-list .file.ordered')].filter((r) => r !== row),
+    startX: event.clientX,
     startY: event.clientY,
     scroll0: $('read-view').scrollTop,
     moved: false,
     index: null,
+    tiles: $('file-list').dataset.view === 'tiles', // cards side by side: across as well as down
   };
   try { grip.setPointerCapture(event.pointerId); } catch (error) { /* moves still arrive */ }
   grip.addEventListener('pointermove', onDragMove);
@@ -1546,26 +2003,45 @@ function onDragMove(event) {
   const box = view.getBoundingClientRect();
   if (event.clientY < box.top + 30) view.scrollTop -= 12; // keep going past the visible part of a long list
   else if (event.clientY > box.bottom - 30) view.scrollTop += 12;
-  const dy = event.clientY - drag.startY + (view.scrollTop - drag.scroll0);
-  if (!drag.moved && Math.abs(dy) < 4) return;
+  // (The pointer and the rows' positions are in the page's zoomed pixels; a row's own position isn't.)
+  const zoom = pageZoom();
+  const dy = (event.clientY - drag.startY) / zoom + (view.scrollTop - drag.scroll0);
+  const dx = drag.tiles ? (event.clientX - drag.startX) / zoom : 0;
+  if (!drag.moved && Math.abs(dy) < 4 && Math.abs(dx) < 4) return;
   if (!drag.moved) {
     drag.moved = true;
     drag.row.classList.add('dragging');
   }
-  drag.row.style.transform = `translateY(${dy}px)`;
-  let index = drag.rows.length; // lands before the first file whose middle is below the pointer
+  drag.row.style.transform = `translate(${dx}px, ${dy}px)`;
+  // It lands before the first file whose middle is below the pointer (in Tiles: past the pointer, reading across)
+  let index = drag.rows.length;
   for (let i = 0; i < drag.rows.length; i++) {
     const r = drag.rows[i].getBoundingClientRect();
-    if (event.clientY < r.top + r.height / 2) {
+    const before = drag.tiles
+      ? event.clientY < r.top || (event.clientY <= r.bottom && event.clientX < r.left + r.width / 2)
+      : event.clientY < r.top + r.height / 2;
+    if (before) {
       index = i;
       break;
     }
   }
   drag.index = index;
   const line = $('drop-line');
-  const list = $('file-list').getBoundingClientRect();
-  const edge = index < drag.rows.length ? drag.rows[index].getBoundingClientRect().top : drag.rows[drag.rows.length - 1].getBoundingClientRect().bottom;
-  line.style.top = `${Math.round(edge - list.top) - 1}px`;
+  const wrap = line.parentElement.getBoundingClientRect();
+  if (drag.tiles) { // a line down the side of the card it lands before
+    const r = (drag.rows[index] || drag.rows[drag.rows.length - 1]).getBoundingClientRect();
+    const x = index < drag.rows.length ? r.left - 6 : r.right + 3;
+    line.classList.add('vertical');
+    line.style.left = `${Math.round((x - wrap.left) / zoom)}px`;
+    line.style.top = `${Math.round((r.top - wrap.top) / zoom)}px`;
+    line.style.height = `${Math.round(r.height / zoom)}px`;
+  } else {
+    line.classList.remove('vertical');
+    line.style.left = '';
+    line.style.height = '';
+    const edge = index < drag.rows.length ? drag.rows[index].getBoundingClientRect().top : drag.rows[drag.rows.length - 1].getBoundingClientRect().bottom;
+    line.style.top = `${Math.round((edge - wrap.top) / zoom) - 1}px`;
+  }
   line.hidden = false;
 }
 
@@ -1631,7 +2107,13 @@ function fileRow(file) {
       openPreview(file.id);
     });
   }
-  label.append(box, thumb, text);
+  // The Details view's columns (the other views hide them)
+  const cell = (cls, value) => {
+    const node = el('span', `cell ${cls}`, value);
+    if (value) node.title = value;
+    return node;
+  };
+  label.append(box, thumb, text, cell('c-from', file.from || ''), cell('c-date', shortDate(file.date)), cell('c-size', humanSize(file.size)));
 
   const preview = document.createElement('button');
   preview.type = 'button';
@@ -1686,6 +2168,7 @@ function updateSelectionUi() {
   for (const id of ['btn-save', 'name-save', 'load-go']) $(id).disabled = state.busy || !anyChecked || problems.length > 0;
   $('btn-save').title = !anyChecked ? 'Check the files to save first.' : problems.length ? 'Leave out the rate confirmation first.' : '';
   $('btn-email').disabled = state.busy; // still opens, to reach Manage templates
+  for (const id of ['keep-add-anyway', 'keep-ask-restart']) if ($(id)) $(id).disabled = state.busy;
   for (const box of document.querySelectorAll('#file-list .file-label > input[type="checkbox"]')) {
     const file = state.files[Number(box.closest('.file').dataset.id)];
     box.disabled = state.busy || !canCombine(file);
@@ -1693,7 +2176,11 @@ function updateSelectionUi() {
   }
   for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .tag-chip input, #pv-body .tag-chip input, #file-list .order-grip')) pick.disabled = state.busy;
   for (const button of document.querySelectorAll('#file-list .order-step')) button.disabled = state.busy || button.dataset.edge === 'yes';
-  if (!$('preview').hidden) syncPreviewInclude();
+  if (!$('preview').hidden) {
+    syncPreviewInclude();
+    syncMoveButtons();
+    syncPreviewOrder();
+  }
   // The open name box or create-email step lists the files it will make
   if (!$('name-form').hidden) updateNameHint();
   if (emailDraft) syncAtChoices(); // the stops in the Shipper/Receiver drop-downs follow the files
@@ -2144,6 +2631,7 @@ function onRcLeaveOut() {
   }
   state.built.clear();
   log(`Rate con check: left out ${problems.map(({ file, pages }) => (pages ? `${file.name} ${pagesLabel(pages).toLowerCase()}` : file.name)).join(', ')}`);
+  countUsage('rateCon', { pages: problems.reduce((sum, { file, pages }) => sum + (pages ? pages.length : (file.pages || 1)), 0), files: problems.length });
   renderList();
   if (!$('preview').hidden) syncPreviewPages();
   setStatus('Rate confirmation left out.', 'ok');
@@ -2178,7 +2666,7 @@ async function onUseRateConSample() {
     await saveTeamDraft({ rateCon: sample });
     const readable = sample.pages.filter((page) => page.words.split(' ').filter(Boolean).length >= 10).length;
     log(`Rate con check: sample set from ${file.name} (${plural(sample.pages.length, 'page')}, readable text on ${readable}), not published yet`);
-    button.textContent = `Saved as the sample (${plural(sample.pages.length, 'page')}${readable ? '' : ', pictures of pages, so it\'s matched by layout'}). Publish it in Manage templates.`;
+    button.textContent = `Saved as the sample (${plural(sample.pages.length, 'page')}${readable ? '' : ', pictures of pages, so it\'s matched by layout'}). Publish it (Settings → Team).`;
     recheckRateCons();
   } catch (error) {
     button.textContent = `Couldn't use it: ${error.userMessage || error.message}`;
@@ -2216,7 +2704,7 @@ function fillThumbSlot(slot, file) {
     const img = document.createElement('img');
     img.alt = '';
     img.src = file.thumb;
-    const turn = rotationOf(file, 0);
+    const turn = rotationOf(file, firstPage(file));
     if (turn) img.style.transform = `rotate(${turn}deg)`; // as turned in the preview
     slot.append(img);
   } else {
@@ -2249,7 +2737,7 @@ async function pdfThumb(file) {
   const doc = await openPdf(file.bytes);
   try {
     file.pages = doc.numPages;
-    const page = await doc.getPage(1);
+    const page = await doc.getPage(Math.min(firstPage(file) + 1, doc.numPages)); // the page that goes in first
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: THUMB_PX / Math.max(base.width, base.height) });
     const canvas = document.createElement('canvas');
@@ -2277,7 +2765,8 @@ async function makeThumb(file) {
     }
   }
   if (file.kind === 'TIFF') {
-    const page = decodeTiffPages(file.bytes, 1)[0];
+    const first = firstPage(file);
+    const page = decodeTiffPages(file.bytes, first + 1)[first] || decodeTiffPages(file.bytes, 1)[0];
     if (!page) return null;
     // Fax pages are often 204 x 98 dpi: draw them at their real shape, not their pixel shape
     const stretch = page.xres > 0 && page.yres > 0 ? page.yres / page.xres : 1;
@@ -2329,6 +2818,7 @@ async function openPreview(id) {
   sampleButton.textContent = word('useAsRcSample');
   syncPreviewInclude();
   updatePreviewNav();
+  $('pv-order-reset').hidden = true;
 
   const body = $('pv-body');
   body.textContent = '';
@@ -2391,7 +2881,9 @@ async function previewPdf(file, body, token, waiting) {
     const width = Math.max(200, body.clientWidth - 20);
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const count = Math.min(total, PREVIEW_PAGE_LIMIT);
-    for (let p = 1; p <= count; p++) {
+    const seq = pageSeq(file).slice(0, count); // in the order they go into the PDF
+    for (const index of seq) {
+      const p = index + 1;
       if (token !== state.previewToken) return;
       const page = await doc.getPage(p);
       const rotation = (((page.rotate || 0) + rotationOf(file, p - 1)) % 360 + 360) % 360; // as turned in the preview
@@ -2402,11 +2894,13 @@ async function previewPdf(file, body, token, waiting) {
       canvas.height = Math.floor(viewport.height);
       canvas.setAttribute('aria-label', `Page ${p}`);
       body.append(pageHolder(file, p - 1, canvas));
+      syncMoveButtons();
       await page.render({ canvas, viewport }).promise;
       page.cleanup();
     }
     if (total > count) body.append(el('p', 'notice', `Showing the first ${count} of ${total} pages.`));
     syncPreviewPages();
+    syncPreviewOrder();
   } finally {
     closePdf(doc);
   }
@@ -2429,7 +2923,7 @@ function turnPage(file, index) {
   else file.rotations.delete(index);
   state.built.clear();
   log(`Rotate: ${file.name}${file.kind === 'Image' ? '' : ` page ${index + 1}`} now turned ${next}°`);
-  if (index === 0) placeThumb(file);
+  if (index === firstPage(file)) placeThumb(file);
   return next;
 }
 
@@ -2474,7 +2968,9 @@ function turnHolder(file, index, canvas, label) {
   const holder = el('div', 'pv-page');
   holder.dataset.page = String(index);
   const top = el('div', 'pv-page-top');
-  top.append(el('span', 'pv-page-label', label), rotateButton(file, index, holder));
+  top.append(el('span', 'pv-page-label', label));
+  if (file.kind === 'TIFF') top.append(moveButtons(file, index, holder));
+  top.append(rotateButton(file, index, holder));
   holder.append(top, turnCanvas(canvas, rotationOf(file, index)));
   return holder;
 }
@@ -2483,7 +2979,7 @@ function turnHolder(file, index, canvas, label) {
 function applyTurns(out, file, from, only) {
   if (!file.rotations || !file.rotations.size) return;
   const pages = out.getPages().slice(from);
-  const sources = file.kind === 'PDF' && only ? only : pages.map((_, i) => i);
+  const sources = file.kind === 'PDF' && only ? only : file.kind === 'TIFF' ? pageSeq(file) : pages.map((_, i) => i);
   pages.forEach((page, i) => {
     const turn = rotationOf(file, sources[i]);
     if (!turn) return;
@@ -2512,10 +3008,90 @@ function pageHolder(file, index, canvas) {
   const badge = el('span', 'rc-badge', word('rateConBadge'));
   badge.title = 'This page looks like a rate confirmation';
   tags.append(badge, pick, chip, rotateButton(file, index, holder));
-  top.append(bar, tags);
+  top.append(bar, moveButtons(file, index, holder), tags);
   holder.append(top, canvas);
   syncPageHolder(holder, file); // right from the start, while later pages still render
   return holder;
+}
+
+/** Up and down arrows that move a page of a PDF or fax within the file (shown when it has 2 pages or more). */
+function moveButtons(file, index, holder) {
+  const box = el('span', 'pv-move');
+  const arrow = (svg, step, key) => {
+    const button = el('button', 'icon-btn pv-move-btn');
+    button.type = 'button';
+    button.innerHTML = svg;
+    button.dataset.step = String(step);
+    button.title = word(key);
+    button.setAttribute('aria-label', `${word(key)}: page ${index + 1}`);
+    button.addEventListener('click', () => movePage(file, holder, step, button));
+    return button;
+  };
+  box.append(arrow(UP_SVG, -1, 'movePageUp'), arrow(DOWN_SVG, 1, 'movePageDown'));
+  box.hidden = pageTotal(file) < 2;
+  return box;
+}
+
+/** Turns each page's arrows off at the top and bottom (and while Restack is busy). */
+function syncMoveButtons() {
+  const holders = [...document.querySelectorAll('#pv-body .pv-page')];
+  holders.forEach((holder, i) => {
+    for (const button of holder.querySelectorAll('.pv-move-btn')) {
+      const step = Number(button.dataset.step);
+      button.disabled = state.busy || (step < 0 ? i === 0 : i === holders.length - 1);
+    }
+  });
+}
+
+/** Moves a page up (-1) or down (1) in the preview, and in the PDF. */
+function movePage(file, holder, step, button) {
+  const holders = [...document.querySelectorAll('#pv-body .pv-page')];
+  const at = holders.indexOf(holder);
+  const other = holders[at + step];
+  if (at < 0 || !other) return;
+  const seq = pageSeq(file);
+  const a = seq.indexOf(Number(holder.dataset.page));
+  const b = seq.indexOf(Number(other.dataset.page));
+  if (a < 0 || b < 0) return;
+  const first = firstPage(file);
+  [seq[a], seq[b]] = [seq[b], seq[a]];
+  file.pageOrder = seq.some((p, i) => p !== i) ? seq : null;
+  if (firstPage(file) !== first) refreshThumb(file);
+  if (step < 0) other.before(holder);
+  else other.after(holder);
+  state.built.clear();
+  log(`Page order: ${file.name} ${file.pageOrder ? `now ${seq.map((p) => p + 1).join(', ')}` : 'back as it came'}`);
+  syncMoveButtons();
+  syncPreviewOrder();
+  refreshList();
+  (button && !button.disabled ? button : holder.querySelector('.pv-move-btn:not(:disabled)') || holder.querySelector('.pv-rotate')).focus();
+  holder.scrollIntoView({ block: 'nearest' });
+}
+
+/** Puts a file's pages back as they came. */
+function resetPageOrder() {
+  const file = state.files[state.previewIndex];
+  if (!file || !file.pageOrder) return;
+  const first = firstPage(file);
+  file.pageOrder = null;
+  if (first !== 0) refreshThumb(file);
+  state.built.clear();
+  log(`Page order: ${file.name} back as it came`);
+  const body = $('pv-body');
+  const holders = [...body.querySelectorAll('.pv-page')].sort((x, y) => Number(x.dataset.page) - Number(y.dataset.page));
+  const notice = body.querySelector(':scope > .notice');
+  for (const holder of holders) body.insertBefore(holder, notice);
+  syncMoveButtons();
+  syncPreviewOrder();
+  refreshList();
+  $('pv-include').focus();
+}
+
+/** The preview's "Reset page order" link: there once a page has been moved. */
+function syncPreviewOrder() {
+  const file = state.files[state.previewIndex];
+  $('pv-order-reset').hidden = !(file && movedPages(file));
+  $('pv-order-reset').disabled = state.busy;
 }
 
 function pageStopOf(file, index) {
@@ -2592,7 +3168,7 @@ function onPreviewPageToggle(file) {
 async function previewImage(file, body, token, waiting) {
   const image = await decodeImage(file);
   if (token !== state.previewToken) return;
-  const canvas = rasterize(image, MAX_IMAGE_SIDE);
+  const canvas = rasterize(image, PHOTO_MAX_SIDE); // as it goes into the PDF
   waiting.remove();
   body.append(turnHolder(file, 0, canvas, 'Photo'));
   const [w, h] = sizeOf(image);
@@ -2604,11 +3180,16 @@ async function previewTiff(file, body, token, waiting) {
   if (token !== state.previewToken) return;
   if (!pages.length) throw userError('This TIFF file has no pages.');
   waiting.remove();
+  file.tiffPages = pages.length;
   $('pv-pages').textContent = plural(pages.length, 'page');
-  pages.slice(0, PREVIEW_PAGE_LIMIT).forEach((page, i) => {
+  for (const i of pageSeq(file).slice(0, PREVIEW_PAGE_LIMIT)) { // in the order they go into the PDF
+    const page = pages[i];
     page.canvas.style.aspectRatio = `${page.w / page.xresOr1} / ${page.h / page.yresOr1}`;
     body.append(turnHolder(file, i, page.canvas, `Page ${i + 1}`));
-  });
+  }
+  if (pages.length > PREVIEW_PAGE_LIMIT) body.append(el('p', 'notice', `Showing the first ${PREVIEW_PAGE_LIMIT} of ${pages.length} pages.`));
+  syncMoveButtons();
+  syncPreviewOrder();
 }
 
 // --------------------------------------------------------------------------- decoding
@@ -2836,7 +3417,7 @@ async function addPdfAsImages(out, file, only) {
 }
 
 async function addImage(out, file) {
-  const canvas = rasterize(await decodeImage(file), MAX_IMAGE_SIDE);
+  const canvas = rasterize(await decodeImage(file), PHOTO_MAX_SIDE); // the whole photo, scaled (never cropped)
   const image = await out.embedJpg(await canvasToBytes(canvas, 'image/jpeg', 0.9));
   const [w, h] = fitPage(canvas.width, canvas.height);
   out.addPage([w, h]).drawImage(image, { x: 0, y: 0, width: w, height: h });
@@ -2845,7 +3426,9 @@ async function addImage(out, file) {
 async function addTiff(out, file) {
   const pages = decodeTiffPages(file.bytes);
   if (!pages.length) throw userError('has no pages');
-  for (const page of pages) {
+  file.tiffPages = pages.length;
+  for (const index of pageSeq(file)) { // as moved in the preview
+    const page = pages[index];
     let canvas = page.canvas;
     let trustDpi = page.xres >= 50 && page.yres >= 50 && page.w / page.xres <= 17 && page.h / page.yres <= 17;
     let image;
@@ -2867,7 +3450,7 @@ async function addTiff(out, file) {
  */
 async function buildPdf(entries, label) {
   const turns = (file) => (file.rotations ? [...file.rotations].map(([i, d]) => `${i}r${d}`).join('.') : '');
-  const key = entries.map(({ file, only }) => `${file.id}:${(only || includedPages(file) || ['all']).join('.')}:${turns(file)}`).join(',');
+  const key = entries.map(({ file, only }) => `${file.fp || file.id}:${(only || includedPages(file) || ['all']).join('.')}:${turns(file)}:${file.pageOrder ? file.pageOrder.join('.') : ''}`).join(',');
   if (state.built.has(key)) return state.built.get(key);
   const out = await PDFLib.PDFDocument.create();
   const skipped = [];
@@ -2950,7 +3533,7 @@ async function combineChecked() {
  * lumperStem-1.pdf… per stop) for lumper receipts. A single POD PDF over 10 MB is split into -1, -2… instead.
  * Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
  */
-async function makeFiles(base, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
+async function makeFiles(base, layout = layoutOf(null), lumperStem = `${base} Receipt`) {
   const files = [];
   const skipped = [];
   for (const group of fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts)) {
@@ -3073,6 +3656,7 @@ async function startDownloads(files, result, lead = '') {
     return;
   }
   log(`Download: started ${files.map((f) => f.name).join(', ')}`);
+  countUsage('save', usageFigures(files.map((f) => ({ ...f, pages: f.pages || (files.length === 1 ? result.pages : 0) }))));
   const what = files.length === 1
     ? `Downloading ${files[0].name} (${plural(files[0].pages || result.pages, 'page')}) to your Downloads folder.`
     : `Downloading ${files.length} files to your Downloads folder: ${files.map((f) => f.name).join(', ')}. If Outlook asks about downloading multiple files, choose Allow.`;
@@ -3150,6 +3734,7 @@ async function finishSave(handle, name) {
       state.fileName = cleanFileName(saved); // reuse the name chosen in Save As
       log(`Save dialog: saved ${saved} (${humanSize(result.bytes.length)}) ✔`);
       setStatus(`Saved ${saved} (${plural(result.pages, 'page')}).${leftOutText(result)}`, 'ok');
+      countUsage('save', usageFigures([{ name: saved, pages: result.pages }]));
       return;
     } catch (error) {
       writeSetting('saveDialog', null);
@@ -3160,6 +3745,7 @@ async function finishSave(handle, name) {
     downloadBytes(result.bytes, name); // (under 10 MB: bigger ones were split above)
     log(`Download: started as ${name}. Check whether it showed up in Downloads.`);
     setStatus(`Downloading ${name} (${plural(result.pages, 'page')}) to your Downloads folder.${leftOutText(result)}`, 'ok');
+    countUsage('save', usageFigures([{ name, pages: result.pages }]));
   } catch (error) {
     log(`Download: failed (${error.name}: ${error.message})`);
     setStatus("Saving isn't possible here. Use Email instead.", 'error');
@@ -3219,12 +3805,12 @@ function emailFileBase(t, load) {
 
 /** The lumper receipt PDF's name for an email, without .pdf: the template's lumper file name. */
 function lumperBase(t, load) {
-  const base = fill((t && t.lumperName) || '{load} Lumper', load).trim().replace(/\.pdf$/i, '');
-  return safeName(base || `${load} Lumper`);
+  const base = fill(receiptName(t), load).trim().replace(/\.pdf$/i, '');
+  return safeName(base || `${load} Receipt`);
 }
 
 /** The files an email will get, named before anything is built (for the hint under the load number). */
-function plannedFiles(base, layout = layoutOf(null), lumperStem = `${base} Lumper`) {
+function plannedFiles(base, layout = layoutOf(null), lumperStem = `${base} Receipt`) {
   const groups = fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts);
   if (!groups.length) return { names: [`${base}${layout.splitStops ? '-1' : ''}.pdf`], note: layout.splitStops ? '…' : '' };
   const names = groups.map((g) => `${g.lumper ? lumperStem : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
@@ -3286,11 +3872,12 @@ function emailFields(t, load, acc, lines = true) {
 
 // ---- the separate accessorial email (a template setting)
 
-/** The ticked accessorials' names, in the form's order: Detention, Lumper, then Other's typed type. */
+/** The ticked accessorials' names, in the form's order: Detention, Layover, Lumper, then Other's typed type. */
 function accessorialTypes(acc) {
   if (!acc) return [];
   const types = [];
   if (acc.det.on) types.push(word('detention'));
+  if (acc.lay && acc.lay.on) types.push(word('layover'));
   if (acc.lum.on) types.push(word('lumper'));
   if (acc.oth.on) types.push(String(acc.oth.type || '').trim() || word('other'));
   return types;
@@ -3342,10 +3929,11 @@ function receiptMix() {
   return { receipts, pods };
 }
 
-// ---- accessorials (Detention, Lumper, Other) for the email body
+// ---- accessorials (Detention, Layover, Lumper, Other) for the email body
 
 const ACC_FIELDS = {
   det: ['at', 'in', 'appt', 'out', 'hours'],
+  lay: ['at', 'in', 'appt', 'out'],               // like Detention, without the hours
   lum: ['at', 'total'],
   oth: ['at', 'type', 'total'],
 };
@@ -3353,6 +3941,7 @@ const ACC_FIELDS = {
 function emptyAccessorials() {
   return {
     det: { on: false, at: '', in: '', appt: '', out: '', hours: '' },
+    lay: { on: false, at: '', in: '', appt: '', out: '' },
     lum: { on: false, at: '', total: '' },
     oth: { on: false, at: '', type: '', total: '' },
   };
@@ -3422,6 +4011,7 @@ function money(text) {
 function accessorialProblem(acc) {
   const where = state.multiStop ? `${word('shipper')} or a stop` : `${word('shipper')} or ${word('receiver')}`;
   if (acc.det.on && !acc.det.at) return ['det-at', `Pick ${where} for ${word('detention')}.`];
+  if (acc.lay.on && !acc.lay.at) return ['lay-at', `Pick ${where} for ${word('layover')}.`];
   if (acc.lum.on && !acc.lum.at) return ['lum-at', `Pick ${where} for ${word('lumper')}.`];
   if (acc.lum.on && money(acc.lum.total) === null) return ['lum-total', `The ${word('lumper')} ${word('total').toLowerCase()} should be an amount, like 350.00.`];
   if (acc.oth.on && !acc.oth.at) return ['oth-at', `Pick ${where} for ${word('other')}.`];
@@ -3443,6 +4033,7 @@ function accessorialHtml(acc, t, lines = true) {
     blocks.push(lines.join('<br>'));
   };
   if (lines && acc.det.on) add(word('detention'), acc.det.at, [[word('timeIn'), acc.det.in], [word('appointment'), acc.det.appt], [word('timeOut'), acc.det.out], [word('hoursRequested'), acc.det.hours]]);
+  if (lines && acc.lay.on) add(word('layover'), acc.lay.at, [[word('timeIn'), acc.lay.in], [word('appointment'), acc.lay.appt], [word('timeOut'), acc.lay.out]]);
   if (acc.lum.on) {
     if (lines) add(word('lumper'), acc.lum.at, [[word('total'), money(acc.lum.total)]]);
   } else if (t && t.noLumper) blocks.push(`<b>No ${escapeHtml(word('lumper'))}</b>`);
@@ -3455,6 +4046,7 @@ function accessorialSummary(acc) {
   if (!acc) return '';
   const parts = [];
   if (acc.det.on) parts.push(`${word('detention')} at ${acc.det.at}${acc.det.hours ? ` (${acc.det.hours} h)` : ''}`);
+  if (acc.lay.on) parts.push(`${word('layover')} at ${acc.lay.at}`);
   if (acc.lum.on) parts.push(`${word('lumper')} at ${acc.lum.at}${money(acc.lum.total) ? ` ${money(acc.lum.total)}` : ''}`);
   if (acc.oth.on) parts.push(`${acc.oth.type} at ${acc.oth.at}${money(acc.oth.total) ? ` ${money(acc.oth.total)}` : ''}`);
   return parts.join(', ');
@@ -3469,6 +4061,13 @@ function byName(list) {
 
 function renderEmailMenu() {
   const menu = $('email-menu');
+  // Remember what had focus, so pinning, moving or unpinning keeps your place
+  const active = document.activeElement && document.activeElement.closest('#email-menu') ? document.activeElement : null;
+  const focusedRow = active && active.closest('.menu-row');
+  const focusedId = focusedRow ? focusedRow.dataset.id : '';
+  const focusedKind = active ? active.dataset.pin || active.dataset.kind || '' : '';
+  const shownPins = [...menu.querySelectorAll('.pin-btn')].filter((b) => !b.closest('[hidden]'));
+  const focusedAt = active ? shownPins.indexOf(active) : -1;
   menu.textContent = '';
   const nothing = checkedFiles().length === 0;
   const blocked = !nothing && teamRateCon() && rcProblems().length > 0;
@@ -3477,17 +4076,128 @@ function renderEmailMenu() {
   if (blocked) menu.append(el('div', 'menu-note', 'Leave out the rate confirmation first.'));
   const teamList = byName(teamTemplates());
   const mine = canMakeOwn() ? byName(state.myTemplates) : []; // a rep's own templates stay saved, just unused, while it's off
-  if (teamList.length) {
-    menu.append(el('div', 'menu-group', word('team')));
-    for (const t of teamList) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
+  const all = [...teamList, ...mine];
+  const pinned = pinnedTemplates();
+  const isPinned = new Set(pinned.map((t) => t.id));
+  const groups = (box, list) => { // the templates under their Team and Mine headings
+    const team = list.filter((t) => teamList.includes(t));
+    const own = list.filter((t) => mine.includes(t));
+    if (team.length) {
+      box.append(el('div', 'menu-group', word('team')));
+      for (const t of team) box.append(templateRow(t, ready, null));
+    }
+    if (own.length) {
+      box.append(el('div', 'menu-group', word('mine')));
+      for (const t of own) box.append(templateRow(t, ready, null));
+    }
+  };
+  if (pinned.length) {
+    // Pinned templates first, in your order; the rest wait under Other templates
+    menu.append(el('div', 'menu-group', word('pinned')));
+    pinned.forEach((t, i) => menu.append(templateRow(t, ready, { at: i, of: pinned.length })));
+    const rest = all.filter((t) => !isPinned.has(t.id));
+    if (rest.length) {
+      const toggle = el('button', 'menu-item menu-other-toggle');
+      toggle.type = 'button';
+      toggle.setAttribute('role', 'menuitem');
+      toggle.setAttribute('aria-expanded', String(!!state.otherOpen));
+      toggle.dataset.kind = 'other';
+      toggle.append(el('span', 'mi-name', `${word('otherTemplates')} (${rest.length})`));
+      toggle.insertAdjacentHTML('beforeend', '<svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      const box = el('div', 'menu-other');
+      box.id = 'menu-other';
+      box.hidden = !state.otherOpen;
+      groups(box, rest);
+      toggle.addEventListener('click', () => {
+        state.otherOpen = !state.otherOpen;
+        toggle.setAttribute('aria-expanded', String(state.otherOpen));
+        box.hidden = !state.otherOpen;
+        if (state.otherOpen) (box.querySelector('.menu-item:not(:disabled)') || box.querySelector('.menu-item') || toggle).scrollIntoView({ block: 'nearest' });
+      });
+      menu.append(toggle, box);
+    }
+  } else {
+    groups(menu, all);
   }
-  if (mine.length) {
-    menu.append(el('div', 'menu-group', word('mine')));
-    for (const t of mine) menu.append(menuItem(t.name, templateSub(t), () => startEmail(t), !ready));
-  }
-  if (teamList.length || mine.length) menu.append(el('div', 'menu-sep'));
+  if (all.length) menu.append(el('div', 'menu-sep'));
   menu.append(menuItem(word('blankEmail'), word('blankEmailNote'), () => startEmail(null), !ready));
-  if (canMakeOwn()) menu.append(menuItem(word(teamList.length || mine.length ? 'manageTemplates' : 'createTemplate'), '', openTemplates, false));
+  if (canMakeOwn()) menu.append(menuItem(word(all.length ? 'manageTemplates' : 'createTemplate'), '', openTemplates, false));
+  // After pinning, moving or unpinning, focus stays with that template (or, once it's tucked away
+  // under Other templates, with the pin now in its place)
+  if (focusedId) {
+    const row = menu.querySelector(`.menu-row[data-id="${CSS.escape(focusedId)}"]`);
+    let target = row && !row.closest('[hidden]') ? row.querySelector(focusedKind ? `[data-pin="${focusedKind}"]` : '.menu-item') : null;
+    if (target && target.disabled) target = row.querySelector('.pin-move:not(:disabled)') || row.querySelector('.pin-btn');
+    if (!target && focusedAt >= 0) {
+      const pins = [...menu.querySelectorAll('.pin-btn')].filter((b) => !b.closest('[hidden]'));
+      target = pins[Math.min(focusedAt, pins.length - 1)] || menu.querySelector('.menu-other-toggle');
+    }
+    if (target) target.focus();
+  } else if (focusedKind === 'other') {
+    const toggle = menu.querySelector('.menu-other-toggle');
+    if (toggle) toggle.focus();
+  }
+}
+
+/** Your pinned templates that still exist (and that you can use), in your order. */
+function pinnedTemplates() {
+  const all = [...teamTemplates(), ...(canMakeOwn() ? state.myTemplates : [])];
+  return prefs.pins.map((id) => all.find((t) => t.id === id)).filter(Boolean);
+}
+
+/** A template in Email ▾: its name and recipients, and its pin (with up and down arrows once it's pinned). */
+function templateRow(t, ready, place) {
+  const row = el('div', 'menu-row');
+  row.dataset.id = t.id;
+  row.setAttribute('role', 'none');
+  const item = menuItem(t.name, templateSub(t), () => startEmail(t), !ready);
+  row.append(item);
+  if (place) {
+    const arrow = (svg, step, label) => {
+      const button = el('button', 'pin-move');
+      button.type = 'button';
+      button.innerHTML = svg;
+      button.title = label;
+      button.dataset.pin = step < 0 ? 'up' : 'down';
+      button.setAttribute('aria-label', `${label}: ${t.name}`);
+      button.disabled = step < 0 ? place.at === 0 : place.at === place.of - 1;
+      button.addEventListener('click', () => movePin(t.id, step));
+      return button;
+    };
+    row.classList.add('pinned');
+    row.append(arrow(UP_SVG, -1, 'Move up'), arrow(DOWN_SVG, 1, 'Move down'));
+  }
+  const pin = el('button', 'pin-btn');
+  pin.type = 'button';
+  pin.dataset.pin = 'pin';
+  pin.innerHTML = PIN_SVG;
+  pin.setAttribute('aria-pressed', String(!!place));
+  pin.title = word(place ? 'unpin' : 'pin');
+  pin.setAttribute('aria-label', `${word(place ? 'unpin' : 'pin')}: ${t.name}`);
+  pin.addEventListener('click', () => togglePin(t.id));
+  row.append(pin);
+  return row;
+}
+
+/** Pins a template to the top of Email ▾ (last among the pinned ones), or unpins it. Saved per person. */
+function togglePin(id) {
+  const on = !prefs.pins.includes(id);
+  if (on && !pinnedTemplates().length) state.otherOpen = true; // the first pin: the rest stay in view, to pin more
+  savePref('pins', on ? [...prefs.pins, id] : prefs.pins.filter((x) => x !== id));
+  const t = [...teamTemplates(), ...state.myTemplates].find((x) => x.id === id);
+  log(`Templates: ${on ? 'pinned' : 'unpinned'} "${t ? t.name : id}"`);
+  renderEmailMenu();
+}
+
+/** Moves a pinned template up (-1) or down (1) among the pinned ones. */
+function movePin(id, step) {
+  const pins = pinnedTemplates().map((t) => t.id); // the ones you can see, in order
+  const at = pins.indexOf(id);
+  const to = at + step;
+  if (at < 0 || to < 0 || to >= pins.length) return;
+  [pins[at], pins[to]] = [pins[to], pins[at]];
+  savePref('pins', [...pins, ...prefs.pins.filter((x) => !pins.includes(x))]); // pins you can't use right now keep their place at the end
+  renderEmailMenu();
 }
 
 function menuItem(title, sub, action, disabled) {
@@ -3505,6 +4215,7 @@ function menuItem(title, sub, action, disabled) {
 }
 
 function openEmailMenu() {
+  state.otherOpen = false; // pinned templates first; Other templates opens the rest
   renderEmailMenu();
   $('email-menu').hidden = false;
   $('btn-email').setAttribute('aria-expanded', 'true');
@@ -3520,9 +4231,27 @@ function closeEmailMenu(returnFocus) {
 }
 
 function onMenuKeys(event) {
+  // Right arrow on a template reaches its pin (and arrows); left goes back
+  const inRow = document.activeElement && document.activeElement.closest('.menu-row');
+  if (inRow && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
+    const parts = [...inRow.querySelectorAll('button:not(:disabled)')];
+    const at = parts.indexOf(document.activeElement);
+    const next = parts[at + (event.key === 'ArrowRight' ? 1 : -1)];
+    if (next) next.focus();
+    event.preventDefault();
+    return;
+  }
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
   event.preventDefault();
-  const items = [...$('email-menu').querySelectorAll('.menu-item:not(:disabled)')];
+  // Alt+Up / Alt+Down on a pinned template moves it
+  const row = document.activeElement && document.activeElement.closest('.menu-row.pinned');
+  if (event.altKey && row) {
+    movePin(row.dataset.id, event.key === 'ArrowUp' ? -1 : 1);
+    const again = $('email-menu').querySelector(`.menu-row[data-id="${CSS.escape(row.dataset.id)}"] .menu-item`);
+    if (again) again.focus();
+    return;
+  }
+  const items = [...$('email-menu').querySelectorAll('.menu-item:not(:disabled)')].filter((b) => !b.closest('[hidden]'));
   if (!items.length) return;
   const at = items.indexOf(document.activeElement);
   const step = event.key === 'ArrowDown' ? 1 : -1;
@@ -3913,6 +4642,15 @@ async function createEmail(template, load, acc) {
     }
   }
 
+  countUsage('email', {
+    ...usageFigures(allFiles),
+    template: template ? template.name : '',
+    templateId: template ? template.id : '',
+    emails: emails.length - (secondProblem ? 1 : 0),
+    accessorials: accessorialTypes(acc).join('/'),
+    separate,
+    azure: !!links,
+  });
   const summary = accessorialSummary(acc);
   const noLumper = acc && !acc.lum.on && template && template.noLumper ? `No ${word('lumper')}` : '';
   if (template && template.checklist) log(`Checklist: all ${plural(template.checklist.split('\n').length, 'item')} ticked for "${template.name}"`);
@@ -4154,6 +4892,16 @@ function newId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * A template's receipt file name: what it says, or {load} Receipt. Templates saved before 0.16 that
+ * were still on the old default ({load} Lumper) get the new one; one saved since keeps whatever was typed.
+ */
+function receiptName(t) {
+  const name = String((t && t.lumperName) || '').trim();
+  if (!name || (name === OLD_RECEIPT_NAME && !(t && t.receiptNamed))) return NEW_TEMPLATE.lumperName;
+  return name;
+}
+
 function cleanTemplates(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -4167,7 +4915,8 @@ function cleanTemplates(list) {
       file: String(t.file || ''),
       stopFiles: t.stopFiles !== false,             // Multi-stop: each stop its own file (else all stops in one)
       lumperSeparate: !!t.lumperSeparate,           // lumper receipts in their own file
-      lumperName: String(t.lumperName || '').trim() || '{load} Lumper',
+      lumperName: receiptName(t),
+      receiptNamed: !!t.receiptNamed,             // saved in 0.16 or later: its receipt name is what was typed
       noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't ticked
       accSeparate: !!t.accSeparate,                 // accessorials in a separate email, when one is ticked
       accTo: String(t.accTo || ''),                 // that email's To (blank: the POD email's) and CC (blank: none)
@@ -4236,7 +4985,7 @@ function readRoaming(name) {
   const rs = roamingSettings();
   try {
     if (rs) return rs.get(name) ?? null;
-    const raw = localStorage.getItem(`thread-attachments.${name}`);
+    const raw = localStorage.getItem(`${STORE_PREFIX}${name}`);
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
     return null;
@@ -4251,8 +5000,8 @@ async function writeRoaming(name, value) {
     await call((done) => rs.saveAsync(done));
     return;
   }
-  if (value === null) localStorage.removeItem(`thread-attachments.${name}`);
-  else localStorage.setItem(`thread-attachments.${name}`, JSON.stringify(value));
+  if (value === null) localStorage.removeItem(`${STORE_PREFIX}${name}`);
+  else localStorage.setItem(`${STORE_PREFIX}${name}`, JSON.stringify(value));
 }
 
 // --------------------------------------------------------------------------- team: install-file key + encrypted team.json
@@ -4291,6 +5040,8 @@ function cleanTeam(data) {
     azure: cleanAzure(data && data.azure),
     repTemplates: !!(data && data.repTemplates), // reps may make their own templates (off to start)
     rateCon: cleanRateCon(data && data.rateCon),  // the sample rate confirmation (null: check is off)
+    receiptWords: cleanReceiptWords(data && data.receiptWords), // file names that start out tagged Receipt (null: lumper, receipt)
+    usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
   };
 }
 
@@ -4306,7 +5057,7 @@ async function loadTeam() {
   } else {
     let response = null;
     try {
-      response = await fetch(`${TEAM_FILE}?t=${Date.now()}`, { cache: 'no-store' });
+      response = await fetch(new URL(`${TEAM_FILE}?t=${Date.now()}`, SITE_ROOT).href, { cache: 'no-store' });
     } catch (error) {
       team.status = 'error';
       team.error = error.message;
@@ -4343,6 +5094,7 @@ async function loadTeam() {
 
 /** The first person to set up a team manages it; after that, whoever team.json lists. */
 function isAdmin() {
+  if (CONSOLE) return team.status === 'ok'; // only someone with the team key gets this far
   if (team.status === 'nofile') return true;
   return team.status === 'ok' && !!team.me && team.published.admins.includes(team.me);
 }
@@ -4365,7 +5117,7 @@ function teamTemplates() {
 }
 
 function showLocked() {
-  const site = new URL('.', window.location.href).href;
+  const site = SITE_ROOT;
   const [title, body] = {
     nokey: ["This copy of Restack isn't set up for a team.",
       'Install it from the team install file you were sent. If you manage the add-in, make a team install file on its page:'],
@@ -4411,30 +5163,33 @@ function closeTemplates() {
 
 function cancelEdit() {
   editing = null;
+  formSnapshot = '';
   renderTemplateSheet();
 }
 
 function renderTemplateSheet() {
   const formOpen = !!editing;
-  $('tpl-list-view').hidden = formOpen;
+  $('tpl-list-view').hidden = formOpen && !CONSOLE; // the console keeps the list next to the form
   $('tpl-form').hidden = !formOpen;
-  if (formOpen) return;
-  $('tpl-title').textContent = 'Email templates';
+  $('tpl-pick').hidden = !CONSOLE || formOpen;
+  $('con-tpl-tools').hidden = !CONSOLE;
+  if (formOpen && !CONSOLE) return;
+  if (!formOpen) $('tpl-title').textContent = 'Email templates';
   const admin = isAdmin();
   const teamList = teamTemplates();
-  $('team-note').textContent = admin ? 'You manage these' : 'Set by your team admin';
-  fillTemplateList($('team-list'), byName(teamList), admin ? 'team' : null);
-  $('team-empty').hidden = teamList.length > 0;
-  $('team-empty').textContent = admin
-    ? 'Add the templates your reps should use, then publish them.'
-    : "Your team admin hasn't added any templates yet.";
+  $('team-note').textContent = CONSOLE ? '' : admin ? 'You manage these' : 'Set by your team admin';
+  $('team-count').textContent = CONSOLE && teamList.length ? `(${teamList.length})` : '';
+  const query = CONSOLE ? consoleSearch.trim().toLowerCase() : '';
+  const shown = query ? teamList.filter((t) => [t.name, t.to, t.cc, t.customer, t.accTo].some((v) => String(v || '').toLowerCase().includes(query))) : teamList;
+  fillTemplateList($('team-list'), byName(shown), admin ? 'team' : null);
+  $('team-empty').hidden = shown.length > 0;
+  $('team-empty').textContent = query
+    ? `No templates match "${consoleSearch.trim()}".`
+    : admin
+      ? 'Add the templates your reps should use, then publish them.'
+      : "Your team admin hasn't added any templates yet.";
   $('team-admin').hidden = !admin;
   if (admin) renderPublishBox();
-  $('azure-section').hidden = !admin;
-  if (admin) renderAzureBox();
-  if (admin) $('team-rep-templates').checked = !!(teamSettings() && teamSettings().repTemplates);
-  $('rc-section').hidden = !admin;
-  if (admin) renderRcBox();
   $('mine-section').hidden = !canMakeOwn();
   fillTemplateList($('mine-list'), byName(state.myTemplates), 'mine');
   $('mine-empty').hidden = state.myTemplates.length > 0;
@@ -4443,12 +5198,16 @@ function renderTemplateSheet() {
 /** The rate confirmation check's status, for the team admin. */
 function renderRcBox(message) {
   const sample = teamRateCon();
-  $('rc-note').textContent = sample ? 'On' : 'Off';
+  teamSubtitle('rc', sample ? 'On' : 'Off');
   $('rc-remove').hidden = !sample;
+  $('rc-choose').hidden = !CONSOLE;
+  $('rc-choose').textContent = sample ? 'Use a different PDF…' : 'Choose a rate con PDF…';
   const saved = sample && sample.saved ? new Date(sample.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
   $('rc-text').textContent = message || (sample
     ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}${sample.pages.some((page) => page.words) ? '' : '; pictures of pages, so it\'s matched by layout'}). Pages that look like it are flagged, as are pages that say "Rate Confirmation" or "Load Confirmation" and pages with the same barcode as a flagged one. They have to be left out before anyone emails or saves.`
-    : `Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click ${word('useAsRcSample')} at the bottom of the preview.`);
+    : CONSOLE
+      ? 'Off. To turn it on, choose one of your rate confirmations (a PDF) as the sample. Its first 3 pages are kept.'
+      : `Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click ${word('useAsRcSample')} at the bottom of the preview.`);
 }
 
 async function onRcRemove() {
@@ -4460,21 +5219,23 @@ async function onRcRemove() {
   }
   log('Rate con check: sample removed (not published yet)');
   renderPublishBox();
-  renderRcBox('Removed. Publish to turn the check off for your team.');
+  renderRcBox(`Removed. ${publishWhere()} to turn the check off for your team.`);
   recheckRateCons();
 }
 
 /** The admin's switch for letting reps make their own templates. Published with the team templates. */
 async function onRepTemplatesToggle(on) {
+  markSwitch('team-rep-templates', on);
   try {
     await saveTeamDraft({ repTemplates: on });
   } catch (error) {
-    $('team-rep-templates').checked = !on;
-    renderPublishBox(`Couldn't save it: ${error.message}`);
+    markSwitch('team-rep-templates', !on);
+    teamNote(`Couldn't save it: ${error.message}`, 'error');
     return;
   }
   log(`Team: reps ${on ? 'can' : "can't"} make their own templates (not published yet)`);
   renderPublishBox();
+  teamNote(`Reps ${on ? 'can' : "can't"} make their own templates once you publish.`);
 }
 
 function fillTemplateList(list, templates, scope) {
@@ -4484,28 +5245,44 @@ function fillTemplateList(list, templates, scope) {
     const text = el('div', 'tpl-text');
     text.append(el('div', 'tpl-name', t.name), el('div', 'tpl-sub', templateSub(t)));
     row.append(text);
+    const open = !!(editing && editing.scope === scope && editing.id === t.id);
+    row.classList.toggle('editing', open);
+    if (open) row.setAttribute('aria-current', 'true');
     if (scope) {
-      const edit = el('button', 'btn', 'Edit');
+      const edit = el('button', 'btn', open ? 'Editing' : 'Edit');
       edit.type = 'button';
       edit.setAttribute('aria-label', `Edit ${t.name}`);
-      edit.addEventListener('click', () => editTemplate(scope, t.id));
+      edit.addEventListener('click', () => openTemplateEditor(scope, t.id));
       row.append(edit);
+      if (CONSOLE) row.addEventListener('click', (event) => {
+        if (!event.target.closest('button')) openTemplateEditor(scope, t.id);
+      });
     }
     list.append(row);
   }
 }
 
+/** Whether there's something to publish: the Team group in Settings, and a banner in Manage templates. */
 function renderPublishBox(message) {
-  const pending = !!team.draft;
-  const box = $('team-publish').closest('.publish-box');
-  box.classList.toggle('pending', pending && !team.justPublished && !message);
-  $('team-publish').disabled = !pending;
-  const text = $('publish-text');
-  if (message) text.textContent = message;
-  else if (team.justPublished) text.textContent = 'team.json downloaded. Upload it to your GitHub repository (Add file → Upload files → Commit changes). If it saved as "team (1).json", rename it to team.json first. Reps get the changes the next time they open the panel.';
-  else if (pending) text.textContent = "You have changes your team can't see yet. Publish, then upload team.json to GitHub.";
-  else if (team.status === 'nofile') text.textContent = 'Add templates, then publish them to your team.';
-  else text.textContent = 'Your team has the latest templates.';
+  renderTeamMenu();
+  const box = $('tpl-publish-box');
+  if (!box) return;
+  const pending = !!team.draft && !team.justPublished;
+  let text = '';
+  if (message) text = message;
+  else if (team.justPublished) text = PUBLISHED_TEXT;
+  else if (pending) text = "You have changes your team can't see yet. Publish, then upload team.json to GitHub.";
+  box.hidden = !text || !isAdmin();
+  box.classList.toggle('pending', pending && !message);
+  $('tpl-publish-text').textContent = text;
+  $('tpl-publish').hidden = !pending;
+}
+
+/** Opens a template in the editor (in the console, after asking about unsaved changes to another). */
+function openTemplateEditor(scope, id) {
+  if (CONSOLE && editing && !(editing.scope === scope && editing.id === id) && templateFormChanged()
+    && !window.confirm("You haven't saved your changes to this template. Leave them?")) return;
+  editTemplate(scope, id);
 }
 
 function editTemplate(scope, id) {
@@ -4520,9 +5297,9 @@ function editTemplate(scope, id) {
   $('tpl-file').value = t ? (t.file || '{load}') : NEW_TEMPLATE.file;
   $('tpl-no-lumper').checked = !!(t && t.noLumper);
   $('tpl-checklist').value = t ? t.checklist || '' : '';
-  $('tpl-stop-files').checked = !t || t.stopFiles !== false;
+  $('tpl-stop-files').checked = !!t && t.stopFiles !== false; // a new template starts with every box unticked
   $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
-  $('tpl-lumper-name').value = (t && t.lumperName) || NEW_TEMPLATE.lumperName;
+  $('tpl-lumper-name').value = receiptName(t);
   syncLumperNameRow();
   $('tpl-acc-sep').checked = !!(t && t.accSeparate);
   $('tpl-acc-to').value = t ? t.accTo || '' : '';
@@ -4535,11 +5312,39 @@ function editTemplate(scope, id) {
   renderQuestionBuilder();
   $('tpl-delete').hidden = !t;
   $('tpl-delete').textContent = 'Delete this template';
+  $('tpl-duplicate').hidden = !t;
   $('tpl-error').textContent = '';
   renderTemplateSheet();
   fitQuestionBoxes(); // now that the form is showing, the question boxes can be measured
-  $('tpl-title').textContent = `${t ? 'Edit' : 'New'} ${scope === 'team' ? 'team template' : 'template'}`;
+  setTemplateTitle(t ? t.name : '');
+  formSnapshot = templateFormState();
   $('tpl-name').focus();
+}
+
+function setTemplateTitle(name) {
+  const scope = editing ? editing.scope : 'team';
+  const kind = scope === 'team' ? 'team template' : 'template';
+  $('tpl-title').textContent = `${editing && editing.id ? 'Edit' : 'New'} ${kind}`;
+  $('tpl-form-title').hidden = !CONSOLE;
+  $('tpl-form-title').textContent = editing && editing.id ? name : `New ${kind}`;
+}
+
+/** Make a copy: the form becomes a new template with the same settings, named "… (copy)". */
+function onTemplateDuplicate() {
+  if (!editing || !editing.id) return;
+  const name = $('tpl-name').value.trim();
+  editing = { scope: editing.scope, id: null };
+  $('tpl-name').value = `${name} (copy)`.slice(0, 60);
+  $('tpl-delete').hidden = true;
+  $('tpl-duplicate').hidden = true;
+  $('tpl-error').textContent = '';
+  if (qDraft && Array.isArray(qDraft.items)) qDraft = JSON.parse(JSON.stringify(qDraft));
+  renderTemplateSheet();
+  setTemplateTitle('');
+  formSnapshot = 'copy'; // not saved yet: leaving it asks first
+  $('tpl-name').focus();
+  $('tpl-name').select();
+  log(`Templates: copying "${name}"`);
 }
 
 /** Shows the lumper file name box only when lumper receipts get their own file. */
@@ -4741,18 +5546,15 @@ function upsert(list, item) {
   else list.push(item);
 }
 
-/** Saves the admin's unpublished team changes: { templates } and/or { azure }. */
+/** Saves the admin's unpublished team changes: { templates }, { azure }, { rateCon } and so on. The rest stays as it is. */
 async function saveTeamDraft(changes) {
-  const base = team.draft || team.published;
-  const admins = base && base.admins.length ? base.admins : [team.me].filter(Boolean);
-  const templates = changes.templates || (base ? base.templates : []);
-  const azure = 'azure' in changes ? changes.azure : (base ? base.azure || null : null);
-  const repTemplates = 'repTemplates' in changes ? !!changes.repTemplates : !!(base && base.repTemplates);
-  const rateCon = 'rateCon' in changes ? changes.rateCon : (base ? base.rateCon || null : null);
-  const draft = { v: 1, updated: Date.now(), by: team.me, admins, templates, azure, repTemplates, rateCon };
+  const base = team.draft || team.published || cleanTeam({});
+  const admins = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
+  const draft = { ...cleanTeam(base), ...changes, v: 1, updated: Date.now(), by: team.me, admins };
   await writeRoaming(DRAFT_KEY, draft);
   team.draft = draft;
   team.justPublished = false;
+  renderTeamMenu();
 }
 
 async function onTemplateSubmit(event) {
@@ -4774,6 +5576,7 @@ async function onTemplateSubmit(event) {
     stopFiles: $('tpl-stop-files').checked,
     lumperSeparate: $('tpl-lumper-sep').checked,
     lumperName: $('tpl-lumper-name').value.trim().replace(/\.pdf$/i, '') || NEW_TEMPLATE.lumperName,
+    receiptNamed: true,
     customer: $('tpl-customer').value.trim().slice(0, 60),
     questions: null,
   };
@@ -4799,7 +5602,19 @@ async function onTemplateSubmit(event) {
     return;
   }
   log(`Templates: saved ${editing.scope === 'team' ? 'team' : 'my'} template "${data.name}"`);
+  if (CONSOLE) {
+    editing = { scope: editing.scope, id: data.id }; // stays open, now saved
+    $('tpl-delete').hidden = false;
+    $('tpl-delete').textContent = 'Delete this template';
+    $('tpl-duplicate').hidden = false;
+    setTemplateTitle(data.name);
+    formSnapshot = templateFormState();
+    renderTemplateSheet();
+    consoleNote(`Saved "${data.name}". ${publishWhere()} so your reps get it.`, 'ok');
+    return;
+  }
   editing = null;
+  formSnapshot = '';
   renderTemplateSheet();
 }
 
@@ -4825,23 +5640,297 @@ async function onTemplateDelete() {
   }
   log(`Templates: deleted a ${scope === 'team' ? 'team' : 'personal'} template`);
   editing = null;
+  formSnapshot = '';
   renderTemplateSheet();
+  if (CONSOLE) consoleNote(`Deleted. ${publishWhere()} to take it away from your reps too.`, 'ok');
 }
 
-/** Encrypts the team templates with the team key and downloads team.json to upload to GitHub. */
+const PUBLISHED_TEXT = 'team.json downloaded. Upload it to your GitHub repository (Add file → Upload files → Commit changes). If it saved as "team (1).json", rename it to team.json first. Reps get the changes the next time they open the panel.';
+
+/** Encrypts the team templates and settings with the team key and downloads team.json to upload to GitHub. */
 async function onPublish() {
   const source = team.draft || team.published;
   if (!source || !team.key) return;
   if (!team.me) {
-    renderPublishBox("Couldn't read your email address from Outlook, so this can't be published.");
+    const why = "Couldn't read your email address from Outlook, so this can't be published.";
+    renderPublishBox(why);
+    teamNote(why, 'error');
     return;
   }
   const admins = source.admins.length ? source.admins : [team.me];
-  const payload = { v: 1, updated: source.updated || Date.now(), by: team.me, admins, templates: source.templates, azure: source.azure || null, repTemplates: !!source.repTemplates, rateCon: source.rateCon || null };
-  downloadText(await encryptTeam(payload, team.key), TEAM_FILE, 'application/json');
+  const payload = { ...cleanTeam(source), v: 1, updated: source.updated || Date.now(), by: team.me, admins };
+  const text = await encryptTeam(payload, team.key);
+  if (githubReady()) {
+    $('con-publish').disabled = true;
+    consoleNote('Publishing to GitHub…');
+    let where;
+    try {
+      where = await publishToGithub(text);
+    } catch (error) {
+      renderConsolePublish();
+      consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Publishing has the token.)`, 'error');
+      return;
+    }
+    team.justPublished = true;
+    log(`Team: published ${plural(payload.templates.length, 'template')} to GitHub (${where.repo}, ${where.branch})`);
+    renderPublishBox();
+    consoleNote(`Published to ${where.repo}. GitHub updates your site within a minute or two, and reps get the changes the next time they open the panel.`, 'ok');
+    return;
+  }
+  downloadText(text, TEAM_FILE, 'application/json');
   team.justPublished = true;
   log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)`);
   renderPublishBox();
+  teamNote(PUBLISHED_TEXT, 'ok');
+}
+
+// ---- the Team screen: one of the admin's settings at a time (from Settings → Team)
+
+const TEAM_SCREENS = {
+  rc: { section: 'rc-section', title: 'Rate confirmation check', render: () => renderRcBox() },
+  azure: { section: 'azure-section', title: 'Attach automatically', render: () => renderAzureBox() },
+  receipts: { section: 'receipts-section', title: 'Receipt file names', render: () => renderReceiptWords() },
+  usage: { section: 'usage-section', title: 'Usage counts', render: () => renderUsageBox() },
+};
+let teamShowing = null;
+
+function openTeamSheet(which) {
+  const screen = TEAM_SCREENS[which];
+  if (!screen || !isAdmin()) return;
+  closeSettings(false);
+  teamShowing = which;
+  for (const [key, other] of Object.entries(TEAM_SCREENS)) $(other.section).hidden = key !== which;
+  $('team-title').textContent = screen.title;
+  $('team-subtitle').textContent = '';
+  $('team-sheet').hidden = false;
+  screen.render();
+  $('team-back').focus();
+}
+
+function closeTeamSheet() {
+  if ($('team-sheet').hidden) return;
+  $('team-sheet').hidden = true;
+  teamShowing = null;
+  if (!$('read-view').hidden) renderList(); // receipt words may have changed which files start out tagged
+  $('btn-settings').focus();
+}
+
+/** The line under the Team screen's title (On, Off…), when that setting is the one showing. */
+function teamSubtitle(which, text) {
+  if (teamShowing === which || CONSOLE) {
+    const node = CONSOLE ? $(`${which}-state`) : $('team-subtitle');
+    if (node) node.textContent = text;
+  }
+}
+
+function setStatusIn(id, text, tone) {
+  const node = $(id);
+  node.textContent = text || '';
+  node.className = `hint${tone ? ` ${tone}` : ''}`;
+}
+
+// ---- receipt file names (the team's words; each rep turns the tagging on in Settings)
+
+const DEFAULT_RECEIPT_WORDS = ['lumper', 'receipt'];
+
+function cleanReceiptWords(value) {
+  if (!Array.isArray(value)) return null;
+  const words = value.map((w) => String(w).toLowerCase().replace(/\s+/g, ' ').trim()).filter((w) => w && w.length <= 40);
+  return [...new Set(words)].slice(0, 20);
+}
+
+/** The words that make a file start out tagged Receipt (the team's, else lumper and receipt). */
+function receiptWords() {
+  const settings = teamSettings();
+  return settings && settings.receiptWords ? settings.receiptWords : DEFAULT_RECEIPT_WORDS;
+}
+
+function renderReceiptWords(message, tone) {
+  $('rw-words').value = receiptWords().join(', ');
+  teamSubtitle('receipts', receiptWords().length ? `${plural(receiptWords().length, 'word')}` : 'No words');
+  setStatusIn('rw-status', message || '', tone);
+}
+
+async function onReceiptWordsSave(words) {
+  const list = cleanReceiptWords(words) || [];
+  try {
+    await saveTeamDraft({ receiptWords: list });
+  } catch (error) {
+    setStatusIn('rw-status', `Couldn't save them: ${error.message}`, 'error');
+    return;
+  }
+  log(`Receipt file names: ${list.join(', ') || 'none'} (not published yet)`);
+  renderPublishBox();
+  renderReceiptWords(list.length ? `Saved. ${publishWhere()} to share them with your reps.` : 'Saved with no words, so nothing is tagged by its name. Publish to share it.', 'ok');
+  applyReceiptNames();
+}
+
+// ---- usage counts: the Restack Usage function (its own Function App)
+
+const USAGE_FUNCTION = 'usage'; // the function's name in the Restack Usage Function App
+
+function cleanUsage(value) {
+  if (!value || typeof value !== 'object') return null;
+  const url = String(value.url || '').trim().replace(/\/+$/, '');
+  const key = String(value.key || '').trim();
+  return okAzureUrl(url) && key.length >= 16 ? { url, key } : null;
+}
+
+/** The team's Restack Usage function ({ url, key }), or null when nothing is counted. */
+function teamUsage() {
+  const settings = teamSettings();
+  return settings ? settings.usage || null : null;
+}
+
+/** The function address as typed: the Function App's domain alone becomes https://<app>.azurewebsites.net/api/usage. */
+function usageBaseUrl(text) {
+  let url = String(text || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '');
+  if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && /^[^\s/:]+\.[^\s/:]+(:\d+)?(\/\S*)?$/.test(url)) url = `https://${url}`;
+  if (/^https?:\/\/[^/\s]+$/i.test(url)) url += `/api/${USAGE_FUNCTION}`;
+  else if (/^https?:\/\/[^/\s]+\/api$/i.test(url)) url += `/${USAGE_FUNCTION}`;
+  return url;
+}
+
+/** The admin key that reads everyone's counts: kept in the admin's own Outlook, never published. */
+function usageAdminKey() {
+  return String(readRoaming('usageAdmin') || '');
+}
+
+function renderUsageBox(message, tone) {
+  const usage = teamUsage();
+  $('us-url').value = usage ? usage.url : '';
+  $('us-key').value = usage ? usage.key : '';
+  $('us-admin').value = usageAdminKey();
+  teamSubtitle('usage', usage ? 'On' : 'Off');
+  setStatusIn('us-status', message || (usage
+    ? 'Counting. The admin console\'s Usage tab shows the numbers.'
+    : 'Not set up. Nothing is counted.'), tone);
+}
+
+function usageFromFields() {
+  const typed = $('us-url').value.trim();
+  const key = $('us-key').value.trim();
+  const admin = $('us-admin').value.trim();
+  if (!typed && !key) return { off: true, admin };
+  const url = usageBaseUrl(typed);
+  if (!okAzureUrl(url)) return { problem: "The function address should be your Restack Usage Function App's Default domain, like yourusageapp.azurewebsites.net." };
+  if (key.length < 16) return { problem: 'The counting key should be at least 16 characters. Click Generate to make one.' };
+  if (admin && admin.length < 16) return { problem: 'The admin key should be at least 16 characters. Click Generate to make one.' };
+  if (admin && admin === key) return { problem: 'The admin key has to be different from the counting key.' };
+  return { usage: { url, key }, admin };
+}
+
+async function copyFrom(input, statusId) {
+  const value = $(input).value.trim();
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    setStatusIn(statusId, 'Copied.');
+  } catch (error) {
+    $(input).select();
+    let copied = false;
+    try {
+      copied = document.execCommand('copy');
+    } catch (ignored) {
+      copied = false;
+    }
+    setStatusIn(statusId, copied ? 'Copied.' : 'Press Ctrl+C to copy it.');
+  }
+}
+
+async function onUsageSave() {
+  const { usage, admin, problem, off } = usageFromFields();
+  if (problem) {
+    setStatusIn('us-status', problem, 'error');
+    return;
+  }
+  try {
+    await saveTeamDraft({ usage: off ? null : usage });
+    await writeRoaming('usageAdmin', admin || null);
+  } catch (error) {
+    setStatusIn('us-status', `Couldn't save it: ${error.message}`, 'error');
+    return;
+  }
+  log(`Usage counts: settings ${off ? 'cleared' : 'saved'} (not published yet)`);
+  renderPublishBox();
+  usageReport.key = ''; // the Usage tab reads again
+  renderUsageBox(off ? `Turned off. ${publishWhere()} to stop the counting.` : `Saved. ${publishWhere()} so your reps' panels start counting.`, 'ok');
+}
+
+/** Checks the function is there and set up, then that both keys work (nothing is counted). */
+async function onUsageTest() {
+  const { usage, admin, problem } = usageFromFields();
+  if (problem || !usage) {
+    setStatusIn('us-status', problem || 'Fill in the function address and counting key first.', 'error');
+    return;
+  }
+  $('us-test').disabled = true;
+  setStatusIn('us-status', 'Testing… (the first call can take a few seconds while Azure starts the function)');
+  try {
+    const info = await usageHealth(usage.url);
+    if (!info.keySet) throw userError("RESTACK_USAGE_KEY isn't set in the Function App yet");
+    if (info.storage === false) throw userError(info.storageError || "the function can't reach its storage");
+    await sendUsage(usage, { check: true });
+    let read = '';
+    if (admin) {
+      if (!info.adminKeySet) throw userError("RESTACK_USAGE_ADMIN_KEY isn't set in the Function App yet");
+      const today = new Date().toISOString().slice(0, 10);
+      await readUsage(usage.url, admin, today, today);
+      read = ' The admin key reads the numbers.';
+    }
+    log(`Usage counts: test connection worked (${info.version || 'version unknown'})`);
+    setStatusIn('us-status', `Connection works.${read} Click Save, then Publish.`, 'ok');
+  } catch (error) {
+    const reason = error.userMessage || error.message;
+    log(`Usage counts: test failed (${reason})`);
+    setStatusIn('us-status', `Didn't work: ${reason}.`, 'error');
+  } finally {
+    $('us-test').disabled = false;
+  }
+}
+
+// ---- the admin console: the team's templates and settings in a browser window
+
+function consoleUrl() {
+  const parts = [`k=${encodeURIComponent(team.key || '')}`];
+  const admin = usageAdminKey();
+  if (admin) parts.push(`u=${encodeURIComponent(admin)}`);
+  return `${new URL('console.html', window.location.href).href}#${parts.join('&')}`; // the beta opens the beta's console
+}
+
+let consoleArmed = 0;
+
+async function openConsole() {
+  const pending = !!team.draft && !team.justPublished;
+  if (pending && Date.now() - consoleArmed > 8000) { // the console starts from what's published
+    consoleArmed = Date.now();
+    teamNote("You have changes here that aren't published. The console starts from what's published, so publish first to take them along. Click Open admin console again to open it anyway.", 'error');
+    return;
+  }
+  consoleArmed = 0;
+  const url = consoleUrl();
+  log('Team: admin console');
+  const opened = (how) => teamNote(`The admin console opened ${how}.${pending ? " It starts from what's published, so publish your changes here first if you want them there." : ''}`, pending ? 'error' : 'ok');
+  try {
+    if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.openBrowserWindow === 'function') {
+      Office.context.ui.openBrowserWindow(url);
+      opened('in your browser');
+      return;
+    }
+  } catch (error) {
+    // try a window below
+  }
+  const win = window.open(url, '_blank');
+  if (win) {
+    opened('in a new window');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    teamNote("Outlook didn't open your browser, so the console's link is copied: paste it into your browser's address bar. It has your team key in it, so don't share it.", 'error');
+  } catch (error) {
+    teamNote(`Outlook didn't open your browser. Open ${SITE_ROOT}console.html from Settings → Team on your computer's Outlook instead.`, 'error');
+  }
 }
 
 // ---- Azure settings (team admin)
@@ -4850,7 +5939,7 @@ function renderAzureBox(message, tone) {
   const azure = teamAzure();
   $('az-url').value = azure ? azure.url : '';
   $('az-key').value = azure ? azure.key : '';
-  $('azure-note').textContent = azure ? 'On' : 'Off';
+  teamSubtitle('azure', azure ? 'On' : 'Off');
   setAzureStatus(message || (azure
     ? 'Create email attaches PDFs through your Azure function.'
     : `Not set up. ${word('createEmail')} uses the ${word('attachPdf')} button instead.`), tone);
@@ -4913,8 +6002,8 @@ async function onAzureSave() {
   log(`Azure: settings ${off ? 'cleared' : 'saved'} (not published yet)`);
   renderPublishBox();
   renderAzureBox(off
-    ? 'Turned off. Publish to update your team.'
-    : 'Saved. Click Publish to team above to share it with your reps.', 'ok');
+    ? `Turned off. ${publishWhere()} to update your team.`
+    : `Saved. ${publishWhere()} to share it with your reps.`, 'ok');
 }
 
 /** Checks the function is there and set up, then uploads a one-page PDF and reads it back. */
@@ -4967,21 +6056,909 @@ async function onAzureTest() {
   }
 }
 
+/** The add-in's manifest template, from the main site (the beta reads the same one). */
+async function manifestTemplate() {
+  const response = await fetch(new URL('manifest.template.xml', SITE_ROOT).href, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`the site answered ${response.status}`);
+  return response.text();
+}
+
 /** The install file for reps: the add-in's manifest with this team's key in it. */
 async function onShareInstall() {
   let xml;
   try {
-    const response = await fetch('manifest.template.xml', { cache: 'no-store' });
-    if (!response.ok) throw new Error(`the site answered ${response.status}`);
-    const base = new URL('.', window.location.href).href;
-    xml = (await response.text()).split('{{BASE}}').join(base).split('{{QUERY}}').join(`?team=${team.key}`);
+    xml = (await manifestTemplate()).split('{{BASE}}').join(SITE_ROOT).split('{{QUERY}}').join(`?team=${team.key}`);
   } catch (error) {
-    renderPublishBox(`Couldn't make the install file: ${error.message}`);
+    teamNote(`Couldn't make the install file: ${error.message}`, 'error');
     return;
   }
   downloadText(xml, 'restack-team.xml', 'application/xml');
   log('Team: install file downloaded');
-  renderPublishBox('restack-team.xml downloaded. Email it to a rep; they install it at aka.ms/olksideload (My add-ins → Add a custom add-in → Add from File). Anyone with this file can use the add-in and see the team templates, so keep it within your team.');
+  teamNote('restack-team.xml downloaded. Email it to a rep; they install it at aka.ms/olksideload (My add-ins → Add a custom add-in → Add from File). Anyone with this file can use the add-in and see the team templates, so keep it within your team.', 'ok');
+}
+
+/**
+ * The beta's install file: the same add-in under its own ID and name (Restack Beta), loading from the
+ * site's beta folder, so it installs next to Restack. For trying a new version before reps get it.
+ */
+function betaManifest(template) {
+  return template
+    .replace(/<Id>[^<]+<\/Id>/, `<Id>${BETA_ID}</Id>`)
+    .replace('<DisplayName DefaultValue="Restack"/>', '<DisplayName DefaultValue="Restack Beta"/>')
+    .replace(/(<bt:String id="(?:Group|ReadButton)\.Label" DefaultValue=")Restack(")/g, '$1Restack Beta$2')
+    .replace(/icon-(16|32|64|80|128)\.png/g, 'icon-beta-$1.png')
+    .split('{{BASE}}').join(`${SITE_ROOT}beta/`)
+    .split('{{QUERY}}').join(`?team=${team.key}`);
+}
+
+async function onShareBeta() {
+  let xml;
+  try {
+    xml = betaManifest(await manifestTemplate());
+  } catch (error) {
+    teamNote(`Couldn't make the beta install file: ${error.message}`, 'error');
+    return;
+  }
+  downloadText(xml, 'restack-beta.xml', 'application/xml');
+  log('Team: beta install file downloaded');
+  teamNote("restack-beta.xml downloaded. Install it like Restack's file (aka.ms/olksideload → My add-ins → Add a custom add-in → Add from File) and it shows up as Restack Beta, next to Restack. It runs whatever is in your repository's beta folder, so put a new version there first, try it, then upload the same files to the main folder. Only you need it: keep it to yourself.", 'ok');
+}
+
+// --------------------------------------------------------------------------- usage counts
+// With the team's Restack Usage function set up, the panel counts what each rep makes: PDFs saved,
+// emails created (with their template), rate cons left out. Only counts go: no files, file names, load
+// numbers or customer addresses. They wait in this browser until they're sent, so none are lost offline.
+
+const USAGE_QUEUE = 'usageQueue';
+
+function usageUnreachable() {
+  return userError(`couldn't reach the Restack Usage function (check its address, and that its CORS settings list ${window.location.origin})`);
+}
+
+async function usageProblem(response) {
+  let detail = '';
+  try {
+    const body = await response.json();
+    detail = body && body.error ? String(body.error).replace(/\.$/, '') : '';
+  } catch (error) {
+    detail = '';
+  }
+  if (response.status === 401) return userError("the key doesn't match the Function App's setting");
+  if (response.status === 503) return userError(detail || "the Function App isn't set up yet (its keys or storage)");
+  if (response.status === 404) return userError(`there's no ${USAGE_FUNCTION} function at that address`);
+  return userError(`Azure answered ${response.status}${detail ? `: ${detail}` : ''}`);
+}
+
+/** The function's own report: { service, version, keySet, adminKeySet }. */
+async function usageHealth(url) {
+  let response;
+  try {
+    response = await fetch(url, { cache: 'no-store' });
+  } catch (error) {
+    throw usageUnreachable();
+  }
+  if (!response.ok) throw await usageProblem(response);
+  let info = {};
+  try {
+    info = await response.json();
+  } catch (error) {
+    info = {};
+  }
+  if (info.service !== 'restack-usage') throw userError("that address answers, but it isn't the Restack Usage function");
+  return info;
+}
+
+/** Sends counts ({ events }) or a key check ({ check: true }) with the counting key. */
+async function sendUsage(usage, body) {
+  let response;
+  try {
+    response = await fetch(usage.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-usage-key': usage.key },
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+  } catch (error) {
+    throw usageUnreachable();
+  }
+  if (!response.ok) throw await usageProblem(response);
+  try {
+    return await response.json();
+  } catch (error) {
+    return {};
+  }
+}
+
+/** Everyone's counts from `from` to `to` (YYYY-MM-DD), with the admin key. */
+async function readUsage(url, adminKey, from, to) {
+  let response;
+  try {
+    response = await fetch(`${url}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers: { 'x-usage-admin-key': adminKey }, cache: 'no-store' });
+  } catch (error) {
+    throw usageUnreachable();
+  }
+  if (!response.ok) throw await usageProblem(response);
+  const data = await response.json();
+  const events = Array.isArray(data && data.events) ? data.events : [];
+  events.truncated = !!(data && data.truncated);
+  return events;
+}
+
+function usageQueue() {
+  try {
+    const queue = JSON.parse(readSetting(USAGE_QUEUE) || '[]');
+    return Array.isArray(queue) ? queue : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+/** Counts one thing a rep did, and sends what's waiting. */
+function countUsage(action, details = {}) {
+  if (CONSOLE || !teamUsage()) return;
+  const event = { id: randomB64url(9), at: new Date().toISOString(), rep: team.me || '', action, version: VERSION, beta: BETA, ...details };
+  writeSetting(USAGE_QUEUE, JSON.stringify([...usageQueue(), event].slice(-300)));
+  flushUsage().catch(() => {});
+}
+
+let usageSending = false;
+
+/** Sends what's waiting, 50 at a time; counts made while a batch is on its way go in the next one. */
+async function flushUsage() {
+  const usage = teamUsage();
+  if (!usage || usageSending) return;
+  usageSending = true;
+  try {
+    for (let round = 0; round < 10; round++) {
+      const batch = usageQueue().slice(0, 50);
+      if (!batch.length) break;
+      await sendUsage(usage, { events: batch });
+      const sent = new Set(batch.map((event) => event.id));
+      writeSetting(USAGE_QUEUE, JSON.stringify(usageQueue().filter((event) => !sent.has(event.id))));
+      log(`Usage counts: sent ${plural(batch.length, 'count')}`);
+    }
+  } catch (error) {
+    log(`Usage counts: not sent yet (${error.userMessage || error.message})`);
+  } finally {
+    usageSending = false;
+  }
+}
+
+/** The figures a count carries about the files: how many PDFs, pages and checked files, and how they were made. */
+function usageFigures(files) {
+  return {
+    pdfs: files.length,
+    pages: files.reduce((sum, file) => sum + (file.pages || 0), 0),
+    files: checkedFiles().length,
+    split: files.filter((file) => !file.stop && !file.lumper).length > 1, // over 10 MB, in parts
+    multiStop: !!state.multiStop,
+  };
+}
+
+// --------------------------------------------------------------------------- the admin console
+// taskpane.html?console (console.html sends you here) in a browser window: the team's templates and
+// settings at full size, and the Usage tab. Settings → Team → Open admin console passes the team key
+// (and the usage admin key) after # in the address, so they never go to a server. They're kept in this
+// browser (thread-attachments.console.*), so a bookmark to the console works next time. The console
+// works from what's published in team.json: unpublished changes made in Outlook don't show here.
+
+const CONSOLE_TABS = ['templates', 'team', 'usage'];
+let consoleTab = 'templates';
+let consoleSearch = '';
+
+/** Where to go to publish, in messages: the panel's Settings, or the console's header. */
+function publishWhere() {
+  return CONSOLE ? 'Publish to team (top right)' : 'Publish (Settings → Team)';
+}
+
+function consoleNote(text, tone) {
+  const note = $('con-note');
+  if (!note) return;
+  note.textContent = text || '';
+  note.hidden = !text;
+  note.className = `con-note${tone ? ` ${tone}` : ''}`;
+}
+
+/** Keeps the keys from the link (#k=…&u=…) in this browser, and takes them out of the address bar. */
+function readConsoleHash() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const key = hash.get('k');
+  const admin = hash.get('u');
+  if (key && /^[A-Za-z0-9_-]{22}$/.test(key)) writeSetting('teamKey', key);
+  if (admin && admin.length >= 16) writeSetting('usageAdmin', JSON.stringify(admin)); // what readRoaming reads outside Outlook
+  if (window.location.hash) {
+    try {
+      history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    } catch (error) {
+      // the key stays in the address bar; harmless
+    }
+  }
+}
+
+async function startConsole() {
+  document.documentElement.classList.add('is-console');
+  document.title = BETA ? 'Restack Beta admin console' : 'Restack admin console';
+  $('app').hidden = true;
+  $('console').hidden = false;
+  $('con-beta').hidden = !BETA;
+  readConsoleHash();
+  loadAppearance(); // Match follows the computer here
+  // The panel's own screens move into the console's tabs
+  $('con-templates').append($('templates'));
+  $('templates').hidden = false;
+  for (const card of document.querySelectorAll('.con-card[data-section]')) {
+    const section = $(card.dataset.section);
+    card.querySelector('.con-card-body').append(section);
+    section.hidden = false;
+  }
+  $('con-foot').append($('diagnostics')); // the test report, at the bottom
+  wireReadUi(); // the template and team screens' buttons
+  wireConsole();
+  consoleNote('Opening your team’s templates…');
+  await loadTeam();
+  if (team.status === 'ok') team.me = team.published.admins[0] || '';
+  consoleNote('');
+  if (team.status !== 'ok') {
+    showConsoleLocked();
+    return;
+  }
+  log(`Admin console: ${plural(teamTemplates().length, 'team template')}${team.draft ? ', with changes not published yet' : ''}`);
+  $('con-tabs').hidden = false;
+  renderConsole();
+  showConsoleTab(CONSOLE_TABS.includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
+}
+
+/** No key, the wrong key, nothing published yet, or the site couldn't be reached. */
+function showConsoleLocked() {
+  const box = $('con-locked');
+  box.textContent = '';
+  const card = el('div', 'con-locked-card');
+  const [title, ...lines] = {
+    nokey: ['Open the console from Outlook',
+      'In Restack, choose Settings (the gear at the bottom) → Team → Open admin console. That link carries your team key, and this browser keeps it so the console opens straight away next time.'],
+    wrongkey: ["This key doesn't open your team's templates",
+      'It may be from another team or an old install file. Remove it, then open the console again from Outlook: Settings → Team → Open admin console.'],
+    nofile: ['Nothing is published yet',
+      'Set up your team in Outlook first: open Restack, choose Settings → Manage templates, add a template and publish it. Then open the console again.'],
+    error: ["Couldn't load your team's templates",
+      `Check your internet connection and try again. (${team.error})`],
+  }[team.status] || ['Something went wrong', team.error || ''];
+  card.append(el('h1', '', title), ...lines.map((line) => el('p', '', line)));
+  const row = el('div', 'btn-row');
+  if (team.status === 'wrongkey') {
+    const forget = el('button', 'btn', 'Remove the key from this browser');
+    forget.type = 'button';
+    forget.addEventListener('click', () => {
+      forgetConsoleKeys();
+      window.location.reload();
+    });
+    row.append(forget);
+  }
+  if (team.status === 'error') {
+    const again = el('button', 'btn primary', 'Try again');
+    again.type = 'button';
+    again.addEventListener('click', () => window.location.reload());
+    row.append(again);
+  }
+  if (row.childElementCount) card.append(row);
+  box.append(card);
+  box.hidden = false;
+}
+
+/** Everything the console keeps in this browser: the keys, the GitHub token, unpublished changes and its choices. */
+function forgetConsoleKeys() {
+  try {
+    for (const key of Object.keys(localStorage)) if (key.startsWith(STORE_PREFIX)) localStorage.removeItem(key);
+    sessionStorage.removeItem(`${STORE_PREFIX}githubToken`);
+  } catch (error) {
+    // nothing kept, or storage is off
+  }
+}
+
+let forgetArmed = 0;
+
+function showConsoleTab(tab, focus = true) {
+  if (!CONSOLE_TABS.includes(tab)) return;
+  consoleTab = tab;
+  writeSetting('tab', tab);
+  for (const name of CONSOLE_TABS) {
+    const button = $(`con-tab-${name}`);
+    const on = name === tab;
+    button.setAttribute('aria-selected', String(on));
+    button.tabIndex = on ? 0 : -1;
+    $(`con-${name}`).hidden = !on;
+  }
+  if (focus) $(`con-tab-${tab}`).focus();
+  if (tab === 'usage') loadUsageReport().catch(fail);
+}
+
+function renderConsole() {
+  renderConsolePublish();
+  renderTemplateSheet();
+  renderRcBox();
+  renderAzureBox();
+  renderReceiptWords();
+  renderUsageBox();
+  renderGithubBox();
+  const settings = teamSettings();
+  markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
+}
+
+/** The header: whether there are changes to publish, and the button. */
+function renderConsolePublish() {
+  if (!CONSOLE || team.status !== 'ok') return;
+  const pending = !!team.draft && !team.justPublished;
+  const box = $('con-publish-box');
+  box.hidden = false;
+  box.classList.toggle('pending', pending);
+  const when = team.published && team.published.updated
+    ? new Date(team.published.updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+  $('con-publish-text').textContent = pending
+    ? "Changes your team can't see yet"
+    : team.justPublished ? (githubReady() ? 'Published to GitHub' : 'team.json downloaded') : `Published${when ? ` ${when}` : ''}`;
+  $('con-publish').disabled = !pending;
+  const settings = teamSettings();
+  markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
+}
+
+function wireConsole() {
+  const tabs = $('con-tabs');
+  for (const name of CONSOLE_TABS) $(`con-tab-${name}`).addEventListener('click', () => showConsoleTab(name));
+  tabs.addEventListener('keydown', (event) => {
+    const at = CONSOLE_TABS.indexOf(consoleTab);
+    const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: CONSOLE_TABS.length - 1 }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    showConsoleTab(CONSOLE_TABS[(next + CONSOLE_TABS.length) % CONSOLE_TABS.length]);
+  });
+  $('con-publish').addEventListener('click', () => onPublish().catch(fail));
+  $('con-new').addEventListener('click', () => editTemplate('team', null));
+  $('tpl-search').addEventListener('input', (event) => {
+    consoleSearch = event.target.value;
+    renderTemplateSheet();
+  });
+  $('con-share').addEventListener('click', () => onShareInstall().catch(fail));
+  $('con-share-beta').addEventListener('click', () => onShareBeta().catch(fail));
+  $('con-rep-templates').addEventListener('click', (event) => onRepTemplatesToggle(event.currentTarget.getAttribute('aria-checked') !== 'true').catch(fail));
+  $('rc-choose').addEventListener('click', () => $('rc-file').click());
+  $('rc-file').addEventListener('change', (event) => onRcFile(event.target).catch(fail));
+  $('gh-save').addEventListener('click', onGithubSave);
+  $('gh-test').addEventListener('click', () => onGithubTest().catch(fail));
+  $('gh-forget').addEventListener('click', onGithubForget);
+  $('con-forget').addEventListener('click', () => {
+    if (team.draft && !team.justPublished && Date.now() - forgetArmed > 8000) {
+      forgetArmed = Date.now();
+      setStatusIn('forget-status', "Your changes that aren't published yet are kept here too, and they'd go as well. Publish first, or click again to remove everything.", 'error');
+      return;
+    }
+    forgetArmed = 0;
+    forgetConsoleKeys();
+    team.draft = null;
+    renderGithubBox();
+    log('Admin console: removed what it kept in this browser');
+    setStatusIn('forget-status', 'Removed. To open the console again, use Settings → Team → Open admin console in Outlook.', 'ok');
+  });
+  for (const button of document.querySelectorAll('#con-usage .us-range')) button.addEventListener('click', () => pickUsageRange(button.dataset.range));
+  for (const id of ['us-from', 'us-to']) $(id).addEventListener('change', () => pickUsageDates());
+  $('us-refresh').addEventListener('click', () => loadUsageReport(true).catch(fail));
+  $('us-csv').addEventListener('click', downloadUsageCsv);
+  $('us-minutes').value = String(usageMinutes());
+  $('us-minutes').addEventListener('change', (event) => {
+    const minutes = Math.min(60, Math.max(0, Number(event.target.value) || 0));
+    writeSetting('minutesSaved', String(minutes));
+    if (usageReport.events) renderUsageReport();
+  });
+  window.addEventListener('beforeunload', (event) => {
+    if (editing && templateFormChanged()) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+}
+
+/** A rate confirmation PDF from the computer becomes the sample (the panel uses one previewed from an email). */
+async function onRcFile(input) {
+  const chosen = input.files && input.files[0];
+  input.value = '';
+  if (!chosen) return;
+  const button = $('rc-choose');
+  button.disabled = true;
+  renderRcBox(`Reading ${chosen.name}…`);
+  try {
+    const file = { name: chosen.name, kind: 'PDF', bytes: new Uint8Array(await chosen.arrayBuffer()) };
+    const sample = await rateConSample(file);
+    if (!sample.pages.some((page) => page.words || page.grid)) throw userError('nothing could be read from this file');
+    await saveTeamDraft({ rateCon: sample });
+    log(`Rate con check: sample set from ${chosen.name} (${plural(sample.pages.length, 'page')}), not published yet`);
+    renderConsolePublish();
+    renderRcBox();
+    consoleNote(`${chosen.name} is the sample now. ${publishWhere()} to turn the check on for your reps.`, 'ok');
+  } catch (error) {
+    renderRcBox(`Couldn't use ${chosen.name}: ${error.userMessage || error.message}.`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ---- the template editor's unsaved changes (so closing the tab asks first)
+
+let formSnapshot = '';
+
+function templateFormState() {
+  return JSON.stringify([...document.querySelectorAll('#tpl-form input, #tpl-form textarea')].map((node) => (node.type === 'checkbox' ? node.checked : node.value)).concat(JSON.stringify(qDraft)));
+}
+
+function templateFormChanged() {
+  return !!formSnapshot && templateFormState() !== formSnapshot;
+}
+
+// ---- publishing straight to GitHub (optional): a fine-grained token for the one repository
+
+const GITHUB_API = 'https://api.github.com';
+
+/** owner/repository from the site's address (https://owner.github.io/repository/), as a starting point. */
+function defaultGithubRepo() {
+  const match = /^https:\/\/([a-z0-9-]+)\.github\.io\/([^/]+)\//i.exec(SITE_ROOT);
+  return match ? `${match[1]}/${match[2]}` : '';
+}
+
+function githubToken() {
+  try {
+    const now = sessionStorage.getItem(`${STORE_PREFIX}githubToken`);
+    if (now) return now;
+  } catch (error) {
+    // not available; try the remembered one
+  }
+  return readSetting('githubToken') || '';
+}
+
+function githubRepo() {
+  return readSetting('githubRepo') || defaultGithubRepo();
+}
+
+function githubReady() {
+  return CONSOLE && !!githubToken() && /^[\w.-]+\/[\w.-]+$/.test(githubRepo());
+}
+
+function renderGithubBox(message, tone) {
+  if (!CONSOLE) return;
+  $('gh-repo').value = githubRepo();
+  $('gh-token').value = githubToken();
+  $('gh-remember').checked = !!readSetting('githubToken');
+  $('gh-forget').hidden = !githubToken();
+  $('github-state').textContent = githubReady() ? 'Straight to GitHub' : 'Download and upload';
+  setStatusIn('gh-status', message || (githubReady()
+    ? `Publish to team commits team.json to ${githubRepo()} for you.`
+    : 'Without a token, Publish to team downloads team.json for you to upload.'), tone);
+}
+
+function onGithubSave() {
+  const repo = $('gh-repo').value.trim().replace(/^https:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+  const token = $('gh-token').value.trim();
+  if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+    setStatusIn('gh-status', 'The repository should look like owner/repository, for example huntrbwdn1/restack_hb.', 'error');
+    return;
+  }
+  if (token && !/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(token)) {
+    setStatusIn('gh-status', "That doesn't look like a GitHub token. Fine-grained tokens start with github_pat_.", 'error');
+    return;
+  }
+  writeSetting('githubRepo', repo && repo !== defaultGithubRepo() ? repo : null);
+  const remember = $('gh-remember').checked;
+  writeSetting('githubToken', token && remember ? token : null);
+  try {
+    if (token && !remember) sessionStorage.setItem(`${STORE_PREFIX}githubToken`, token);
+    else sessionStorage.removeItem(`${STORE_PREFIX}githubToken`);
+  } catch (error) {
+    // sessionStorage unavailable: only a remembered token works
+  }
+  log(`Admin console: GitHub publishing ${token ? 'set up' : 'off'}${token ? (remember ? ' (remembered)' : ' (this tab only)') : ''}`);
+  renderGithubBox(token ? 'Saved. Click Test to check the token can reach the repository.' : 'Saved. Publish to team downloads team.json.', 'ok');
+  renderConsolePublish();
+}
+
+function onGithubForget() {
+  writeSetting('githubToken', null);
+  try {
+    sessionStorage.removeItem(`${STORE_PREFIX}githubToken`);
+  } catch (error) {
+    // nothing kept there
+  }
+  log('Admin console: GitHub token removed');
+  renderGithubBox('Removed. Publish to team downloads team.json again.', 'ok');
+}
+
+async function github(path, options = {}) {
+  const token = githubToken();
+  let response;
+  try {
+    response = await fetch(`${GITHUB_API}${path}`, {
+      method: options.method || 'GET',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: options.body,
+      cache: 'no-store',
+    });
+  } catch (error) {
+    throw userError("couldn't reach GitHub (check your internet connection)");
+  }
+  if (response.status === 404 && options.missingOk) return null;
+  if (response.status === 401) throw userError("GitHub didn't accept the token (it may have expired)");
+  if (response.status === 403) throw userError("the token isn't allowed to change that repository (it needs Contents: Read and write)");
+  if (response.status === 404) throw userError(`GitHub can't find ${githubRepo()} with this token (check the name, and that the token includes that repository)`);
+  if (response.status === 409 || response.status === 422) throw userError('team.json changed on GitHub at the same moment; publish again');
+  if (!response.ok) throw userError(`GitHub answered ${response.status}`);
+  return response.json();
+}
+
+async function onGithubTest() {
+  if (!githubToken()) {
+    renderGithubBox('Paste a token and click Save first.', 'error');
+    return;
+  }
+  $('gh-test').disabled = true;
+  setStatusIn('gh-status', 'Testing…');
+  try {
+    const repo = githubRepo();
+    const info = await github(`/repos/${repo}`);
+    const branch = info.default_branch || 'main';
+    const file = await github(`/repos/${repo}/contents/${TEAM_FILE}?ref=${encodeURIComponent(branch)}`, { missingOk: true });
+    log(`Admin console: GitHub test worked (${repo}, ${branch}${file ? ', team.json found' : ', no team.json yet'})`);
+    setStatusIn('gh-status', `Works: the token reaches ${repo}${file ? `, and team.json is on its ${branch} branch` : ` (${branch} branch; no team.json there yet)`}. Publish to team will commit team.json there.`, 'ok');
+  } catch (error) {
+    setStatusIn('gh-status', `Didn't work: ${error.userMessage || error.message}.`, 'error');
+  } finally {
+    $('gh-test').disabled = false;
+  }
+}
+
+/** Commits team.json to the repository's default branch, replacing the one there. */
+async function publishToGithub(text) {
+  const repo = githubRepo();
+  const info = await github(`/repos/${repo}`);
+  const branch = info.default_branch || 'main';
+  const now = await github(`/repos/${repo}/contents/${TEAM_FILE}?ref=${encodeURIComponent(branch)}`, { missingOk: true });
+  await github(`/repos/${repo}/contents/${TEAM_FILE}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      message: 'Publish team templates (Restack admin console)',
+      content: bytesToBase64(new TextEncoder().encode(text)),
+      branch,
+      ...(now && now.sha ? { sha: now.sha } : {}),
+    }),
+  });
+  return { repo, branch };
+}
+
+// ---- the Usage tab: everyone's counts, read from the Restack Usage function with the admin key
+
+const usageReport = { from: '', to: '', events: null, loadedAt: 0, key: '' };
+
+function usageMinutes() {
+  const saved = Number(readSetting('minutesSaved'));
+  return Number.isFinite(saved) && saved >= 0 && readSetting('minutesSaved') !== null ? saved : 3;
+}
+
+function isoDay(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function dayFromIso(text) {
+  const [y, m, d] = String(text).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** [from, to] (YYYY-MM-DD, this computer's days) for a range button. */
+function usageRange(range) {
+  const today = new Date();
+  const start = new Date(today);
+  if (range === '7') start.setDate(today.getDate() - 6);
+  else if (range === '30') start.setDate(today.getDate() - 29);
+  else if (range === 'month') start.setDate(1);
+  else if (range === 'year') start.setMonth(0, 1);
+  else if (range === 'last-month') {
+    const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last = new Date(today.getFullYear(), today.getMonth(), 0);
+    return [isoDay(first), isoDay(last)];
+  }
+  return [isoDay(start), isoDay(today)];
+}
+
+function pickUsageRange(range) {
+  const [from, to] = usageRange(range);
+  $('us-from').value = from;
+  $('us-to').value = to;
+  writeSetting('usageRange', range);
+  for (const button of document.querySelectorAll('#con-usage .us-range')) button.setAttribute('aria-pressed', String(button.dataset.range === range));
+  loadUsageReport().catch(fail);
+}
+
+function pickUsageDates() {
+  const from = $('us-from').value;
+  const to = $('us-to').value;
+  if (!from || !to) return;
+  for (const button of document.querySelectorAll('#con-usage .us-range')) button.setAttribute('aria-pressed', 'false');
+  writeSetting('usageRange', null);
+  loadUsageReport().catch(fail);
+}
+
+function usageEmpty(text, button) {
+  $('us-report').hidden = true;
+  $('us-csv').disabled = true;
+  const box = $('us-empty');
+  box.textContent = '';
+  box.append(el('p', '', text));
+  if (button) {
+    const go = el('button', 'btn', button);
+    go.type = 'button';
+    go.addEventListener('click', () => {
+      showConsoleTab('team');
+      $('con-card-usage').scrollIntoView({ block: 'start' });
+      $('us-url').focus();
+    });
+    box.append(go);
+  }
+  box.hidden = false;
+}
+
+async function loadUsageReport(force = false) {
+  if (!$('us-from').value || !$('us-to').value) {
+    const range = readSetting('usageRange') || '30';
+    const [from, to] = usageRange(range);
+    $('us-from').value = from;
+    $('us-to').value = to;
+    for (const button of document.querySelectorAll('#con-usage .us-range')) button.setAttribute('aria-pressed', String(button.dataset.range === range));
+  }
+  const usage = teamUsage();
+  const adminKey = usageAdminKey();
+  if (!usage) {
+    $('us-line').textContent = '';
+    usageEmpty("Usage counts aren't on yet. Set up your Restack Usage function under Team settings → Usage counts, then publish, and each rep's panel starts counting.", 'Set up usage counts');
+    return;
+  }
+  if (!adminKey) {
+    $('us-line').textContent = '';
+    usageEmpty('Add your admin key under Team settings → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
+    return;
+  }
+  let from = $('us-from').value;
+  let to = $('us-to').value;
+  if (from > to) [from, to] = [to, from];
+  const key = `${usage.url}|${from}|${to}`;
+  if (!force && usageReport.key === key && usageReport.events && Date.now() - usageReport.loadedAt < 60000) {
+    renderUsageReport();
+    return;
+  }
+  $('us-empty').hidden = true;
+  $('us-line').textContent = 'Loading…';
+  $('us-refresh').disabled = true;
+  try {
+    // The function keeps UTC dates; ask for a day either side, then keep this computer's days
+    const before = dayFromIso(from);
+    before.setDate(before.getDate() - 1);
+    const after = dayFromIso(to);
+    after.setDate(after.getDate() + 1);
+    const events = await readUsage(usage.url, adminKey, before.toISOString().slice(0, 10), after.toISOString().slice(0, 10));
+    Object.assign(usageReport, {
+      from, to, key, loadedAt: Date.now(), truncated: !!events.truncated,
+      events: events.filter((event) => {
+        const at = new Date(event.at);
+        if (Number.isNaN(at.getTime())) return false;
+        const day = isoDay(at);
+        return day >= from && day <= to;
+      }),
+    });
+    log(`Usage: ${plural(usageReport.events.length, 'count')} from ${from} to ${to}`);
+    renderUsageReport();
+  } catch (error) {
+    $('us-line').textContent = '';
+    usageEmpty(`Couldn't load the numbers: ${error.userMessage || error.message}.`);
+  } finally {
+    $('us-refresh').disabled = false;
+  }
+}
+
+/** Adds up the counts: totals, per rep, per template, per day and per version. */
+function usageSummary(events) {
+  const totals = { emails: 0, emailEvents: 0, saves: 0, pdfs: 0, files: 0, pages: 0, accessorials: 0, separate: 0, rateCons: 0, rateConPages: 0 };
+  const reps = new Map();
+  const templates = new Map();
+  const days = new Map();
+  const versions = new Map();
+  const row = (map, key, start) => {
+    if (!map.has(key)) map.set(key, { ...start });
+    return map.get(key);
+  };
+  for (const event of events) {
+    const at = new Date(event.at);
+    const day = isoDay(at);
+    const rep = row(reps, event.rep || 'Unknown', { name: event.rep || 'Unknown', emails: 0, saves: 0, files: 0, pages: 0, rateCons: 0, last: 0 });
+    rep.last = Math.max(rep.last, at.getTime());
+    const perDay = row(days, day, { emails: 0, saves: 0 });
+    if (event.version) {
+      const version = row(versions, `${event.version}${event.beta ? ' beta' : ''}`, { name: `${event.version}${event.beta ? ' (beta)' : ''}`, reps: new Set(), last: 0 });
+      version.reps.add(event.rep || 'Unknown');
+      version.last = Math.max(version.last, at.getTime());
+    }
+    if (event.action === 'email') {
+      const emails = Number(event.emails) || 1;
+      totals.emails += emails;
+      totals.emailEvents += 1;
+      totals.files += Number(event.files) || 0;
+      totals.pages += Number(event.pages) || 0;
+      totals.pdfs += Number(event.pdfs) || 0;
+      if (event.accessorials) totals.accessorials += 1;
+      if (event.separate) totals.separate += 1;
+      rep.emails += emails;
+      rep.files += Number(event.files) || 0;
+      rep.pages += Number(event.pages) || 0;
+      perDay.emails += emails;
+      const name = event.template || 'Blank email';
+      const t = row(templates, event.templateId || name, { name, emails: 0, accessorials: 0, separate: 0, files: 0, pages: 0 });
+      t.name = name; // the latest name, if it was renamed
+      t.emails += emails;
+      t.files += Number(event.files) || 0;
+      t.pages += Number(event.pages) || 0;
+      if (event.accessorials) t.accessorials += 1;
+      if (event.separate) t.separate += 1;
+    } else if (event.action === 'save') {
+      totals.saves += 1;
+      totals.files += Number(event.files) || 0;
+      totals.pages += Number(event.pages) || 0;
+      totals.pdfs += Number(event.pdfs) || 0;
+      rep.saves += 1;
+      rep.files += Number(event.files) || 0;
+      rep.pages += Number(event.pages) || 0;
+      perDay.saves += 1;
+    } else if (event.action === 'rateCon') {
+      totals.rateCons += 1;
+      totals.rateConPages += Number(event.pages) || 0;
+      rep.rateCons += 1;
+    }
+  }
+  return { totals, reps: [...reps.values()], templates: [...templates.values()], days, versions: [...versions.values()] };
+}
+
+function fmt(n) {
+  return Number(n || 0).toLocaleString();
+}
+
+function hoursText(minutes) {
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  return `${hours < 10 ? hours.toFixed(1).replace(/\.0$/, '') : fmt(Math.round(hours))} hr`;
+}
+
+function renderUsageReport() {
+  const events = usageReport.events || [];
+  const from = dayFromIso(usageReport.from);
+  const to = dayFromIso(usageReport.to);
+  const span = `${from.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: from.getFullYear() === to.getFullYear() ? undefined : 'numeric' })} – ${to.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const loaded = new Date(usageReport.loadedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  $('us-line').textContent = `${span} · ${plural(events.length, 'count')}${usageReport.truncated ? ' (the first 100,000 only: pick fewer days to see them all)' : ''} · updated ${loaded}`;
+  $('us-csv').disabled = !events.length;
+  if (!events.length) {
+    usageEmpty('Nothing was counted in these dates. Counts show up once your reps have the published settings and save a PDF or create an email.');
+    return;
+  }
+  $('us-empty').hidden = true;
+  $('us-report').hidden = false;
+  const { totals, reps, templates, days, versions } = usageSummary(events);
+  const minutes = (totals.emailEvents + totals.saves) * usageMinutes();
+  const figures = [
+    ['Emails created', fmt(totals.emails), `${fmt(totals.accessorials)} with accessorials`],
+    ['PDFs saved', fmt(totals.saves), 'with Save PDF'],
+    ['Files combined', fmt(totals.files), `into ${fmt(totals.pdfs)} PDFs`],
+    ['Pages', fmt(totals.pages), 'in those PDFs'],
+    ['Rate cons caught', fmt(totals.rateCons), `${plural(totals.rateConPages, 'page')} left out`],
+    ['Reps', fmt(reps.length), 'using Restack'],
+    ['Time saved', hoursText(minutes), `at ${usageMinutes()} min each`],
+  ];
+  const list = $('us-figures');
+  list.textContent = '';
+  for (const [label, value, note] of figures) {
+    const item = el('div', 'us-fig');
+    item.append(el('dt', '', label), el('dd', 'us-val', value), el('dd', 'us-sub', note));
+    list.append(item);
+  }
+  renderUsageChart(days);
+  const dateText = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+  fillUsageTable($('us-reps'), ['Rep', 'Emails', 'PDFs saved', 'Files combined', 'Pages', 'Rate cons caught', 'Last used'],
+    reps.sort((a, b) => (b.emails + b.saves) - (a.emails + a.saves) || a.name.localeCompare(b.name))
+      .map((r) => [r.name, fmt(r.emails), fmt(r.saves), fmt(r.files), fmt(r.pages), fmt(r.rateCons), dateText(r.last)]));
+  fillUsageTable($('us-templates'), ['Template', 'Emails', 'With accessorials', 'Separate accessorial email', 'Files combined', 'Pages'],
+    templates.sort((a, b) => b.emails - a.emails || a.name.localeCompare(b.name))
+      .map((t) => [t.name, fmt(t.emails), fmt(t.accessorials), fmt(t.separate), fmt(t.files), fmt(t.pages)]));
+  fillUsageTable($('us-versions'), ['Version', 'Reps', 'Last used'],
+    versions.sort((a, b) => b.last - a.last).map((v) => [v.name, fmt(v.reps.size), dateText(v.last)]));
+}
+
+function fillUsageTable(table, heads, rows) {
+  table.textContent = '';
+  const head = document.createElement('thead');
+  const tr = document.createElement('tr');
+  heads.forEach((text, i) => {
+    const th = el('th', i ? 'num' : '', text);
+    th.scope = 'col';
+    tr.append(th);
+  });
+  head.append(tr);
+  const body = document.createElement('tbody');
+  for (const values of rows) {
+    const row = document.createElement('tr');
+    values.forEach((value, i) => {
+      const cell = el(i ? 'td' : 'th', i ? 'num' : '', value);
+      if (!i) cell.scope = 'row';
+      row.append(cell);
+    });
+    body.append(row);
+  }
+  table.append(head, body);
+}
+
+/** Emails and saved PDFs per day, as bars (an SVG that stretches to the width). */
+function renderUsageChart(days) {
+  const box = $('us-chart');
+  box.textContent = '';
+  const from = dayFromIso(usageReport.from);
+  const to = dayFromIso(usageReport.to);
+  const list = [];
+  for (const at = new Date(from); at <= to && list.length < 400; at.setDate(at.getDate() + 1)) {
+    const key = isoDay(at);
+    list.push({ key, date: new Date(at), ...(days.get(key) || { emails: 0, saves: 0 }) });
+  }
+  const top = Math.max(1, ...list.map((d) => d.emails + d.saves));
+  const step = top <= 5 ? 1 : top <= 10 ? 2 : top <= 25 ? 5 : top <= 50 ? 10 : Math.ceil(top / 5 / 10) * 10;
+  const max = Math.ceil(top / step) * step;
+  const W = 960;
+  const H = 220;
+  const left = 34;
+  const bottom = 26;
+  const plotW = W - left - 6;
+  const plotH = H - bottom - 10;
+  const slot = plotW / list.length;
+  const barW = Math.max(2, Math.min(28, slot * 0.68));
+  const y = (v) => 10 + plotH - (v / max) * plotH;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Emails and saved PDFs per day" preserveAspectRatio="none">`;
+  for (let v = 0; v <= max; v += step) {
+    svg += `<line class="grid" x1="${left}" x2="${W - 6}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text class="tick" x="${left - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v}</text>`;
+  }
+  const every = Math.ceil(list.length / 12);
+  list.forEach((d, i) => {
+    const x = left + slot * i + (slot - barW) / 2;
+    const title = `${d.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${plural(d.emails, 'email')}, ${plural(d.saves, 'saved PDF')}`;
+    svg += `<g><title>${title}</title>`;
+    if (d.saves) svg += `<rect class="bar-save" x="${x.toFixed(1)}" y="${y(d.saves).toFixed(1)}" width="${barW.toFixed(1)}" height="${(y(0) - y(d.saves)).toFixed(1)}" rx="1.5"/>`;
+    if (d.emails) svg += `<rect class="bar-email" x="${x.toFixed(1)}" y="${y(d.saves + d.emails).toFixed(1)}" width="${barW.toFixed(1)}" height="${(y(d.saves) - y(d.saves + d.emails)).toFixed(1)}" rx="1.5"/>`;
+    svg += '</g>';
+    if (i % every === 0) svg += `<text class="tick" x="${(left + slot * i + slot / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${d.date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}</text>`;
+  });
+  svg += '</svg>';
+  box.innerHTML = svg;
+}
+
+function csvCell(value) {
+  let text = String(value == null ? '' : value);
+  if (/^[=+\-@\t\r]/.test(text) && typeof value === 'string') text = `'${text}`; // no formulas when it's opened in Excel
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadUsageCsv() {
+  const events = usageReport.events || [];
+  if (!events.length) return;
+  const heads = ['date', 'time', 'rep', 'action', 'template', 'emails', 'accessorials', 'separate', 'pdfs', 'files', 'pages', 'split', 'multiStop', 'azure', 'version', 'beta'];
+  const lines = [heads.join(',')];
+  for (const event of [...events].sort((a, b) => String(a.at).localeCompare(String(b.at)))) {
+    const at = new Date(event.at);
+    lines.push([isoDay(at), at.toTimeString().slice(0, 5), event.rep, event.action, event.template, event.emails, event.accessorials, event.separate, event.pdfs, event.files, event.pages, event.split, event.multiStop, event.azure, event.version, event.beta].map(csvCell).join(','));
+  }
+  downloadText(`${lines.join('\r\n')}\r\n`, `restack-usage-${usageReport.from}-to-${usageReport.to}.csv`, 'text/csv');
+  log(`Usage: CSV downloaded (${plural(events.length, 'count')})`);
 }
 
 // --------------------------------------------------------------------------- hand-off storage (IndexedDB)
@@ -5192,20 +7169,39 @@ function wireReadUi() {
   $('q-list').addEventListener('keydown', (event) => { // Enter in a question box doesn't save the template (or add a line)
     if (event.key === 'Enter' && event.target.matches('input, textarea')) event.preventDefault();
   });
+  $('tip-keep').addEventListener('click', () => setKeepAdding(true));
+  $('keep-off').addEventListener('click', () => setKeepAdding(false));
+  $('keep-restart').addEventListener('click', () => keepStartOver().catch(fail));
+  $('keep-add-anyway').addEventListener('click', () => keepAddAnyway().catch(fail));
+  $('keep-ask-restart').addEventListener('click', () => keepStartOver().catch(fail));
   $('quiz-back').addEventListener('click', quizBack);
   $('quiz-cancel').addEventListener('click', cancelQuiz);
   $('quiz').addEventListener('keydown', onQuizKeys);
   wireHowto();
   $('tpl-delete').addEventListener('click', () => onTemplateDelete().catch(fail));
+  $('tpl-duplicate').addEventListener('click', onTemplateDuplicate);
   $('team-new').addEventListener('click', () => editTemplate('team', null));
   $('mine-new').addEventListener('click', () => editTemplate('mine', null));
-  $('team-publish').addEventListener('click', () => onPublish().catch(fail));
-  $('team-rep-templates').addEventListener('change', (event) => onRepTemplatesToggle(event.target.checked).catch(fail));
+  $('tpl-publish').addEventListener('click', () => onPublish().catch(fail));
+  $('team-back').addEventListener('click', closeTeamSheet);
   $('rc-remove').addEventListener('click', () => onRcRemove().catch(fail));
+  $('rw-save').addEventListener('click', () => onReceiptWordsSave($('rw-words').value.split(/[,;\n]+/)).catch(fail));
+  $('rw-default').addEventListener('click', () => onReceiptWordsSave(DEFAULT_RECEIPT_WORDS).catch(fail));
+  $('us-gen').addEventListener('click', () => {
+    $('us-key').value = randomB64url(24);
+    setStatusIn('us-status', 'New counting key made. Copy it into the Function App as RESTACK_USAGE_KEY.');
+  });
+  $('us-admin-gen').addEventListener('click', () => {
+    $('us-admin').value = randomB64url(24);
+    setStatusIn('us-status', 'New admin key made. Copy it into the Function App as RESTACK_USAGE_ADMIN_KEY.');
+  });
+  $('us-copy').addEventListener('click', () => copyFrom('us-key', 'us-status').catch(fail));
+  $('us-admin-copy').addEventListener('click', () => copyFrom('us-admin', 'us-status').catch(fail));
+  $('us-save').addEventListener('click', () => onUsageSave().catch(fail));
+  $('us-test').addEventListener('click', () => onUsageTest().catch(fail));
   $('rc-leave-out').addEventListener('click', onRcLeaveOut);
   $('rc-keep').addEventListener('click', onRcKeep);
   $('pv-rc-sample').addEventListener('click', () => onUseRateConSample().catch(fail));
-  $('team-share').addEventListener('click', () => onShareInstall().catch(fail));
   $('az-gen').addEventListener('click', onAzureGenerate);
   $('az-copy').addEventListener('click', () => onAzureCopy().catch(fail));
   $('az-save').addEventListener('click', () => onAzureSave().catch(fail));
@@ -5214,6 +7210,7 @@ function wireReadUi() {
   $('file-name').addEventListener('input', updateNameHint);
   $('name-cancel').addEventListener('click', onNameCancel);
   $('pv-close').addEventListener('click', closePreview);
+  $('pv-order-reset').addEventListener('click', resetPageOrder);
   $('pv-prev').addEventListener('click', () => stepPreview(-1));
   $('pv-next').addEventListener('click', () => stepPreview(1));
   $('pv-include').addEventListener('change', (event) => {
@@ -5221,10 +7218,11 @@ function wireReadUi() {
     if (file) onRowToggle(file, event.target.checked);
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || CONSOLE) return;
     if (!$('quiz').hidden) cancelQuiz();
     else if (!$('howto').hidden) closeHowto(true);
     else if (!$('preview').hidden) closePreview();
+    else if (!$('team-sheet').hidden) closeTeamSheet();
     else if (!$('templates').hidden) {
       if (editing) cancelEdit();
       else closeTemplates();
@@ -5236,7 +7234,11 @@ function wireReadUi() {
 
 function registerHandlers() {
   const mailbox = Office.context.mailbox;
-  const reload = debounce(() => loadThread().catch(fail), 350);
+  const debounced = debounce(() => loadThread().catch(fail), 350);
+  const reload = () => {
+    noteSelection().catch(() => {}); // Keep adding: this click counts even if another comes before the list catches up
+    debounced();
+  };
   const note = (what) => (result) => {
     if (result && result.status === Office.AsyncResultStatus.Failed) log(`Couldn't watch ${what}: ${result.error && result.error.message}`);
   };
@@ -5248,16 +7250,49 @@ function registerHandlers() {
   }
 }
 
-// --------------------------------------------------------------------------- light or dark
+// --------------------------------------------------------------------------- Settings
+//
+// The gear across from Test report opens Settings: Manage templates, Team (the team admin's own
+// settings, folded up), Appearance, Text size and View (each a row that drops down its choices), and
+// two switches. Each person's choices are saved in Outlook's roaming settings, so they follow them to
+// other computers. mode.js puts last time's light or dark and text size on the page before anything
+// shows, so the panel doesn't flash white in dark mode or jump in size.
 
-// Settings (the gear across from Test report) has Manage templates, and Appearance: Match Outlook (the
-// default), Light or Dark. The choice is saved in roaming settings, so it follows the rep to other
-// computers. mode.js puts last time's light or dark on the page before anything shows, so the panel
-// doesn't flash white in dark mode.
 const APPEARANCE_KEY = 'appearance';
 const APPEARANCE_WORD = { light: 'light', dark: 'dark', match: 'matchOutlook' }; // their WORDS
 let appearance = 'match';
 let appearanceReady = false; // the saved choice is in (picks before that would be overwritten)
+
+const TEXT_ZOOM = { small: 1, medium: 1.12, large: 1.25 }; // Small is the panel's usual size
+const TEXT_WORD = { small: 'textSmall', medium: 'textMedium', large: 'textLarge' };
+const VIEWS = ['large', 'medium', 'small', 'list', 'details', 'tiles'];
+const VIEW_WORD = { large: 'viewLarge', medium: 'viewMedium', small: 'viewSmall', list: 'viewList', details: 'viewDetails', tiles: 'viewTiles' };
+
+/** Each person's choices (roaming settings), with what they start as. */
+const prefs = {
+  textSize: 'small',
+  view: 'medium',
+  tagReceipts: false, // files named like receipts start out tagged Receipt (the team admin sets the words)
+  keepAdding: false,  // each email clicked adds its files to the list, for people who don't use conversations
+  pins: [],           // pinned templates (ids), in the order they want them
+};
+
+function loadPrefs() {
+  const size = readRoaming('textSize');
+  prefs.textSize = TEXT_ZOOM[size] ? size : 'small';
+  const view = readRoaming('view');
+  prefs.view = VIEWS.includes(view) ? view : 'medium';
+  prefs.tagReceipts = readRoaming('tagReceipts') === true;
+  prefs.keepAdding = readRoaming('keepAdding') === true;
+  const pins = readRoaming('pins');
+  prefs.pins = Array.isArray(pins) ? pins.map(String).filter((id) => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 50) : [];
+  applyTextSize(prefs.textSize);
+}
+
+function savePref(name, value) {
+  prefs[name] = value;
+  writeRoaming(name, value).catch((error) => log(`Settings: couldn't save ${name} (${error.message})`));
+}
 
 /** How bright a #rrggbb color is, from 0 (black) to 1 (white), or null if it isn't one. */
 function luminance(color) {
@@ -5306,21 +7341,14 @@ function fadeMode(theme) {
   return before !== mode;
 }
 
-/** Marks the choice in Settings' Light / Dark / Match Outlook switch. */
-function markAppearance() {
-  for (const item of document.querySelectorAll('#mode-seg .seg-item')) {
-    item.setAttribute('aria-pressed', String(item.dataset.mode === appearance));
-  }
-}
-
 /** Saves the choice for this mailbox (roaming settings). */
 function saveAppearance() {
   writeRoaming(APPEARANCE_KEY, appearance).catch((error) => log(`Appearance: couldn't save (${error.message})`));
 }
 
-/** A pick in Settings: the panel fades over to it, and Settings stays open. */
+/** A pick in Settings: the panel fades over to it, the list folds up, and Settings stays open. */
 function pickAppearance(choice) {
-  if (!appearanceReady || choice === appearance) return;
+  if (!appearanceReady || choice === appearance || !APPEARANCE_WORD[choice]) return;
   appearance = choice;
   markAppearance();
   fadeMode();
@@ -5328,7 +7356,104 @@ function pickAppearance(choice) {
   log(`Appearance: ${word(APPEARANCE_WORD[choice])} (${document.documentElement.dataset.mode})`);
 }
 
-/** Opens Settings above its button: Manage templates (when there's a team to manage), and Appearance. */
+// ---- Text size: the whole panel bigger (list, buttons, forms, preview), saved per person
+
+/** How much the panel is zoomed for the text size (1 at Small). */
+function pageZoom() {
+  return Number(document.documentElement.style.zoom) || 1;
+}
+
+/** The panel's size in its own (zoomed) pixels, for CSS in place of vw and vh, which don't follow the zoom. */
+function measurePage() {
+  const zoom = pageZoom();
+  const root = document.documentElement.style;
+  root.setProperty('--page-w', `${Math.round(window.innerWidth / zoom)}px`);
+  root.setProperty('--page-h', `${Math.round(window.innerHeight / zoom)}px`);
+}
+
+function applyTextSize(size) {
+  const zoom = TEXT_ZOOM[size] || 1;
+  document.documentElement.style.zoom = zoom === 1 ? '' : String(zoom);
+  writeSetting('size', size === 'small' ? null : size); // for mode.js, next time
+  measurePage();
+  markChoice('size', size);
+}
+
+function pickTextSize(size) {
+  if (!TEXT_ZOOM[size] || size === prefs.textSize) return;
+  savePref('textSize', size);
+  applyTextSize(size);
+  log(`Text size: ${word(TEXT_WORD[size])}`);
+}
+
+// ---- View: how the list shows files (like File Explorer's View menu), saved per person
+
+function pickView(view) {
+  if (!VIEWS.includes(view) || view === prefs.view) return;
+  savePref('view', view);
+  markChoice('view', view);
+  log(`View: ${word(VIEW_WORD[view])}`);
+  if (readUiWired) renderList();
+}
+
+// ---- the drop-down rows and the Team group
+
+const SETTINGS_LISTS = ['team-menu', 'appearance-list', 'size-list', 'view-list'];
+
+/** The row in Settings that opens a list. */
+function listRow(list) {
+  return document.querySelector(`#settings-pop [aria-controls="${list.id}"]`);
+}
+
+/** The list that's dropped down in Settings, or null. */
+function openSettingsList() {
+  return SETTINGS_LISTS.map((id) => $(id)).find((list) => list && !list.hidden) || null;
+}
+
+/** Drops down (or folds up) one of Settings' lists; any other folds up. Optionally focuses its current choice, as a drop-down does. */
+function showSettingsList(list, open, focusChoice) {
+  for (const id of SETTINGS_LISTS) {
+    const other = $(id);
+    if (!other) continue;
+    const on = other === list && open;
+    other.hidden = !on;
+    const row = listRow(other);
+    if (row) row.setAttribute('aria-expanded', String(on));
+  }
+  if (!open || !focusChoice) return;
+  const target = list.querySelector('[aria-selected="true"]') || [...list.querySelectorAll('button')].find((b) => !b.disabled && !b.hidden);
+  if (target) target.focus();
+}
+
+/** Marks a drop-down's choice: checked in its list, and shown (its icon and name) on its row. */
+function markChoice(key, value) {
+  const list = $(`${key}-list`);
+  if (!list) return;
+  let current = null;
+  for (const option of list.querySelectorAll('[role="option"]')) {
+    const on = option.dataset.value === value;
+    option.setAttribute('aria-selected', String(on));
+    option.tabIndex = on ? 0 : -1;
+    if (on) current = option;
+  }
+  if (!current) return;
+  const icon = $(`set-${key}-icon`);
+  const glyph = current.querySelector('.opt-icon');
+  if (icon && glyph) icon.replaceChildren(...[...glyph.childNodes].map((node) => node.cloneNode(true)));
+  const now = $(`set-${key}-now`);
+  if (now) now.textContent = current.querySelector('.opt-name').textContent;
+}
+
+function markAppearance() {
+  markChoice('appearance', appearance);
+}
+
+function markSwitch(id, on) {
+  const button = $(id);
+  if (button) button.setAttribute('aria-checked', String(!!on));
+}
+
+/** Opens Settings above its button. The admin's Team group and the list's settings show only where they apply. */
 function openSettings() {
   const pop = $('settings-pop');
   const templates = $('set-templates');
@@ -5336,24 +7461,91 @@ function openSettings() {
   if (!templates.hidden) {
     templates.querySelector('.mi-name').textContent = word(teamTemplates().length || state.myTemplates.length ? 'manageTemplates' : 'createTemplate');
   }
+  const admin = readUiWired && isAdmin();
+  $('set-team-group').hidden = !admin;
+  if (admin) renderTeamMenu();
+  teamNote('');
+  $('set-sep-look').hidden = templates.hidden && !admin;
+  for (const id of ['set-size', 'set-view', 'set-sep-prefs', 'set-tag-receipts', 'set-keep-adding']) $(id).hidden = !readUiWired;
   markAppearance();
+  markChoice('size', prefs.textSize);
+  markChoice('view', prefs.view);
+  markSwitch('set-tag-receipts', prefs.tagReceipts);
+  markSwitch('set-keep-adding', prefs.keepAdding);
+  showSettingsList(null, false); // compact each time: the choices drop down from their rows
   pop.hidden = false;
   $('btn-settings').setAttribute('aria-expanded', 'true');
-  (templates.hidden ? pop.querySelector('.seg-item[aria-pressed="true"]') : templates).focus();
+  const first = [templates, $('set-team'), $('set-appearance')].find((b) => b && !b.hidden && b.offsetParent !== null);
+  (first || $('set-appearance')).focus();
 }
 
 function closeSettings(returnFocus) {
   const pop = $('settings-pop');
-  if (pop.hidden) return;
+  if (!pop || pop.hidden) return;
   pop.hidden = true;
+  showSettingsList(null, false);
   $('btn-settings').setAttribute('aria-expanded', 'false');
   if (returnFocus) $('btn-settings').focus();
+}
+
+/** A short note under the Team group (after Publish, Share install file and so on). */
+function teamNote(text, tone) {
+  if (CONSOLE) {
+    consoleNote(text, tone);
+    return;
+  }
+  const note = $('team-menu-note');
+  if (!note) return;
+  note.textContent = text || '';
+  note.hidden = !text;
+  note.className = `set-note${tone ? ` ${tone}` : ''}`;
+}
+
+/** The Team group's states: unpublished changes, and each setting at a glance. */
+function renderTeamMenu() {
+  if (CONSOLE) {
+    renderConsolePublish();
+    return;
+  }
+  if (!$('set-team-group') || !isAdmin()) return;
+  const pending = !!team.draft && !team.justPublished;
+  const now = $('set-team-now');
+  now.textContent = pending ? 'Changes to publish' : '';
+  now.classList.toggle('pending', pending);
+  const state = $('team-publish-state');
+  state.textContent = pending ? 'Changes to publish' : (team.justPublished ? 'Downloaded' : 'Up to date');
+  state.classList.toggle('on', pending);
+  $('team-publish').disabled = !team.draft;
+  const settings = teamSettings();
+  markSwitch('team-rep-templates', settings && settings.repTemplates);
+  $('team-rc-state').textContent = teamRateCon() ? 'On' : 'Off';
+  $('team-azure-state').textContent = teamAzure() ? 'On' : 'Off';
+  $('team-receipts-state').textContent = receiptWords().join(', ') || 'None';
+  $('team-usage-state').textContent = teamUsage() ? 'On' : 'Off';
+}
+
+/** Arrow keys, Home and End move between a list's buttons. */
+function onSettingsListKeys(event) {
+  const list = event.currentTarget;
+  const items = [...list.querySelectorAll('button')].filter((b) => !b.disabled && !b.hidden);
+  if (!items.length) return;
+  const at = Math.max(0, items.indexOf(document.activeElement));
+  const next = {
+    ArrowDown: items[(at + 1) % items.length],
+    ArrowUp: items[(at + items.length - 1) % items.length],
+    Home: items[0],
+    End: items[items.length - 1],
+  }[event.key];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
 }
 
 function wireSettings() {
   const box = document.querySelector('.foot-settings');
   const pop = $('settings-pop');
-  if (!box || !pop || !$('btn-settings') || !$('set-templates') || !$('mode-seg')) {
+  const lists = SETTINGS_LISTS.map((id) => $(id));
+  if (!box || !pop || !$('btn-settings') || !$('set-templates') || lists.some((list) => !list || !listRow(list))) {
     log('Settings: not on this page (an older copy of taskpane.html)');
     return;
   }
@@ -5363,14 +7555,56 @@ function wireSettings() {
     templatesOpener = $('btn-settings');
     openTemplates();
   });
-  $('mode-seg').addEventListener('click', (event) => {
-    const item = event.target.closest('.seg-item');
-    if (item) pickAppearance(item.dataset.mode);
+  // Each row drops its list down (click, Enter, Space or the arrow keys); a pick folds it back up
+  for (const list of lists) {
+    const row = listRow(list);
+    row.addEventListener('click', () => {
+      showSettingsList(list, list.hidden, true);
+      if (list.id === 'team-menu') teamNote('');
+    });
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      showSettingsList(list, true, true);
+    });
+    list.addEventListener('keydown', onSettingsListKeys);
+  }
+  const picks = { 'appearance-list': pickAppearance, 'size-list': pickTextSize, 'view-list': pickView };
+  for (const [id, pick] of Object.entries(picks)) {
+    const list = $(id);
+    list.addEventListener('click', (event) => {
+      const option = event.target.closest('[role="option"]');
+      if (!option) return;
+      listRow(list).focus(); // first, so focus isn't lost when the list folds up
+      showSettingsList(list, false);
+      pick(option.dataset.value);
+    });
+  }
+  // The switches
+  $('set-tag-receipts').addEventListener('click', () => setTagReceipts(!prefs.tagReceipts));
+  $('set-keep-adding').addEventListener('click', () => setKeepAdding(!prefs.keepAdding));
+  // Team (the admin's)
+  $('team-publish').addEventListener('click', () => onPublish().catch((error) => teamNote(`Couldn't publish: ${error.message}`, 'error')));
+  $('team-share').addEventListener('click', () => onShareInstall().catch((error) => teamNote(error.message, 'error')));
+  $('team-share-beta').addEventListener('click', () => onShareBeta().catch((error) => teamNote(error.message, 'error')));
+  $('team-rep-templates').addEventListener('click', () => {
+    const on = $('team-rep-templates').getAttribute('aria-checked') !== 'true';
+    onRepTemplatesToggle(on).catch((error) => teamNote(error.message, 'error'));
   });
+  for (const [id, which] of [['team-open-rc', 'rc'], ['team-open-azure', 'azure'], ['team-open-receipts', 'receipts'], ['team-open-usage', 'usage']]) {
+    $(id).addEventListener('click', () => openTeamSheet(which));
+  }
+  $('team-console').addEventListener('click', openConsole);
   box.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || pop.hidden) return;
     event.stopPropagation(); // just Settings, not the screen behind it
-    closeSettings(true);
+    const open = openSettingsList();
+    if (open) { // the dropped-down list first, then Settings
+      listRow(open).focus();
+      showSettingsList(open, false);
+    } else {
+      closeSettings(true);
+    }
   });
   box.addEventListener('focusout', (event) => {
     if (!pop.hidden && event.relatedTarget && !box.contains(event.relatedTarget)) closeSettings(false);
@@ -5379,7 +7613,10 @@ function wireSettings() {
     if (!pop.hidden && !event.target.closest('.foot-settings')) closeSettings(false);
   });
   window.addEventListener('blur', () => closeSettings(false)); // a click in Outlook, outside the panel
+  window.addEventListener('resize', measurePage);
   markAppearance();
+  markChoice('size', prefs.textSize);
+  markChoice('view', prefs.view);
   if (window.matchMedia) {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const follow = () => { if (appearance === 'match') fadeMode(); };
@@ -5447,6 +7684,9 @@ function startNow() {
   if (startNow.done) return;
   startNow.done = true;
   applyWords();
+  measurePage();
+  const badge = $('beta-badge');
+  if (badge) badge.hidden = !BETA;
   try {
     wireSettings();
   } catch (error) {
@@ -5455,6 +7695,11 @@ function startNow() {
   $('btn-copy-report').addEventListener('click', () => copyReport());
   window.addEventListener('error', (event) => log(`Script error: ${event.message}`));
   window.addEventListener('unhandledrejection', (event) => log(`Unhandled: ${event.reason && (event.reason.message || event.reason)}`));
+  if (CONSOLE) {
+    collectEnvironment();
+    startConsole().catch(fail);
+    return;
+  }
   if (typeof Office === 'undefined') {
     appearanceReady = true; // nothing saved to wait for
     showMessage("Outlook's add-in library didn't load. Check the internet connection, then close and reopen this panel.");
@@ -5465,6 +7710,7 @@ function startNow() {
     try {
       collectEnvironment();
       loadAppearance();
+      loadPrefs();
       if (!info || info.host !== Office.HostType.Outlook) {
         setSummary('');
         showMessage('Open this from Outlook: select an email, then click Restack on the ribbon.');
@@ -5484,7 +7730,9 @@ function startNow() {
       state.myTemplates = cleanTemplates(readRoaming(MY_TEMPLATES_KEY));
       wireReadUi();
       registerHandlers();
+      renderKeepBar();
       loadThread().catch(fail);
+      flushUsage().catch(() => {}); // counts left from last time
     } catch (error) {
       fail(error);
     }
