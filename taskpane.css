@@ -912,7 +912,7 @@ html.is-console .field > input, html.is-console .field > textarea, html.is-conso
 .us-table .num { text-align: right; padding-left: 12px; }
 .us-versions { max-width: 520px; }
 .us-about { margin-top: 26px; max-width: 80ch; line-height: 1.55; }
-.us-minutes { display: block; font-size: 13px; line-height: 32px; color: var(--muted); } /* (a sentence with a box in it: wraps between words) */
+.us-minutes { display: block; margin: 0; font-size: 13px; line-height: 32px; color: var(--muted); } /* (a sentence with boxes in it: wraps between words) */
 .us-minutes input { width: 64px; height: 28px; margin: 0 4px; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface); color: var(--fg); font: inherit; vertical-align: middle; }
 
 @media (max-width: 760px) {

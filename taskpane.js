@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.20.0';
+const VERSION = '0.21.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -4714,7 +4714,10 @@ async function createEmail(template, load, acc) {
     }
   }
 
-  countUsage('email', {
+  // An email for the same load and template counts once a day, however many times it's created
+  if (teamUsage() && !firstEmailToday(load, template)) {
+    log("Usage counts: this load's email with this template was counted already today, so this one isn't");
+  } else countUsage('email', {
     ...usageFigures(allFiles),
     template: template ? template.name : '',
     templateId: template ? template.id : '',
@@ -6420,6 +6423,42 @@ async function flushUsage() {
   }
 }
 
+const COUNTED_EMAILS = 'countedEmails'; // today's loads whose email was counted, as { day, keys } (codes, not load numbers)
+
+/** A short code for text (cyrb53), so the record of counted loads holds no load numbers. */
+function shortCode(text) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/**
+ * Whether this is today's first email for this load and template, for usage counts (a rep who creates it
+ * again, say after picking the wrong accessorial, isn't counted twice). Notes it when it is. Kept in this
+ * panel's storage, for the rep's day.
+ */
+function firstEmailToday(load, template) {
+  const day = isoDay(new Date());
+  const key = shortCode(`${String(load || '').trim().toUpperCase()}|${template ? template.id : 'blank'}`);
+  let record = null;
+  try {
+    record = JSON.parse(readSetting(COUNTED_EMAILS) || 'null');
+  } catch (error) {
+    record = null;
+  }
+  const keys = record && record.day === day && Array.isArray(record.keys) ? record.keys : [];
+  if (keys.includes(key)) return false;
+  writeSetting(COUNTED_EMAILS, JSON.stringify({ day, keys: [...keys, key].slice(-500) }));
+  return true;
+}
+
 /** The figures a count carries about the files: how many PDFs, pages and checked files, and how they were made. */
 function usageFigures(files) {
   return {
@@ -6643,11 +6682,14 @@ function wireConsole() {
   $('us-refresh').addEventListener('click', () => loadUsageReport(true).catch(fail));
   $('us-csv').addEventListener('click', downloadUsageCsv);
   $('us-minutes').value = String(usageMinutes());
-  $('us-minutes').addEventListener('change', (event) => {
-    const minutes = Math.min(60, Math.max(0, Number(event.target.value) || 0));
-    writeSetting('minutesSaved', String(minutes));
-    if (usageReport.events) renderUsageReport();
-  });
+  $('us-minutes-pdf').value = String(usagePdfMinutes());
+  for (const [id, setting] of [['us-minutes', 'minutesSaved'], ['us-minutes-pdf', 'minutesSavedPdf']]) {
+    $(id).addEventListener('change', (event) => {
+      const minutes = Math.min(60, Math.max(0, Number(event.target.value) || 0));
+      writeSetting(setting, String(minutes));
+      if (usageReport.events) renderUsageReport();
+    });
+  }
   window.addEventListener('beforeunload', (event) => {
     if (editing && templateFormChanged()) {
       event.preventDefault();
@@ -6838,9 +6880,16 @@ async function publishToGithub(text) {
 
 const usageReport = { from: '', to: '', events: null, loadedAt: 0, key: '' };
 
+/** Time saved's minutes per email created (3 to start), kept in this browser. */
 function usageMinutes() {
   const saved = Number(readSetting('minutesSaved'));
   return Number.isFinite(saved) && saved >= 0 && readSetting('minutesSaved') !== null ? saved : 3;
+}
+
+/** ...and per PDF saved (1 to start). */
+function usagePdfMinutes() {
+  const saved = Number(readSetting('minutesSavedPdf'));
+  return Number.isFinite(saved) && saved >= 0 && readSetting('minutesSavedPdf') !== null ? saved : 1;
 }
 
 function isoDay(date) {
@@ -7048,7 +7097,7 @@ function renderUsageReport() {
   $('us-empty').hidden = true;
   $('us-report').hidden = false;
   const { totals, reps, templates, days, versions } = usageSummary(events);
-  const minutes = (totals.emailEvents + totals.saves) * usageMinutes();
+  const minutes = totals.emailEvents * usageMinutes() + totals.saves * usagePdfMinutes();
   const figures = [
     ['Emails created', fmt(totals.emails), `${fmt(totals.accessorials)} with accessorials`],
     ['PDFs saved', fmt(totals.saves), 'with Save PDF'],
@@ -7056,7 +7105,7 @@ function renderUsageReport() {
     ['Pages', fmt(totals.pages), 'in those PDFs'],
     ['Rate cons caught', fmt(totals.rateCons), `${plural(totals.rateConPages, 'page')} left out`],
     ['Reps', fmt(reps.length), 'using Restack'],
-    ['Time saved', hoursText(minutes), `at ${usageMinutes()} min each`],
+    ['Time saved', hoursText(minutes), `${usageMinutes()} min per email, ${usagePdfMinutes()} per saved PDF`],
   ];
   const list = $('us-figures');
   list.textContent = '';

@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to email or save. Restack was called Thread Attachments before 0.13; it's the same add-in (same ID), so team keys and published templates carry over.
 
-**Status:** test build 0.20.
+**Status:** test build 0.21.
 
 ## Install
 
@@ -36,7 +36,7 @@ To try a new version before reps get it, put it in the repository's `beta` folde
 - Team admins: everyone on the admin list gets Settings → Team. Add or remove admins under Settings → Team → Team admins, or on the admin console's Team settings tab, then publish. To publish what they change, an admin also needs upload access to this repository.
 - Sent with restack (a team setting, off to start): every email Restack creates, the accessorial email too, ends with a small "sent with restack" line under the message, above the rep's own Outlook signature. It's a picture from this site (`sent-with-restack.png`) that Outlook attaches inside the email, so it shows without a "download pictures" prompt and looks the same in every mail app.
 - Admin console (console.html, opened from Settings → Team): the team's templates and settings at full size in a browser, publishing straight to GitHub with an optional token, and a Usage tab.
-- Usage counts: with the admin's Restack Usage Azure function (its own Function App, kept outside this site), each panel counts the PDFs saved, emails created, files, pages and rate cons caught, shown on the console's Usage tab by day, rep and template.
+- Usage counts: with the admin's Restack Usage Azure function (its own Function App, kept outside this site), each panel counts the PDFs saved, emails created, files, pages and rate cons caught, shown on the console's Usage tab by day, rep and template. An email for the same load and template counts once a day, however many times it's created. Time saved uses minutes per email created (3 to start) and per PDF saved (1 to start), set on the Usage tab.
 - Optional automatic attaching: with the team admin's PDF Emails Azure function (its own Function App, kept outside this site), Create email opens with the PDF already attached.
 
 ## Changing the wording
