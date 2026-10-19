@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.16.0';
+const VERSION = '0.16.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -1625,7 +1625,8 @@ function setFileLumper(file, on) {
   state.built.clear();
   log(`Receipt: ${file.name} ${on ? 'yes' : 'no'}`);
   const moved = normalizeOrder(); // a receipt moves below the PODs
-  refreshList();
+  if (moved) glide(file, refreshList); // and slides there, so it's easy to see where it went
+  else refreshList();
   if (moved) flashRow(file);
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
 }
@@ -1861,7 +1862,7 @@ function restoreFocus(spot) {
   const row = document.querySelector(`#file-list .file[data-id="${spot.id}"]`);
   if (!row) return;
   const target = [spot.control, '.order-grip', '.file-label > input'].map((s) => row.querySelector(s)).find((n) => n && !n.disabled);
-  if (target) target.focus();
+  if (target) target.focus(gliding ? { preventScroll: true } : undefined); // a sliding file: glide() scrolls along smoothly
 }
 
 // --------------------------------------------------------------------------- the order files go into the PDF
@@ -1926,7 +1927,7 @@ function moveFile(file, step) {
   others.splice(others.indexOf(target) + (step > 0 ? 1 : 0), 0, file);
   setCheckedOrder(others);
   log(`Order: ${file.name} ${step < 0 ? 'up' : 'down'}`);
-  renderList();
+  glide(file, renderList);
   flashRow(file);
   if (!$('name-form').hidden) updateNameHint();
 }
@@ -1938,6 +1939,91 @@ function flashRow(file) {
   row.classList.remove('moved');
   void row.offsetWidth; // restart the highlight
   row.classList.add('moved');
+}
+
+// ---- files sliding to their new place (the up / down arrows, a Receipt tag, a drop)
+// The list is drawn again from scratch, so each file's spot is measured before and after, and every file
+// that changed places slides from its old spot to its new one: the moved file on top and highlighted, the
+// files it passes going the other way. Nothing slides for people who've asked their computer for less motion.
+
+let gliding = false; // while a move is being drawn: focus goes back to the file without jumping the list
+
+function motionOk() {
+  return typeof Element.prototype.animate === 'function'
+    && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+/** Where each file is in the list (measured from the list's corner, so scrolling doesn't count as moving). */
+function fileSpots() {
+  const list = $('file-list');
+  const base = list.getBoundingClientRect();
+  const spots = new Map();
+  for (const row of list.querySelectorAll('.file')) {
+    const r = row.getBoundingClientRect();
+    spots.set(row.dataset.id, { x: r.left - base.left, y: r.top - base.top });
+  }
+  return spots;
+}
+
+/** Draws the list again with `redraw`, sliding the files that changed places. `mover` is the file that was moved. */
+function glide(mover, redraw) {
+  if (!motionOk() || $('read-view').hidden) {
+    redraw();
+    return;
+  }
+  const before = fileSpots(); // (mid-slide, that's where a file is on screen, so a quick second click carries on from there)
+  gliding = true;
+  try {
+    redraw();
+  } finally {
+    gliding = false;
+  }
+  const list = $('file-list');
+  const base = list.getBoundingClientRect();
+  const zoom = pageZoom(); // spots are in the page's zoomed pixels; a slide is in the file's own
+  let lead = null;
+  let leadBox = null;
+  const slides = [];
+  for (const row of list.querySelectorAll('.file')) {
+    const from = before.get(row.dataset.id);
+    if (!from) continue;
+    const box = row.getBoundingClientRect();
+    const dx = (from.x - (box.left - base.left)) / zoom;
+    const dy = (from.y - (box.top - base.top)) / zoom;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+    if (mover && row.dataset.id === String(mover.id)) {
+      lead = row;
+      leadBox = box;
+    }
+    slides.push({ row, dx, dy });
+  }
+  for (const { row, dx, dy } of slides) { // (measured first, then started: a slide doesn't move the files after it)
+    const run = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+      { id: 'slide', duration: Math.round(Math.min(440, 260 + Math.hypot(dx, dy) * 0.2)), easing: 'cubic-bezier(.2, .75, .25, 1)' });
+    if (row === lead) {
+      row.classList.add('gliding'); // rides above the files it passes
+      run.addEventListener('finish', () => row.classList.remove('gliding'));
+    }
+  }
+  // The list scrolls along to the moved file's new spot, if that's out of sight. (Not by focus: a click
+  // doesn't focus a button in Outlook on a Mac. Every move is made in the list, so not with the preview open.)
+  if (lead && $('preview').hidden) {
+    const view = $('read-view');
+    const top = view.querySelector('.list-tools').getBoundingClientRect().bottom + 6;
+    const bottom = view.getBoundingClientRect().bottom - 6;
+    let by = 0;
+    if (leadBox.bottom > bottom) by = leadBox.bottom - bottom;
+    if (leadBox.top - by < top) by = leadBox.top - top; // (taller than the space: its top)
+    if (Math.abs(by) >= 1) view.scrollBy({ top: by / zoom, behavior: 'smooth' });
+  }
+}
+
+/** Puts every file that's still sliding straight into its place (picking one up to drag: it follows the pointer, and the others are where they look). */
+function settleSlides() {
+  if (typeof Element.prototype.getAnimations !== 'function') return; // (no slides there either)
+  for (const row of document.querySelectorAll('#file-list .file')) {
+    for (const run of row.getAnimations()) if (run.id === 'slide') run.finish();
+  }
 }
 
 /** A checked file's place in the PDF, its handle for dragging, and up / down arrows. */
@@ -1980,6 +2066,7 @@ function startDrag(event, file, grip) {
   if (event.button !== 0 || state.busy || drag) return;
   event.preventDefault(); // no text selection while dragging
   grip.focus();
+  settleSlides();
   const row = grip.closest('.file');
   drag = {
     file, grip, row,
@@ -2053,20 +2140,24 @@ function endDrag(event) {
   grip.removeEventListener('pointerup', endDrag);
   grip.removeEventListener('pointercancel', endDrag);
   try { grip.releasePointerCapture(event.pointerId); } catch (error) { /* already released */ }
-  row.classList.remove('dragging');
-  row.style.transform = '';
   $('drop-line').hidden = true;
-  if (moved && index !== null && event.type === 'pointerup') {
-    const others = rows.map((r) => state.files.find((f) => f.id === Number(r.dataset.id))).filter(Boolean);
-    others.splice(index, 0, file);
-    setCheckedOrder(others);
-    normalizeOrder(); // receipts stay below the PODs
-    log(`Order: moved ${file.name}`);
-    if (!$('name-form').hidden) updateNameHint();
-  }
-  renderList();
-  const handle = document.querySelector(`#file-list .file[data-id="${file.id}"] .order-grip`);
-  if (handle) handle.focus();
+  const redraw = () => {
+    row.classList.remove('dragging');
+    row.style.transform = '';
+    if (moved && index !== null && event.type === 'pointerup') {
+      const others = rows.map((r) => state.files.find((f) => f.id === Number(r.dataset.id))).filter(Boolean);
+      others.splice(index, 0, file);
+      setCheckedOrder(others);
+      normalizeOrder(); // receipts stay below the PODs
+      log(`Order: moved ${file.name}`);
+      if (!$('name-form').hidden) updateNameHint();
+    }
+    renderList();
+    const handle = document.querySelector(`#file-list .file[data-id="${file.id}"] .order-grip`);
+    if (handle) handle.focus(gliding ? { preventScroll: true } : undefined);
+  };
+  if (moved) glide(file, redraw); // it settles from where it was let go (or slides back, if the drag was called off)
+  else redraw();
   if (moved) flashRow(file);
 }
 
