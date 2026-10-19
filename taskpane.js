@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.16.2';
+const VERSION = '0.17.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -7740,25 +7740,24 @@ function loadAppearance() {
 }
 
 /**
- * After an update, Outlook can show a copy of taskpane.html it kept from before, next to the new
- * taskpane.js. The page says which version it is; when that isn't this script's, reload once from
- * the site (the extra ?fresh= in the address gets past the kept copy).
+ * Loads the panel again straight from the site (the extra ?fresh= in the address gets past any copy
+ * Outlook kept). At most twice in a row, counted in the address (?tries=), so a site that's halfway
+ * through publishing can't keep the panel reloading: after that it carries on with what it has.
  */
-function reloadIfOldPage() {
-  const meta = document.querySelector('meta[name="restack-version"]');
-  const page = meta ? meta.getAttribute('content') : '';
-  if (page === VERSION) return false;
+function reloadFromSite(target, why) {
   let url;
   try {
     url = new URL(window.location.href);
   } catch (error) {
     return false;
   }
-  if (url.searchParams.get('fresh') === VERSION) {
-    log(`Start: the page is ${page || 'an older one'}, the script ${VERSION}, even after reloading`);
-    return false; // tried once already: carry on with what's here
+  const tries = Number(url.searchParams.get('tries')) || 0;
+  if (tries >= 2) {
+    log(`Start: ${why}, even after loading again from the site`);
+    return false;
   }
-  url.searchParams.set('fresh', VERSION);
+  url.searchParams.set('fresh', target);
+  url.searchParams.set('tries', String(tries + 1));
   try {
     window.location.replace(url.href);
   } catch (error) {
@@ -7768,8 +7767,45 @@ function reloadIfOldPage() {
   return true;
 }
 
-function start() {
+/**
+ * After an update, Outlook can show a copy of taskpane.html it kept from before, next to the new
+ * taskpane.js. The page says which version it is; when that isn't this script's, load it again from the site.
+ */
+function reloadIfOldPage() {
+  const meta = document.querySelector('meta[name="restack-version"]');
+  const page = meta ? meta.getAttribute('content') : '';
+  if (page === VERSION) return false;
+  return reloadFromSite(VERSION, `the page is ${page || 'an older one'}, the script ${VERSION}`);
+}
+
+/**
+ * New versions show up as soon as they're uploaded (#30). Outlook can open the panel from a copy of the page
+ * and script it kept (GitHub Pages lets it keep them for up to 10 minutes), so before starting, the panel asks
+ * the site which version is up, and loads that one when it isn't this one. It waits for an answer at most
+ * SITE_CHECK_MS; offline or slow, the panel starts as it is. The beta asks its own folder.
+ */
+const SITE_CHECK_MS = 1500;
+
+async function siteVersion() {
+  const stop = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = setTimeout(() => { if (stop) stop.abort(); }, SITE_CHECK_MS);
+  try {
+    // (no-cache: Outlook asks the site whether its copy is still current, a quick "yes" when it is)
+    const response = await fetch(new URL('taskpane.html', window.location.href).href, { cache: 'no-cache', signal: stop ? stop.signal : undefined });
+    if (!response.ok) return '';
+    const match = (await response.text()).match(/<meta\s+name="restack-version"\s+content="([^"]+)"/);
+    return match ? match[1] : '';
+  } catch (error) {
+    return ''; // offline, too slow, or blocked: start with what's here
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function start() {
   if (reloadIfOldPage()) return;
+  const site = await siteVersion();
+  if (site && site !== VERSION && reloadFromSite(site, `the site has ${site}, this is ${VERSION}`)) return;
   startNow();
 }
 
@@ -7832,4 +7868,4 @@ function startNow() {
   });
 }
 
-start();
+start().catch(fail);
