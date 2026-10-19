@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.17.0';
+const VERSION = '0.18.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -4380,34 +4380,11 @@ function openLoadForm(t) {
   $('load-number').value = state.loadNumber || guessLoadNumber(state.fileName) || guessLoadNumber(state.topic) || '';
   syncAtChoices(); // before the remembered picks go back in, so a stop picked earlier can be found
   fillAccessorials(state.accessorials);
-  fillChecklist(t);
   $('acc-error').textContent = '';
   updateLoadHint();
   updateSelectionUi();
   $('load-number').focus();
   $('load-number').select();
-}
-
-/** The template's checklist as checkboxes, all unticked (it's asked fresh for every email). */
-function fillChecklist(t) {
-  const items = t && t.checklist ? t.checklist.split('\n').filter(Boolean) : [];
-  const list = $('checklist-items');
-  list.textContent = '';
-  $('checklist-box').hidden = !items.length;
-  if (!items.length) return;
-  $('checklist-title').textContent = `Before sending to ${t.name}, check:`;
-  items.forEach((item) => {
-    const row = el('label', 'checklist-item');
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    row.append(box, el('span', '', item));
-    list.append(row);
-  });
-}
-
-/** The first checklist item not ticked yet, or null. */
-function uncheckedItem() {
-  return $('checklist-box').hidden ? null : [...$('checklist-items').querySelectorAll('input')].find((box) => !box.checked) || null;
 }
 
 function hideLoadForm() {
@@ -4469,12 +4446,6 @@ function onLoadSubmit(event) {
     $('acc-error').textContent = blocked;
     return;
   }
-  const unticked = uncheckedItem();
-  if (unticked) {
-    $('acc-error').textContent = 'Tick every item on the checklist first.';
-    unticked.focus();
-    return;
-  }
   state.loadNumber = load;
   hideLoadForm();
   createEmail(t, load, acc).catch(fail);
@@ -4506,9 +4477,9 @@ function questionCount(t) {
   return t && t.questions ? t.questions.items.length : 0;
 }
 
-/** Fills in {company}: the template's customer name (or its name when that's blank). */
+/** Fills in {company}: the template's name. (Templates had a Customer name for this until 0.18; it's no longer used.) */
 function withCompany(text, t) {
-  const company = String((t && (t.customer || t.name)) || '').trim();
+  const company = String((t && t.name) || '').trim();
   return String(text || '').replace(/\{company\}/gi, company);
 }
 
@@ -4746,7 +4717,6 @@ async function createEmail(template, load, acc) {
   });
   const summary = accessorialSummary(acc);
   const noLumper = acc && !acc.lum.on && template && template.noLumper ? `No ${word('lumper')}` : '';
-  if (template && template.checklist) log(`Checklist: all ${plural(template.checklist.split('\n').length, 'item')} ticked for "${template.name}"`);
   for (const e of emails) {
     log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''})`);
   }
@@ -5015,9 +4985,8 @@ function cleanTemplates(list) {
       accTo: String(t.accTo || ''),                 // that email's To (blank: the POD email's) and CC (blank: none)
       accCc: String(t.accCc || ''),
       accBody: String(t.accBody || ''),             // its message (blank: WORDS.accessorialIntro)
-      checklist: cleanChecklist(t.checklist),       // things to tick before the email is created
-      customer: String(t.customer || '').trim().slice(0, 60), // fills in {company} in the questions
       questions: cleanQuestions(t.questions),       // asked in a pop-up before the create-email step
+      // (a checklist and a customer name saved before 0.18 are dropped here: neither is used any more)
     }));
 }
 
@@ -5057,11 +5026,6 @@ function cleanQuestions(value) {
 /** Text with its line breaks and runs of spaces turned into single spaces. */
 function oneLine(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
-}
-
-/** A template's checklist: one item per line, at most 12 items of 200 characters. */
-function cleanChecklist(text) {
-  return String(text || '').split(/\r?\n/).map((line) => line.trim().slice(0, 200)).filter(Boolean).slice(0, 12).join('\n');
 }
 
 /** Outlook's roaming settings follow the person's mailbox (classic, new Outlook and the web). */
@@ -5273,7 +5237,7 @@ function renderTemplateSheet() {
   $('team-note').textContent = CONSOLE ? '' : admin ? 'You manage these' : 'Set by your team admin';
   $('team-count').textContent = CONSOLE && teamList.length ? `(${teamList.length})` : '';
   const query = CONSOLE ? consoleSearch.trim().toLowerCase() : '';
-  const shown = query ? teamList.filter((t) => [t.name, t.to, t.cc, t.customer, t.accTo].some((v) => String(v || '').toLowerCase().includes(query))) : teamList;
+  const shown = query ? teamList.filter((t) => [t.name, t.to, t.cc, t.accTo].some((v) => String(v || '').toLowerCase().includes(query))) : teamList;
   fillTemplateList($('team-list'), byName(shown), admin ? 'team' : null);
   $('team-empty').hidden = shown.length > 0;
   $('team-empty').textContent = query
@@ -5389,7 +5353,6 @@ function editTemplate(scope, id) {
   $('tpl-message').value = t ? t.body : NEW_TEMPLATE.body;
   $('tpl-file').value = t ? (t.file || '{load}') : NEW_TEMPLATE.file;
   $('tpl-no-lumper').checked = !!(t && t.noLumper);
-  $('tpl-checklist').value = t ? t.checklist || '' : '';
   $('tpl-stop-files').checked = !!t && t.stopFiles !== false; // a new template starts with every box unticked
   $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
   $('tpl-lumper-name').value = receiptName(t);
@@ -5400,7 +5363,6 @@ function editTemplate(scope, id) {
   $('tpl-acc-message').value = t ? t.accBody || '' : '';
   $('tpl-acc-message').placeholder = word('accessorialIntro');
   syncAccRow();
-  $('tpl-customer').value = t ? t.customer || '' : '';
   qDraft = t && t.questions ? JSON.parse(JSON.stringify(t.questions)) : { intro: '', items: [] };
   renderQuestionBuilder();
   $('tpl-delete').hidden = !t;
@@ -5665,12 +5627,10 @@ async function onTemplateSubmit(event) {
     accTo: $('tpl-acc-to').value.trim(),
     accCc: $('tpl-acc-cc').value.trim(),
     accBody: $('tpl-acc-message').value.replace(/\s+$/, ''),
-    checklist: cleanChecklist($('tpl-checklist').value),
     stopFiles: $('tpl-stop-files').checked,
     lumperSeparate: $('tpl-lumper-sep').checked,
     lumperName: $('tpl-lumper-name').value.trim().replace(/\.pdf$/i, '') || NEW_TEMPLATE.lumperName,
     receiptNamed: true,
-    customer: $('tpl-customer').value.trim().slice(0, 60),
     questions: null,
   };
   const problem = templateProblem(data) || questionsProblem(qDraft);

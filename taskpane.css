@@ -387,13 +387,6 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tpl-check input { margin-top: 2px; }
 .tpl-sub { display: grid; gap: 4px; padding-left: 24px; font-weight: 400; }
 
-/* ---- a template's checklist in the create-email step */
-.checklist { display: grid; gap: 6px; padding: 10px; border-radius: 6px; background: var(--warn-soft); border: 1px solid var(--warn-line); }
-.checklist-title { margin: 0; font-weight: 600; }
-.checklist-items { display: grid; gap: 6px; }
-.checklist-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
-.checklist-item input { margin-top: 2px; }
-
 /* ---- rate confirmation check */
 .rc-banner { display: grid; gap: 8px; padding: 10px; border-radius: 6px; background: var(--danger-soft); border: 1px solid var(--danger-line); }
 .rc-banner p { margin: 0; color: var(--danger-ink); font-weight: 600; overflow-wrap: anywhere; }
