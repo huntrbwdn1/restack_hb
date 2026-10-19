@@ -740,6 +740,19 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 .set-note.ok { background: var(--accent-soft); color: var(--accent-soft-ink); }
 /* the Team screen: one of the admin's settings at a time */
 .team-section { padding-top: 12px; }
+/* Team admins (0.20): the list, each with Remove, and the box to add one */
+.admin-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; }
+.admin-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px 6px 12px; border-top: 1px solid var(--line); font-size: 13px; }
+.admin-row:first-child { border-top: 0; }
+.admin-email { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.admin-you { flex: none; padding: 1px 7px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-soft-ink); font-size: 11px; font-weight: 600; }
+.admin-row .link-btn { flex: none; }
+.admin-row .link-btn:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+.admin-form { margin: 0; }
+.admin-form .name-field .link-btn { flex: none; margin-left: 6px; font-weight: 600; }
+.admin-form .link-btn:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+/* the sent with restack line, as emails get it (the console's card) */
+.sent-with-sample { display: block; width: 136px; height: 23px; }
 /* switching light and dark fades the panel over instead of snapping */
 html.mode-fade * { transition: background-color .3s ease, color .3s ease, border-color .3s ease, fill .3s ease; }
 html.mode-fade .set-row .chev { transition: transform .12s ease, color .3s ease; }
@@ -866,7 +879,9 @@ html.is-console .field > input, html.is-console .field > textarea, html.is-conso
 .us-dates label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .us-dates input { height: 32px; padding: 0 8px; border: 1px solid var(--field-line); border-radius: 5px; background: var(--surface); color: var(--fg); font: inherit; }
 .us-actions { display: flex; gap: 8px; margin-left: auto; }
-.us-line { margin: 14px 0 0; min-height: 20px; font-size: 13px; color: var(--muted); }
+/* Under the dates: what's shown (left) and the minutes Time saved counts per PDF or email (right), there before any counts come in */
+.us-sub { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; margin: 14px 0 0; }
+.us-line { margin: 0; min-height: 20px; font-size: 13px; color: var(--muted); }
 .us-empty { display: grid; justify-items: start; gap: 12px; margin-top: 18px; padding: 22px 24px; border: 1px dashed var(--chip-line); border-radius: 8px; color: var(--muted); }
 .us-empty p { margin: 0; max-width: 62ch; line-height: 1.55; }
 .us-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0; margin: 18px 0 0; border-top: 2px solid var(--fg); }
@@ -897,8 +912,8 @@ html.is-console .field > input, html.is-console .field > textarea, html.is-conso
 .us-table .num { text-align: right; padding-left: 12px; }
 .us-versions { max-width: 520px; }
 .us-about { margin-top: 26px; max-width: 80ch; line-height: 1.55; }
-.us-minutes { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.us-minutes input { width: 64px; height: 28px; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface); color: var(--fg); font: inherit; }
+.us-minutes { display: block; font-size: 13px; line-height: 32px; color: var(--muted); } /* (a sentence with a box in it: wraps between words) */
+.us-minutes input { width: 64px; height: 28px; margin: 0 4px; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface); color: var(--fg); font: inherit; vertical-align: middle; }
 
 @media (max-width: 760px) {
   .con-top-in, .con-main, .con-foot { padding-left: 16px; padding-right: 16px; }

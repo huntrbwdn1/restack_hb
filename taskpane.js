@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.18.0';
+const VERSION = '0.20.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -23,6 +23,11 @@ const SPLIT_LIMIT = SPLIT_MB * MB - 1;
 const AZURE_FUNCTION = 'PdfEmails';    // the function's name in the team admin's Function App
 const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }];
 const TEAM_FILE = 'team.json';
+// The "sent with restack" line under the message of every email Restack creates (a team setting, off to
+// start): one small picture from this site, attached inside the email so it shows without a "download
+// pictures" prompt and looks the same in every mail app. Drawn at 3x for sharp screens, shown at this size.
+const SENT_WITH = { file: 'sent-with-restack.png', width: 136, height: 23, alt: 'sent with restack' };
+const MAX_ADMINS = 20;                  // team admins (Settings → Team → Team admins)
 // The beta: the site's beta folder, installed as "Restack Beta" next to Restack, for trying a new
 // version before reps get it. It reads the main site's team.json and keeps its own saved settings.
 const BETA = /\/beta\/[^/]*$/.test(window.location.pathname);
@@ -1666,6 +1671,7 @@ function onMultiStopToggle(on) {
  */
 function looksLikeLogo(file) {
   if (!file.inline || (file.kind !== 'Image' && file.kind !== 'TIFF')) return false;
+  if (String(file.name).toLowerCase() === SENT_WITH.file) return true; // Restack's own sent with restack line
   const dims = file.kind === 'Image' && file.bytes ? imageSize(file.bytes) : null;
   if (dims) {
     file.dims = dims;
@@ -4690,12 +4696,14 @@ async function createEmail(template, load, acc) {
     }
   }
   if (links) for (const e of emails) if (e.files.length) e.form.attachments = e.files.map((f) => links.get(f));
+  // The sent with restack line (a team setting), under each email's message
+  if (sentWithOn()) for (const e of emails) e.plain = addSentWith(e.form);
 
   let secondProblem = '';
   for (let i = 0; i < emails.length; i++) {
     if (i) await new Promise((resolve) => setTimeout(resolve, 800)); // a moment between the two, so Outlook opens both
     try {
-      await openNewEmail(emails[i].form);
+      await openEmail(emails[i]);
     } catch (error) {
       log(`New email: couldn't open ${i ? 'the accessorial email' : 'one'} (${error.message})`);
       if (!i) {
@@ -4718,7 +4726,7 @@ async function createEmail(template, load, acc) {
   const summary = accessorialSummary(acc);
   const noLumper = acc && !acc.lum.on && template && template.noLumper ? `No ${word('lumper')}` : '';
   for (const e of emails) {
-    log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''})`);
+    log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''}${e.plain ? '; sent with restack line' : ''})`);
   }
   if (summary || noLumper) log(`New email: ${[summary, noLumper].filter(Boolean).join(', ')}${separate ? ' (accessorials in their own email)' : ''}`);
   const tail = `${oversizeNote(allFiles)}${leftOutText(result)}`;
@@ -4750,6 +4758,40 @@ async function createEmail(template, load, acc) {
   }
   setStatus(`${text}${extra}`, tone);
   showReopen(request.form, !!secondProblem);
+}
+
+/** Whether new emails get the sent with restack line: the team's setting (off to start). */
+function sentWithOn() {
+  const settings = teamSettings();
+  return !!(settings && settings.sentWith);
+}
+
+/**
+ * Puts the sent with restack line under a new email's message: the picture, which Outlook attaches
+ * inside the email from this site, after a blank line. Returns the fields as they were, to open the
+ * email without it if Outlook can't add the picture.
+ */
+function addSentWith(form) {
+  const plain = { ...form };
+  if (form.attachments) plain.attachments = form.attachments.slice();
+  const { file, width, height, alt } = SENT_WITH;
+  const picture = `<img src="cid:${file}" width="${width}" height="${height}" alt="${alt}" style="display: block; width: ${width}px; height: ${height}px; border: 0;">`;
+  form.htmlBody = `${form.htmlBody || ''}<div style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;"><br>${picture}</div>`;
+  form.attachments = [...(form.attachments || []), { type: 'file', name: file, url: new URL(`${file}?v=${VERSION}`, window.location.href).href, isInline: true }];
+  return plain;
+}
+
+/** Opens one of Create email's emails. If Outlook can't add the sent with restack line, it opens without it. */
+async function openEmail(email) {
+  try {
+    await openNewEmail(email.form);
+  } catch (error) {
+    if (!email.plain) throw error;
+    log(`New email: Outlook couldn't add the sent with restack line (${error.message}), so it opens without it`);
+    email.form = email.plain;
+    email.plain = null;
+    await openNewEmail(email.form);
+  }
 }
 
 /** Opens a new email in Outlook with these fields. */
@@ -5099,6 +5141,7 @@ function cleanTeam(data) {
     rateCon: cleanRateCon(data && data.rateCon),  // the sample rate confirmation (null: check is off)
     receiptWords: cleanReceiptWords(data && data.receiptWords), // file names that start out tagged Receipt (null: lumper, receipt)
     usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
+    sentWith: !!(data && data.sentWith),         // the sent with restack line on every email (off to start)
   };
 }
 
@@ -5278,6 +5321,28 @@ async function onRcRemove() {
   renderPublishBox();
   renderRcBox(`Removed. ${publishWhere()} to turn the check off for your team.`);
   recheckRateCons();
+}
+
+/** The admin's switch for the sent with restack line on every email Restack creates. Published with the templates. */
+async function onSentWithToggle(on) {
+  const id = CONSOLE ? 'con-sent-with' : 'team-sent-with';
+  markSwitch(id, on);
+  try {
+    await saveTeamDraft({ sentWith: on });
+  } catch (error) {
+    markSwitch(id, !on);
+    teamNote(`Couldn't save it: ${error.message}`, 'error');
+    return;
+  }
+  log(`Team: sent with restack line ${on ? 'on' : 'off'} (not published yet)`);
+  renderPublishBox();
+  if (CONSOLE) {
+    teamNote(on ? 'Every email Restack creates gets the sent with restack line once you publish.' : 'Emails stop getting the sent with restack line once you publish.');
+  } else {
+    teamNote(on
+      ? "Your emails get the sent with restack line now. Your reps' get it once you publish."
+      : "Your emails don't get the sent with restack line now. Your reps' stop getting it once you publish.");
+  }
 }
 
 /** The admin's switch for letting reps make their own templates. Published with the team templates. */
@@ -5604,7 +5669,8 @@ function upsert(list, item) {
 /** Saves the admin's unpublished team changes: { templates }, { azure }, { rateCon } and so on. The rest stays as it is. */
 async function saveTeamDraft(changes) {
   const base = team.draft || team.published || cleanTeam({});
-  const admins = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
+  const kept = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
+  const admins = Array.isArray(changes.admins) && changes.admins.length ? changes.admins : kept; // Team admins changes them
   const draft = { ...cleanTeam(base), ...changes, v: 1, updated: Date.now(), by: team.me, admins };
   await writeRoaming(DRAFT_KEY, draft);
   team.draft = draft;
@@ -5740,6 +5806,7 @@ async function onPublish() {
 // ---- the Team screen: one of the admin's settings at a time (from Settings → Team)
 
 const TEAM_SCREENS = {
+  admins: { section: 'admins-section', title: 'Team admins', render: () => renderAdminsBox() },
   rc: { section: 'rc-section', title: 'Rate confirmation check', render: () => renderRcBox() },
   azure: { section: 'azure-section', title: 'Attach automatically', render: () => renderAzureBox() },
   receipts: { section: 'receipts-section', title: 'Receipt file names', render: () => renderReceiptWords() },
@@ -5816,6 +5883,82 @@ async function onReceiptWordsSave(words) {
   renderPublishBox();
   renderReceiptWords(list.length ? `Saved. ${publishWhere()} to share them with your reps.` : 'Saved with no words, so nothing is tagged by its name. Publish to share it.', 'ok');
   applyReceiptNames();
+}
+
+// ---- team admins: who gets Settings → Team (published with the templates)
+
+/** The team's admins, as they'll be published: the admin's changes, else what's published, else you. */
+function teamAdmins() {
+  const settings = teamSettings();
+  return settings && settings.admins && settings.admins.length ? settings.admins : [team.me].filter(Boolean);
+}
+
+/** The list, each with Remove (not for yourself, and never the last one), and the box to add one. */
+function renderAdminsBox(message, tone) {
+  const list = teamAdmins();
+  teamSubtitle('admins', plural(list.length, 'admin'));
+  const box = $('admin-list');
+  box.textContent = '';
+  for (const address of list) {
+    const row = el('li', 'admin-row');
+    row.append(el('span', 'admin-email', address));
+    const you = !CONSOLE && address === team.me; // (the console doesn't know who's using it)
+    if (you) row.append(el('span', 'admin-you', 'you'));
+    const remove = el('button', 'link-btn', 'Remove');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Remove ${address}`);
+    remove.disabled = you || list.length < 2;
+    remove.addEventListener('click', () => onAdminRemove(address).catch(fail));
+    row.append(remove);
+    box.append(row);
+  }
+  $('admin-self').hidden = CONSOLE;
+  $('admin-new').disabled = list.length >= MAX_ADMINS;
+  $('admin-add').disabled = list.length >= MAX_ADMINS;
+  setStatusIn('admin-status', message || (list.length >= MAX_ADMINS ? `That's the most there can be (${MAX_ADMINS}).` : ''), tone);
+}
+
+async function onAdminAdd(event) {
+  event.preventDefault();
+  const input = $('admin-new');
+  const address = input.value.trim().toLowerCase();
+  const list = teamAdmins();
+  let problem = '';
+  if (!address) problem = 'Type their email address first.';
+  else if (!/^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/.test(address)) problem = `"${address}" doesn't look like an email address.`;
+  else if (list.includes(address)) problem = `${address} is already an admin.`;
+  else if (list.length >= MAX_ADMINS) problem = `That's the most there can be (${MAX_ADMINS}).`;
+  if (problem) {
+    renderAdminsBox(problem, 'error');
+    input.focus();
+    return;
+  }
+  try {
+    await saveTeamDraft({ admins: [...list, address] });
+  } catch (error) {
+    renderAdminsBox(`Couldn't save it: ${error.message}`, 'error');
+    return;
+  }
+  input.value = '';
+  log(`Team admins: added one, ${list.length + 1} now (not published yet)`);
+  renderPublishBox();
+  renderAdminsBox(`Added. ${publishWhere()} so ${address} gets the admin settings.`, 'ok');
+  input.focus();
+}
+
+async function onAdminRemove(address) {
+  const list = teamAdmins();
+  if (list.length < 2 || (!CONSOLE && address === team.me) || !list.includes(address)) return;
+  try {
+    await saveTeamDraft({ admins: list.filter((a) => a !== address) });
+  } catch (error) {
+    renderAdminsBox(`Couldn't remove them: ${error.message}`, 'error');
+    return;
+  }
+  log(`Team admins: removed one, ${list.length - 1} now (not published yet)`);
+  renderPublishBox();
+  renderAdminsBox(`Removed. ${publishWhere()} to take the admin settings away from ${address}.`, 'ok');
+  $('admin-new').focus();
 }
 
 // ---- usage counts: the Restack Usage function (its own Function App)
@@ -6428,6 +6571,7 @@ function showConsoleTab(tab, focus = true) {
 function renderConsole() {
   renderConsolePublish();
   renderTemplateSheet();
+  renderAdminsBox();
   renderRcBox();
   renderAzureBox();
   renderReceiptWords();
@@ -6453,6 +6597,7 @@ function renderConsolePublish() {
   $('con-publish').disabled = !pending;
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
+  markSwitch('con-sent-with', !!(settings && settings.sentWith));
 }
 
 function wireConsole() {
@@ -6474,6 +6619,7 @@ function wireConsole() {
   $('con-share').addEventListener('click', () => onShareInstall().catch(fail));
   $('con-share-beta').addEventListener('click', () => onShareBeta().catch(fail));
   $('con-rep-templates').addEventListener('click', (event) => onRepTemplatesToggle(event.currentTarget.getAttribute('aria-checked') !== 'true').catch(fail));
+  $('con-sent-with')?.addEventListener('click', (event) => onSentWithToggle(event.currentTarget.getAttribute('aria-checked') !== 'true').catch(fail));
   $('rc-choose').addEventListener('click', () => $('rc-file').click());
   $('rc-file').addEventListener('change', (event) => onRcFile(event.target).catch(fail));
   $('gh-save').addEventListener('click', onGithubSave);
@@ -7240,6 +7386,7 @@ function wireReadUi() {
   $('rc-remove').addEventListener('click', () => onRcRemove().catch(fail));
   $('rw-save').addEventListener('click', () => onReceiptWordsSave($('rw-words').value.split(/[,;\n]+/)).catch(fail));
   $('rw-default').addEventListener('click', () => onReceiptWordsSave(DEFAULT_RECEIPT_WORDS).catch(fail));
+  $('admin-form')?.addEventListener('submit', (event) => onAdminAdd(event).catch(fail));
   $('us-gen').addEventListener('click', () => {
     $('us-key').value = randomB64url(24);
     setStatusIn('us-status', 'New counting key made. Copy it into the Function App as RESTACK_USAGE_KEY.');
@@ -7571,6 +7718,9 @@ function renderTeamMenu() {
   $('team-publish').disabled = !team.draft;
   const settings = teamSettings();
   markSwitch('team-rep-templates', settings && settings.repTemplates);
+  markSwitch('team-sent-with', settings && settings.sentWith);
+  const admins = $('team-admins-state');
+  if (admins) admins.textContent = String(teamAdmins().length);
   $('team-rc-state').textContent = teamRateCon() ? 'On' : 'Off';
   $('team-azure-state').textContent = teamAzure() ? 'On' : 'Off';
   $('team-receipts-state').textContent = receiptWords().join(', ') || 'None';
@@ -7644,8 +7794,12 @@ function wireSettings() {
     const on = $('team-rep-templates').getAttribute('aria-checked') !== 'true';
     onRepTemplatesToggle(on).catch((error) => teamNote(error.message, 'error'));
   });
-  for (const [id, which] of [['team-open-rc', 'rc'], ['team-open-azure', 'azure'], ['team-open-receipts', 'receipts'], ['team-open-usage', 'usage']]) {
-    $(id).addEventListener('click', () => openTeamSheet(which));
+  $('team-sent-with')?.addEventListener('click', () => {
+    const on = $('team-sent-with').getAttribute('aria-checked') !== 'true';
+    onSentWithToggle(on).catch((error) => teamNote(error.message, 'error'));
+  });
+  for (const [id, which] of [['team-open-admins', 'admins'], ['team-open-rc', 'rc'], ['team-open-azure', 'azure'], ['team-open-receipts', 'receipts'], ['team-open-usage', 'usage']]) {
+    $(id)?.addEventListener('click', () => openTeamSheet(which));
   }
   $('team-console').addEventListener('click', openConsole);
   box.addEventListener('keydown', (event) => {
