@@ -406,7 +406,9 @@ input[type="checkbox"]:disabled { cursor: default; }
 .file-note.rc.out { color: var(--muted); font-weight: 400; }
 
 /* ---- the order files go into the PDF: a numbered handle to drag, and up / down arrows */
-.list-wrap { position: relative; }
+/* The list is one layer under the sticky Select all bar, so nothing in it (a tile's checkbox and preview
+   button, a file being dragged or sliding into place) can show in front of the bar when it scrolls under. */
+.list-wrap { position: relative; z-index: 0; }
 .order-ctl { display: inline-flex; align-items: center; gap: 1px; }
 .order-grip {
   display: inline-flex; align-items: center; gap: 5px; height: 24px; min-width: 38px; padding: 0 9px 0 7px;
@@ -428,9 +430,11 @@ html[data-mode="dark"] .order-grip { border-color: #4a4a4a; }
 .order-step:disabled { opacity: .28; cursor: default; background: transparent; }
 .file.dragging { position: relative; z-index: 3; background: var(--surface); box-shadow: 0 6px 18px rgba(0,0,0,.2); }
 .file.dragging .order-grip { border-color: var(--accent); cursor: grabbing; }
-.file.moved { animation: row-moved 1.4s ease-out; }
-@keyframes row-moved { from { background: var(--accent-soft-strong); } to { background: transparent; } }
+/* A file that was just moved: highlighted (solid while it slides into place, see glide()), then fading */
+.file.moved { animation: row-moved 2.4s ease-out; }
+@keyframes row-moved { 0%, 38% { background: var(--accent-soft-strong); } to { background: transparent; } } /* (solid for 0.9 s: the longest slide) */
 @media (prefers-reduced-motion: reduce) { .file.moved { animation: none; } }
+.file.gliding { position: relative; z-index: 2; box-shadow: 0 6px 18px rgba(0,0,0,.2); } /* rides above the files it passes */
 .drop-line { position: absolute; left: 8px; right: 8px; z-index: 4; height: 3px; border-radius: 2px; background: var(--g3); pointer-events: none; }
 .drop-line::before { content: ""; position: absolute; left: -4px; top: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--g3); }
 
@@ -479,13 +483,14 @@ html[data-mode="dark"] .order-grip { border-color: #4a4a4a; }
   padding: 8px; border: 1px solid var(--line); border-radius: 8px;
 }
 .file-list[data-view="tiles"] .file:hover { border-color: var(--chip-line); }
+:where(.file-list[data-view="tiles"]) .file { background-color: var(--bg); } /* solid, so tiles sliding past each other don't show through (hover and dragging still win) */
 .file-list[data-view="tiles"] .file-label > input { position: absolute; top: 14px; left: 14px; z-index: 1; }
 .file-list[data-view="tiles"] .eye { position: absolute; top: 9px; right: 9px; z-index: 1; width: 28px; height: 28px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .file-list[data-view="tiles"] .thumb { width: 100%; height: 120px; border-radius: 6px; }
 .file-list[data-view="tiles"] .thumb img { max-width: calc(100% - 14px); max-height: 110px; }
 .file-list[data-view="tiles"] .thumb svg { width: 52px; height: 52px; }
 .file-list[data-view="tiles"] .file > .row-tags { margin-top: 0; }
-.file-list[data-view="tiles"] .file.dragging { box-shadow: 0 10px 24px rgba(0,0,0,.24); }
+.file-list[data-view="tiles"] .file:is(.dragging, .gliding) { box-shadow: 0 10px 24px rgba(0,0,0,.24); }
 .drop-line.vertical { right: auto; width: 3px; }
 .drop-line.vertical::before { left: -3px; top: -4px; }
 
