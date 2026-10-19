@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.21.0';
+const VERSION = '0.22.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -28,6 +28,8 @@ const TEAM_FILE = 'team.json';
 // pictures" prompt and looks the same in every mail app. Drawn at 3x for sharp screens, shown at this size.
 const SENT_WITH = { file: 'sent-with-restack.png', width: 136, height: 23, alt: 'sent with restack' };
 const MAX_ADMINS = 20;                  // team admins (Settings → Team → Team admins)
+const MAX_CUSTOMERS = 50;               // templates made at once with Add Customer (the first one included)
+const ROAMING_ROOM = 32 * 1024;         // what Outlook keeps of Restack's roaming settings, for each person
 // The beta: the site's beta folder, installed as "Restack Beta" next to Restack, for trying a new
 // version before reps get it. It reads the main site's team.json and keeps its own saved settings.
 const BETA = /\/beta\/[^/]*$/.test(window.location.pathname);
@@ -5094,12 +5096,40 @@ function readRoaming(name) {
   }
 }
 
+const ROAMING_FULL = "Outlook only keeps about 32 KB of Restack's settings for each person, and this goes over. Deleting templates you don't use makes room.";
+
+/** Outlook's error for roaming settings over 32 KB (code 9057). */
+function roamingFull(error) {
+  return !!error && (error.code === 9057 || /\b9057\b|exceed|maximum size|size limit|too large/i.test(String(error.message || '')));
+}
+
+function roomError(message) {
+  const error = new Error(message);
+  error.tooBig = true;
+  return error;
+}
+
 async function writeRoaming(name, value) {
   const rs = roamingSettings();
   if (rs && typeof rs.saveAsync === 'function') {
-    if (value === null) rs.remove(name);
-    else rs.set(name, value);
-    await call((done) => rs.saveAsync(done));
+    const before = rs.get(name);
+    try {
+      if (value === null) rs.remove(name);
+      else {
+        if (JSON.stringify(value).length > ROAMING_ROOM) throw roomError(ROAMING_FULL);
+        rs.set(name, value);
+      }
+      await call((done) => rs.saveAsync(done));
+    } catch (error) {
+      if (!error.tooBig && !roamingFull(error)) throw error;
+      try { // put back what was there, so what didn't fit doesn't stop later changes from saving
+        if (before === undefined || before === null) rs.remove(name);
+        else rs.set(name, before);
+      } catch (ignored) {
+        // nothing more to do
+      }
+      throw roomError(ROAMING_FULL);
+    }
     return;
   }
   if (value === null) localStorage.removeItem(`${STORE_PREFIX}${name}`);
@@ -5267,6 +5297,7 @@ function closeTemplates() {
 function cancelEdit() {
   editing = null;
   formSnapshot = '';
+  customersDraft = [];
   renderTemplateSheet();
 }
 
@@ -5436,7 +5467,9 @@ function editTemplate(scope, id) {
   $('tpl-delete').hidden = !t;
   $('tpl-delete').textContent = 'Delete this template';
   $('tpl-duplicate').hidden = !t;
-  $('tpl-error').textContent = '';
+  clearTplError();
+  customersDraft = [];
+  renderCustomers();
   renderTemplateSheet();
   fitQuestionBoxes(); // now that the form is showing, the question boxes can be measured
   setTemplateTitle(t ? t.name : '');
@@ -5446,7 +5479,8 @@ function editTemplate(scope, id) {
 
 function setTemplateTitle(name) {
   const scope = editing ? editing.scope : 'team';
-  const kind = scope === 'team' ? 'team template' : 'template';
+  const several = !!editing && !editing.id && customersDraft.length > 0; // Add Customer
+  const kind = `${scope === 'team' ? 'team template' : 'template'}${several ? 's' : ''}`;
   $('tpl-title').textContent = `${editing && editing.id ? 'Edit' : 'New'} ${kind}`;
   $('tpl-form-title').hidden = !CONSOLE;
   $('tpl-form-title').textContent = editing && editing.id ? name : `New ${kind}`;
@@ -5460,7 +5494,9 @@ function onTemplateDuplicate() {
   $('tpl-name').value = `${name} (copy)`.slice(0, 60);
   $('tpl-delete').hidden = true;
   $('tpl-duplicate').hidden = true;
-  $('tpl-error').textContent = '';
+  clearTplError();
+  customersDraft = [];
+  renderCustomers(); // a copy can become several (Add Customer)
   if (qDraft && Array.isArray(qDraft.items)) qDraft = JSON.parse(JSON.stringify(qDraft));
   renderTemplateSheet();
   setTemplateTitle('');
@@ -5486,6 +5522,7 @@ let qDraft = { intro: '', items: [] }; // the questions of the template being ed
 
 function clearTplError() {
   $('tpl-error').textContent = '';
+  for (const node of document.querySelectorAll('#tpl-form [aria-invalid="true"]')) node.removeAttribute('aria-invalid');
 }
 
 function iconButton(svg, label, onClick) {
@@ -5649,18 +5686,179 @@ function questionsProblem(draft) {
   return '';
 }
 
+const ADDRESS_LOOK = /^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/; // something@somewhere.something
+
 function templateProblem(t) {
   if (!t.name) return 'Give the template a name.';
   if (t.lumperSeparate && fill(t.lumperName, 'X').toLowerCase() === fill(t.file || '{load}', 'X').toLowerCase()) {
     return 'The receipt file needs a different name from the PDF name.';
   }
   for (const [label, text] of [['To', t.to], ['CC', t.cc], ['Accessorial email To', t.accTo], ['Accessorial email CC', t.accCc]]) {
-    for (const address of parseAddresses(text)) {
-      if (/\{load\}/i.test(address)) continue;
-      if (!/^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/.test(address)) return `${label}: "${address}" doesn't look like an email address.`;
-    }
+    const bad = badAddress(text);
+    if (bad) return `${label}: "${bad}" doesn't look like an email address.`;
   }
   return '';
+}
+
+/** The first address in a To or CC box that doesn't look like one ({load} in an address is fine). */
+function badAddress(text) {
+  return parseAddresses(text).find((address) => !/\{load\}/i.test(address) && !ADDRESS_LOOK.test(address)) || '';
+}
+
+// ---- Add Customer: several templates at once, each with its own name and To and everything else the same
+
+let customersDraft = []; // [{ name, to }]: customers 2 on, while a new template is open
+
+/** Add Customer is on new templates (copies too): an existing template stays one template. */
+function renderCustomers(focus) {
+  const open = !!editing && !editing.id;
+  if (!open) customersDraft = [];
+  $('tpl-customers').hidden = !open;
+  const list = $('cust-list');
+  list.textContent = '';
+  customersDraft.forEach((c, i) => list.append(customerEditor(c, i)));
+  const total = 1 + customersDraft.length;
+  $('cust-add').disabled = total >= MAX_CUSTOMERS;
+  $('cust-note').hidden = total < 2;
+  $('cust-note').textContent = total < 2 ? '' : `Everything below goes on ${total === 2 ? 'both' : `all ${total}`} templates.`;
+  $('tpl-save').textContent = total > 1 ? `Save ${total} templates` : 'Save template';
+  if (open) setTemplateTitle('');
+  const target = focus ? document.querySelector(focus) : null;
+  if (target) target.focus();
+}
+
+function customerEditor(c, i) {
+  const n = i + 2; // the first customer is Template name and To, above
+  const item = el('li', 'cust-item');
+  const box = (key, placeholder, label) => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = `cust-${key}`;
+    input.autocomplete = 'off';
+    if (key === 'name') input.maxLength = 60;
+    else input.spellcheck = false;
+    input.placeholder = placeholder;
+    input.value = c[key];
+    input.dataset.at = String(i + 1);
+    input.setAttribute('aria-label', label);
+    input.addEventListener('input', () => {
+      c[key] = input.value;
+      clearTplError();
+    });
+    return input;
+  };
+  item.append(el('span', 'cust-num', String(n)), box('name', 'Template name', `Customer ${n}: template name`), box('to', 'To', `Customer ${n}: To`),
+    iconButton(X_SVG, `Remove customer ${n}`, () => removeCustomer(i)));
+  return item;
+}
+
+function addCustomer() {
+  if (1 + customersDraft.length >= MAX_CUSTOMERS) return;
+  customersDraft.push({ name: '', to: '' });
+  clearTplError();
+  renderCustomers('#cust-list .cust-item:last-child .cust-name');
+}
+
+function removeCustomer(i) {
+  customersDraft.splice(i, 1);
+  clearTplError();
+  const left = customersDraft.length;
+  renderCustomers(left ? `#cust-list .cust-item:nth-child(${Math.min(i, left - 1) + 1}) .cust-name` : '#cust-add');
+}
+
+/** Cells copied from Excel: a line for each customer (name, then To), or null for one ordinary value. */
+function pastedRows(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop(); // Excel ends with a line break
+  if (lines.length < 2 && !lines.some((line) => line.includes('\t'))) return null;
+  const cell = (value) => {
+    const v = value.trim();
+    return /^"[\s\S]*"$/.test(v) ? v.slice(1, -1).replace(/""/g, '"').trim() : v;
+  };
+  return lines.filter((line) => line.trim()).map((line) => line.split('\t').map(cell));
+}
+
+/** Pasting several customers into a new template's name or To fills a row for each (Add Customer). */
+function onCustomerPaste(event) {
+  if (!editing || editing.id) return;
+  const input = event.target;
+  let key = input.id === 'tpl-name' || input.classList.contains('cust-name') ? 'name'
+    : input.id === 'tpl-to' || input.classList.contains('cust-to') ? 'to' : '';
+  if (!key) return;
+  const rows = pastedRows(event.clipboardData ? event.clipboardData.getData('text/plain') : '');
+  if (!rows || !rows.length) return;
+  event.preventDefault();
+  const has = (col) => rows.some((cells) => String(cells[col] || '').includes('@'));
+  if (key === 'to' && rows.some((cells) => cells.length > 1) && has(1) && !has(0)) key = 'name'; // names and addresses, pasted into To
+  const mail = key === 'name' ? 1 : 0; // the column with the addresses
+  if (rows.length > 1 && rows[0][mail] && !rows[0][mail].includes('@') && rows.slice(1).some((cells) => String(cells[mail] || '').includes('@'))) {
+    rows.shift(); // a heading, like Customer / Email
+  }
+  const start = Number(input.dataset.at || 0);
+  let last = start;
+  let cut = 0;
+  rows.forEach((cells, i) => {
+    const at = start + i;
+    if (at >= MAX_CUSTOMERS) {
+      cut += 1;
+      return;
+    }
+    while (customersDraft.length < at) customersDraft.push({ name: '', to: '' });
+    const name = key === 'name' ? String(cells[0] || '').slice(0, 60) : null;
+    const to = key === 'name' ? (cells.length > 1 ? cells[1] : null) : String(cells[0] || '');
+    if (at === 0) {
+      if (name !== null) $('tpl-name').value = name;
+      if (to !== null) $('tpl-to').value = to;
+    } else {
+      const c = customersDraft[at - 1];
+      if (name !== null) c.name = name;
+      if (to !== null) c.to = to;
+    }
+    last = at;
+  });
+  clearTplError();
+  renderCustomers(last === 0 ? `#${input.id || 'tpl-name'}` : `#cust-list .cust-item:nth-child(${last}) .cust-${key}`);
+  if (cut) $('tpl-error').textContent = `Up to ${MAX_CUSTOMERS} templates at a time, so the last ${plural(cut, 'line')} ${cut === 1 ? "wasn't" : "weren't"} added.`;
+  log(`Templates: pasted ${plural(rows.length - cut, 'customer')}`);
+}
+
+/** Customers 2 on: each needs a name and addresses that look right, and no two can share a name. Marks the box to fix. */
+function customersProblem(first) {
+  const all = [{ name: first.name, to: first.to, at: 0 }, ...customersDraft.map((c, i) => ({ name: c.name.trim(), to: c.to.trim(), at: i + 1 }))];
+  const mark = (at, key) => {
+    const node = at ? document.querySelector(`#cust-list .cust-item:nth-child(${at}) .cust-${key}`) : $(key === 'name' ? 'tpl-name' : 'tpl-to');
+    if (!node) return;
+    node.setAttribute('aria-invalid', 'true');
+    node.focus();
+  };
+  for (const c of all.slice(1)) {
+    if (!c.name) {
+      mark(c.at, 'name');
+      return `Customer ${c.at + 1} needs a template name.`;
+    }
+    const bad = badAddress(c.to);
+    if (bad) {
+      mark(c.at, 'to');
+      return `Customer ${c.at + 1}'s To: "${bad}" doesn't look like an email address.`;
+    }
+  }
+  const seen = new Set();
+  for (const c of all) {
+    const same = c.name.toLowerCase();
+    if (seen.has(same)) {
+      mark(c.at, 'name');
+      return `Two customers are named "${c.name}". Give each one its own name.`;
+    }
+    seen.add(same);
+  }
+  return '';
+}
+
+/** "A, B and C", or "A, B, C and 4 more" for a long list. */
+function andList(names, most = 4) {
+  if (names.length <= 1) return names.join('');
+  if (names.length > most) return `${names.slice(0, most - 1).join(', ')} and ${names.length - most + 1} more`;
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 function upsert(list, item) {
@@ -5675,7 +5873,12 @@ async function saveTeamDraft(changes) {
   const kept = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
   const admins = Array.isArray(changes.admins) && changes.admins.length ? changes.admins : kept; // Team admins changes them
   const draft = { ...cleanTeam(base), ...changes, v: 1, updated: Date.now(), by: team.me, admins };
-  await writeRoaming(DRAFT_KEY, draft);
+  try {
+    await writeRoaming(DRAFT_KEY, draft);
+  } catch (error) {
+    if (!error.tooBig) throw error;
+    throw roomError('Outlook only keeps about 32 KB of unpublished team changes, and this goes over. The admin console has room for it: Settings → Team → Open admin console.');
+  }
   team.draft = draft;
   team.justPublished = false;
   renderTeamMenu();
@@ -5702,37 +5905,57 @@ async function onTemplateSubmit(event) {
     receiptNamed: true,
     questions: null,
   };
-  const problem = templateProblem(data) || questionsProblem(qDraft);
+  clearTplError();
+  const problem = templateProblem(data) || (editing.id ? '' : customersProblem(data)) || questionsProblem(qDraft);
   if (problem) {
     $('tpl-error').textContent = problem;
     return;
   }
   data.questions = cleanQuestions(qDraft);
+  // Add Customer: a template for each customer, each its own copy of everything but the name and To
+  const made = [data];
+  if (!editing.id) {
+    const ids = new Set([data.id]);
+    for (const c of customersDraft) {
+      let id = newId();
+      while (ids.has(id)) id = newId();
+      ids.add(id);
+      made.push({ ...data, id, name: c.name.trim().slice(0, 60), to: c.to.trim(), questions: data.questions ? JSON.parse(JSON.stringify(data.questions)) : data.questions });
+    }
+  }
   try {
     if (editing.scope === 'mine') {
       const list = state.myTemplates.slice();
-      upsert(list, data);
+      for (const t of made) upsert(list, t);
       await writeRoaming(MY_TEMPLATES_KEY, list);
       state.myTemplates = list;
     } else {
       const list = teamTemplates().slice();
-      upsert(list, data);
+      for (const t of made) upsert(list, t);
       await saveTeamDraft({ templates: list });
     }
   } catch (error) {
-    $('tpl-error').textContent = `Couldn't save it: ${error.message}`;
+    $('tpl-error').textContent = `Couldn't save ${made.length > 1 ? 'them' : 'it'}: ${error.message}`;
     return;
   }
-  log(`Templates: saved ${editing.scope === 'team' ? 'team' : 'my'} template "${data.name}"`);
+  const whose = editing.scope === 'team' ? 'team' : 'my';
+  const names = made.map((t) => t.name);
+  log(made.length > 1
+    ? `Templates: saved ${made.length} ${whose} templates at once (${names.map((name) => `"${name}"`).join(', ')})`
+    : `Templates: saved ${whose} template "${data.name}"`);
+  customersDraft = [];
   if (CONSOLE) {
-    editing = { scope: editing.scope, id: data.id }; // stays open, now saved
+    editing = { scope: editing.scope, id: data.id }; // stays open (the first, if there were several), now saved
     $('tpl-delete').hidden = false;
     $('tpl-delete').textContent = 'Delete this template';
     $('tpl-duplicate').hidden = false;
+    renderCustomers();
     setTemplateTitle(data.name);
     formSnapshot = templateFormState();
     renderTemplateSheet();
-    consoleNote(`Saved "${data.name}". ${publishWhere()} so your reps get it.`, 'ok');
+    consoleNote(made.length > 1
+      ? `Saved ${made.length} templates: ${andList(names)}. ${publishWhere()} so your reps get them.`
+      : `Saved "${data.name}". ${publishWhere()} so your reps get it.`, 'ok');
     return;
   }
   editing = null;
@@ -7409,6 +7632,9 @@ function wireReadUi() {
   });
   $('tpl-back').addEventListener('click', () => (editing ? cancelEdit() : closeTemplates()));
   $('tpl-form').addEventListener('submit', (event) => onTemplateSubmit(event).catch(fail));
+  $('tpl-form').addEventListener('paste', onCustomerPaste); // several customers from Excel (Add Customer)
+  $('cust-add').addEventListener('click', addCustomer);
+  for (const id of ['tpl-name', 'tpl-to']) $(id).addEventListener('input', (event) => event.target.removeAttribute('aria-invalid'));
   $('tpl-cancel').addEventListener('click', cancelEdit);
   $('tpl-lumper-sep').addEventListener('change', syncLumperNameRow);
   $('tpl-acc-sep').addEventListener('change', syncAccRow);

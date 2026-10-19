@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to email or save. Restack was called Thread Attachments before 0.13; it's the same add-in (same ID), so team keys and published templates carry over.
 
-**Status:** test build 0.21.
+**Status:** test build 0.22.
 
 ## Install
 
@@ -32,6 +32,8 @@ To try a new version before reps get it, put it in the repository's `beta` folde
 - Rotate pages and photos in the preview, a quarter turn per click, so sideways scans and photos go into the PDF upright. The attachment itself isn't changed.
 - Settings: the gear at the bottom of the panel, there whatever email is selected (even one without attachments, or none). It has Manage templates (for whoever can make templates), Team (the admin's: publish, install files, team admins, reps' own templates, the sent with restack line, rate con check, automatic attaching, receipt file names, usage counts and the admin console), Appearance (Light, Dark or Match Outlook), Text size (Small, Medium, Large), View (Large, Medium or Small pictures, List, Details, Tiles), and switches for Tag receipts by file name and Keep adding. Each person's choices are saved in their Outlook account.
 - Templates are listed A to Z. Pin the ones you use most to the top of the Email menu and put them in your own order; the rest are under Other templates. A new template starts with every box unticked, and receipts in their own file are named "{load} Receipt".
+- Several templates at once: on a new template (or a copy), Add Customer adds another template name and To. Save makes one template for each customer, all with the same CC, message, accessorials, questions, PDF name and file options, and each can be edited on its own afterwards. Names and addresses copied from two columns in Excel paste in one go (up to 50 at a time).
+- Outlook keeps each person's Restack settings, their own templates and an admin's unpublished team changes in about 32 KB. A change that won't fit isn't saved, and Restack says so; the admin console keeps its unpublished changes in the browser instead, with room to spare.
 - Tag receipts by file name: files with the admin's words in their name (lumper and receipt to start) start out tagged Receipt.
 - Team admins: everyone on the admin list gets Settings → Team. Add or remove admins under Settings → Team → Team admins, or on the admin console's Team settings tab, then publish. To publish what they change, an admin also needs upload access to this repository.
 - Sent with restack (a team setting, off to start): every email Restack creates, the accessorial email too, ends with a small "sent with restack" line under the message, above the rep's own Outlook signature. It's a picture from this site (`sent-with-restack.png`) that Outlook attaches inside the email, so it shows without a "download pictures" prompt and looks the same in every mail app.
