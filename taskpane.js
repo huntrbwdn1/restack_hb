@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.16.2';
+const VERSION = '0.16.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -1998,10 +1998,8 @@ function glide(mover, redraw) {
     slides.push({ row, dx, dy });
   }
   for (const { row, dx, dy } of slides) { // (measured first, then started: a slide doesn't move the files after it)
-    // Slow enough to follow: 0.56 s for the next spot, up to 0.9 s for a long way, moving evenly rather than all at the start
-    const ms = Math.round(Math.min(900, Math.max(560, 480 + Math.hypot(dx, dy) * 0.5)));
     const run = row.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
-      { id: 'slide', duration: ms, easing: 'cubic-bezier(.45, 0, .25, 1)' });
+      { id: 'slide', duration: Math.round(Math.min(440, 260 + Math.hypot(dx, dy) * 0.2)), easing: 'cubic-bezier(.2, .75, .25, 1)' });
     if (row === lead) {
       row.classList.add('gliding'); // rides above the files it passes
       run.addEventListener('finish', () => row.classList.remove('gliding'));
