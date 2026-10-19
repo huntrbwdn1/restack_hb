@@ -431,8 +431,8 @@ html[data-mode="dark"] .order-grip { border-color: #4a4a4a; }
 .file.dragging { position: relative; z-index: 3; background: var(--surface); box-shadow: 0 6px 18px rgba(0,0,0,.2); }
 .file.dragging .order-grip { border-color: var(--accent); cursor: grabbing; }
 /* A file that was just moved: highlighted (solid while it slides into place, see glide()), then fading */
-.file.moved { animation: row-moved 1.6s ease-out; }
-@keyframes row-moved { 0%, 22% { background: var(--accent-soft-strong); } to { background: transparent; } }
+.file.moved { animation: row-moved 2.4s ease-out; }
+@keyframes row-moved { 0%, 38% { background: var(--accent-soft-strong); } to { background: transparent; } } /* (solid for 0.9 s: the longest slide) */
 @media (prefers-reduced-motion: reduce) { .file.moved { animation: none; } }
 .file.gliding { position: relative; z-index: 2; box-shadow: 0 6px 18px rgba(0,0,0,.2); } /* rides above the files it passes */
 .drop-line { position: absolute; left: 8px; right: 8px; z-index: 4; height: 3px; border-radius: 2px; background: var(--g3); pointer-events: none; }
