@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.22.0';
+const VERSION = '0.23.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -43,6 +43,17 @@ const MY_TEMPLATES_KEY = 'myTemplates'; // each person's own templates (Outlook 
 const DRAFT_KEY = 'teamDraft';          // the team admin's unpublished edits
 const NEW_TEMPLATE = { body: 'Attached are the POD(s) for load {load}.', file: '{load}', lumperName: '{load} Receipt' };
 const OLD_RECEIPT_NAME = '{load} Lumper'; // the receipt file's name before 0.16; templates still on it get the new one
+// The accessorials on the Create email step: offered by Add an accessorial, shown and written in this order
+const ACC_KINDS = ['lum', 'det', 'lay', 'oth'];
+const ACC_WORD = { lum: 'lumper', det: 'detention', lay: 'layover', oth: 'other' }; // their names in WORDS
+const ACC_FIELDS = {
+  lum: ['at', 'total'],
+  det: ['at', 'in', 'appt', 'out', 'hours'],
+  lay: ['at', 'inDate', 'inTime', 'appt', 'outDate', 'outTime'], // IN and OUT: a date and a time; APPT: a time
+  oth: ['at', 'type', 'explain', 'total'],
+};
+const ACC_TIME_FIELDS = new Set(['in', 'appt', 'out', 'inTime', 'outTime']); // 24-hour times, like 14:30
+const ACC_DATE_FIELDS = new Set(['inDate', 'outDate']);                       // dates, like 10/19/26
 const STOP_CHOICES = 9;                 // the stop picker offers at least Stop 1-9
 const QUIZ = {                          // a template's questions, asked before the Create email step
   maxQuestions: 12,
@@ -112,8 +123,9 @@ const WORDS = {
   multiStopNote: "one PDF per stop: -1, -2…",      // the grey text after Multi-stop
   stop: "Stop {n}",                                // the stop picker on each file (and page), with Multi-stop on
   byPage: "By page",                               // a file's stop picker when its pages are at different stops
-  receipt: "Receipt",                              // the tag on each checked file, and on pages in the preview
-  receiptPages: "Receipt: {pages}",                // under a file that's only partly a receipt, like "Receipt: page 2"
+  accessorialTag: "Accessorial",                   // the drop-down tag on each checked file and on pages in the preview, until it's tagged
+  notAccessorial: "Not an accessorial",            // in that drop-down, once something's tagged: takes the tag off
+  taggedPages: "{type}: {pages}",                  // under a file tagged page by page, like "Lumper: page 2"
   oneEmailTip: "Only 1 email came through. To include the whole thread, select every email in it.",
   keepAddingTip: "Or keep adding as you click each one",  // the button under that tip
   keepAddingNote: "Click each email in the thread to add its files.", // in the Keep adding bar
@@ -128,6 +140,7 @@ const WORDS = {
   mine: "Mine",
   pinned: "Pinned",                                // the heading over your pinned templates
   otherTemplates: "Other templates",               // under them: opens the rest, A to Z
+  accessorialOnly: "Accessorial Only",             // the section for Accessorial Only templates (closed to start)
   pin: "Pin to the top",                           // the pin on each template
   unpin: "Unpin",
   manageTemplates: "My templates…",                // your own templates (the team's are made in the admin console)
@@ -140,16 +153,18 @@ const WORDS = {
   // Create email (the accessorials' names and fields are written the same way in the email)
   loadNumber: "Load number",
   accessorials: "Accessorials",
+  addAccessorial: "Add an accessorial",            // drops down the accessorials; each one picked gets its own box
+  lumper: "Lumper",
   detention: "Detention",
   layover: "Layover",
-  lumper: "Lumper",
   other: "Other",
   timeIn: "IN",                                    // Detention's and Layover's times
   appointment: "APPT",
   timeOut: "OUT",
   hoursRequested: "Hours requested",
   total: "Total",                                  // Lumper's and Other's amount
-  otherType: "Type",                               // what the Other accessorial is
+  otherType: "Type",                               // what the Other accessorial is (the request's subject says it)
+  explain: "Explain",                              // Other's explanation, as typed (it goes in the email)
   shipper: "Shipper",                              // where a charge was
   receiver: "Receiver",
   receiverAtStop: "Receiver (Stop {n})",           // with Multi-stop on
@@ -159,7 +174,7 @@ const WORDS = {
   subject: "{load} POD(s)",                        // every email's subject
 
   // The separate accessorial email (for templates with "Accessorials in a separate email")
-  accessorialSubject: "{load} - {types} Request",  // its subject; {types} is like Detention/Lumper
+  accessorialSubject: "{load} - {types} Request",  // its subject; {types} is like Lumper/Detention
   accessorialIntro: "Please see the {types} request for load {load} below.", // its first line, unless the template has its own
 
   // The rate confirmation check
@@ -196,7 +211,7 @@ const WORDS = {
   viewList: "List",
   viewDetails: "Details",
   viewTiles: "Tiles",
-  tagReceipts: "Tag receipts by file name",        // a switch: files named like receipts start out tagged Receipt
+  tagAccessorials: "Tag accessorials by file name", // a switch: files named like receipts start out tagged Lumper
   keepAdding: "Keep adding",                       // a switch: each email you click adds its files to the list
 
   // A new email
@@ -246,7 +261,7 @@ const state = {
   topic: '',
   fileName: '',          // the name typed in "Name the PDF" (for the current thread)
   loadNumber: '',        // the load number typed for an email template (for the current thread)
-  accessorials: emptyAccessorials(), // Detention / Lumper / Other typed for the current thread
+  accessorials: emptyAccessorials(), // the accessorials picked and typed for the current thread
   myTemplates: [],
   multiStop: false,      // Multi-stop: one PDF per stop, named -1, -2… (for the current thread)
   order: null,           // file ids in the order you put them (null: as they came, oldest first)
@@ -1296,29 +1311,30 @@ function namedLikeReceipt(file) {
 }
 
 /**
- * With Tag receipts by file name on, files named like receipts start out tagged Receipt, and lose the
+ * With Tag accessorials by file name on, files named like receipts start out tagged Lumper, and lose the
  * tag again when it's turned off. A tag set by hand stays as it was set.
  */
 function applyReceiptNames(render = true) {
   let changed = false;
   for (const file of state.files) {
-    if (file.lumperByHand || file.pageLumper || !canCombine(file)) continue;
-    const want = prefs.tagReceipts && namedLikeReceipt(file);
-    if (!!file.lumperByName === want) continue;
-    file.lumperByName = want;
-    file.lumper = want;
+    if (file.accByHand || file.pageAcc || !canCombine(file)) continue;
+    const want = prefs.tagReceipts && namedLikeReceipt(file) ? 'lum' : ''; // a receipt is Lumper's to start
+    if ((file.accByName || '') === want) continue;
+    file.accByName = want;
+    file.accTag = want;
     changed = true;
   }
   if (!changed) return;
   state.built.clear();
   normalizeOrder();
   if (render && readUiWired && !$('read-view').hidden) renderList();
+  addTaggedAccessorials();
 }
 
 function setTagReceipts(on) {
   savePref('tagReceipts', on);
   markSwitch('set-tag-receipts', on);
-  log(`Tag receipts by file name: ${on ? `on (${receiptWords().join(', ') || 'no words set'})` : 'off'}`);
+  log(`Tag accessorials by file name: ${on ? `on (${receiptWords().join(', ') || 'no words set'})` : 'off'}`);
   applyReceiptNames();
 }
 
@@ -1427,52 +1443,53 @@ function stopsOfFile(file) {
 }
 
 /**
- * How one checked file is divided up: [{ stop, lumper, pages }] (pages null = all its picked
- * pages). Stops count only with Multi-stop on. Lumper receipt pages are a part of their own, so
- * they can go after the PODs (or into a file of their own).
+ * How one checked file is divided up: [{ stop, acc, pages }] (pages null = all its picked pages;
+ * acc 'lum' or 'oth' for pages tagged Lumper or Other, '' for PODs). Stops count only with Multi-stop
+ * on. Tagged pages are a part of their own, so they can go after the PODs, or into their accessorial's file.
  */
 function partsOfFile(file) {
   const stopOf = (p) => (state.multiStop ? ((file.pageStops && file.pageStops.get(p)) || file.stop || 1) : 1);
-  const byPage = file.kind === 'PDF' && ((state.multiStop && file.pageStops && file.pageStops.size) || (file.pageLumper && file.pageLumper.size));
+  const byPage = file.kind === 'PDF' && ((state.multiStop && file.pageStops && file.pageStops.size) || (file.pageAcc && file.pageAcc.size));
   const pages = byPage ? allIncludedPages(file) : null;
-  if (!pages) return [{ stop: state.multiStop ? (file.stop || 1) : 1, lumper: !!file.lumper, pages: includedPages(file) }];
+  if (!pages) return [{ stop: state.multiStop ? (file.stop || 1) : 1, acc: file.accTag || '', pages: includedPages(file) }];
   const parts = new Map();
   for (const p of pages) {
     const stop = stopOf(p);
-    const lumper = pageLumperOf(file, p);
-    const key = `${stop}|${lumper}`;
-    if (!parts.has(key)) parts.set(key, { stop, lumper, pages: [] });
+    const acc = pageAccOf(file, p);
+    const key = `${stop}|${acc}`;
+    if (!parts.has(key)) parts.set(key, { stop, acc, pages: [] });
     parts.get(key).pages.push(p);
   }
   return [...parts.values()];
 }
 
 /**
- * The PDFs to make, before building them: [{ stop, lumper, entries: [{ file, only }] }], PODs
- * first, then lumper receipts. splitStops: one PDF per stop (stop 0 = all stops together, in stop
- * order). splitLumpers: lumper receipts in their own PDF(s); otherwise they go after the PODs in
- * the same file (after every stop, when the stops share a file). Within that, files go in the
- * order of the list, which you can change.
+ * The PDFs to make, before building them: [{ stop, acc, entries: [{ file, only }] }], the PODs
+ * first, then Lumper's file, then Other's. splitStops: one PDF per stop (stop 0 = all stops
+ * together, in stop order). splitAcc: the files tagged Lumper and Other each in a PDF of their own
+ * (a template's Accessorials in their own file); otherwise they go after the PODs in the same file
+ * (Save PDF, and the other templates). noAcc: just the PODs.
+ * Within that, files go in the order of the list, which you can change.
  */
-function fileGroups(splitStops, splitLumpers, noReceipts = false) {
+function fileGroups(splitStops, splitAcc, noAcc = false) {
   const groups = new Map();
   checkedFiles().forEach((file, index) => {
     for (const part of partsOfFile(file)) {
-      if (noReceipts && part.lumper) continue; // the POD email, when the receipts go in the accessorial email
+      if (noAcc && part.acc) continue; // the POD email, when the accessorial files go in the accessorial email
       const stop = splitStops ? part.stop : 0;
-      const own = splitLumpers && part.lumper;
-      const key = `${own ? 'L' : 'P'}${stop}`;
-      if (!groups.has(key)) groups.set(key, { stop, lumper: own, items: [] });
-      groups.get(key).items.push({ file, only: part.pages, receipt: part.lumper, order: part.stop, index });
+      const own = splitAcc ? part.acc : '';
+      const key = `${own || 'P'}${stop}`;
+      if (!groups.has(key)) groups.set(key, { stop, acc: own, items: [] });
+      groups.get(key).items.push({ file, only: part.pages, tagged: !!part.acc, order: part.stop, index });
     }
   });
   return [...groups.values()]
-    .sort((a, b) => (Number(a.lumper) - Number(b.lumper)) || (a.stop - b.stop))
+    .sort((a, b) => (ACC_FILE_RANK[a.acc] - ACC_FILE_RANK[b.acc]) || (a.stop - b.stop))
     .map((group) => ({
       stop: group.stop,
-      lumper: group.lumper,
+      acc: group.acc,
       entries: group.items
-        .sort((x, y) => (Number(x.receipt) - Number(y.receipt)) || (x.order - y.order) || (x.index - y.index))
+        .sort((x, y) => (Number(x.tagged) - Number(y.tagged)) || (x.order - y.order) || (x.index - y.index))
         .map(({ file, only }) => ({ file, only })),
     }));
 }
@@ -1484,11 +1501,15 @@ function logOrder(name, entries) {
   log(`Order in ${name}: ${parts.join(', ')}`);
 }
 
-/** What an email template does with stops and lumper receipts (t null: Save PDF and Blank email). */
+/**
+ * How an email's files are made (t null: Blank email): stops as the template says. With the template's
+ * Accessorials in their own file, each accessorial tagged (Lumper, Other) gets a file of its own;
+ * without it, the tagged files go after the PODs in the same file.
+ */
 function layoutOf(t) {
   return {
     splitStops: state.multiStop && (!t || t.stopFiles !== false),
-    splitLumpers: !!(t && t.lumperSeparate),
+    splitAcc: !!(t && t.lumperSeparate),
   };
 }
 
@@ -1502,13 +1523,30 @@ function stopsInUse(except) {
   return used;
 }
 
-/** Gives a newly checked file the lowest stop number nobody has yet (1, then 2…). */
+/**
+ * Gives a newly checked file the lowest stop number nobody has yet (1, then 2…). A file tagged Lumper or
+ * Other isn't a stop of its own: it goes with the last stop the PODs use.
+ */
 function assignStop(file) {
+  file.pageStops = null;
+  if (wholeTag(file)) {
+    file.stop = lastPodStop(file);
+    return;
+  }
   const used = stopsInUse(file);
   let stop = 1;
   while (used.has(stop)) stop += 1;
   file.stop = stop;
-  file.pageStops = null;
+}
+
+/** The highest stop the checked PODs (untagged files) use, leaving out `except`; 1 when there are none. */
+function lastPodStop(except) {
+  let last = 0;
+  for (const file of checkedFiles()) {
+    if (file === except || !file.stop || wholeTag(file)) continue;
+    for (const stop of stopsOfFile(file).keys()) last = Math.max(last, stop);
+  }
+  return last || 1;
 }
 
 /** The highest stop the pickers should offer. */
@@ -1575,77 +1613,190 @@ function setPageStop(file, page, stop) {
   syncPreviewPages();
 }
 
-// --------------------------------------------------------------------------- lumper receipts: which files (or pages) they are
-// Every checked file has a "Receipt" tag (WORDS.receipt). Tagged files and pages go after the PODs, or
-// into a file of their own for templates that want that.
+// --------------------------------------------------------------------------- the Accessorial tag: which files (or pages) are Lumper's or Other's
+// Every checked file has an Accessorial tag (WORDS.accessorialTag): a drop-down for Lumper or Other,
+// the accessorials with paperwork of their own (for Detention and Layover, the POD is it). Tagged files
+// go below the PODs, and into a file of their own for each accessorial when an email is made.
 
-function pageLumperOf(file, page) {
-  return file.pageLumper && file.pageLumper.has(page) ? file.pageLumper.get(page) : !!file.lumper;
+const ACC_FILE_KINDS = ['lum', 'oth'];           // what a file can be tagged
+const ACC_FILE_RANK = { '': 0, lum: 1, oth: 2 }; // the PODs' file first, then Lumper's, then Other's
+
+/** What a page is tagged: 'lum', 'oth', or '' (a POD). */
+function pageAccOf(file, page) {
+  return file.pageAcc && file.pageAcc.has(page) ? file.pageAcc.get(page) : file.accTag || '';
 }
 
-/** When every picked page of a file is (or isn't) a lumper receipt, that's simply the file's tag again. */
-function normalizePageLumper(file) {
-  if (!file.pageLumper || !file.pageLumper.size) {
-    file.pageLumper = null;
+/** When every picked page of a file is tagged the same, that's simply the file's tag again. */
+function normalizePageAcc(file) {
+  if (!file.pageAcc || !file.pageAcc.size) {
+    file.pageAcc = null;
     return;
   }
   const pages = allIncludedPages(file);
   if (!pages) return;
-  const values = new Set(pages.map((p) => pageLumperOf(file, p)));
+  const values = new Set(pages.map((p) => pageAccOf(file, p)));
   if (values.size <= 1) {
-    if (values.size) file.lumper = [...values][0];
-    file.pageLumper = null;
+    if (values.size) file.accTag = [...values][0];
+    file.pageAcc = null;
     return;
   }
-  for (const [page, value] of [...file.pageLumper]) if (value === !!file.lumper) file.pageLumper.delete(page);
+  for (const [page, value] of [...file.pageAcc]) if (value === (file.accTag || '')) file.pageAcc.delete(page);
 }
 
-/** "Receipt: page 3" for a file that's partly a lumper receipt, else null. */
-function lumperNote(file) {
-  if (!state.checked.has(file.id) || !file.pageLumper || !file.pageLumper.size) return null;
-  const pages = (allIncludedPages(file) || []).filter((p) => pageLumperOf(file, p));
-  return pages.length ? word('receiptPages', { pages: pagesLabel(pages).toLowerCase() }) : null;
+/** "Lumper: page 2" (and "· Other: page 3") under a file tagged page by page, else null. */
+function accNote(file) {
+  if (!state.checked.has(file.id) || !file.pageAcc || !file.pageAcc.size) return null;
+  const pages = allIncludedPages(file) || [];
+  const notes = ACC_FILE_KINDS.map((kind) => {
+    const tagged = pages.filter((p) => pageAccOf(file, p) === kind);
+    return tagged.length ? word('taggedPages', { type: word(ACC_WORD[kind]), pages: pagesLabel(tagged).toLowerCase() }) : '';
+  }).filter(Boolean);
+  return notes.length ? notes.join(' · ') : null;
 }
 
-/** A "Receipt" tag: a checkbox in a small pill. */
-function lumperChip(on, mixed, label, onToggle) {
-  const chip = el('label', 'tag-chip');
-  const box = document.createElement('input');
-  box.type = 'checkbox';
-  box.checked = on && !mixed;
-  box.indeterminate = mixed;
-  box.disabled = state.busy;
-  box.setAttribute('aria-label', label);
-  box.addEventListener('change', () => onToggle(box.checked));
-  chip.classList.toggle('on', on || mixed);
-  chip.append(box, el('span', '', word('receipt')));
-  return chip;
+/**
+ * The Accessorial tag's choices: it says Accessorial until it's tagged Lumper or Other (and By page
+ * when a file's pages are tagged differently); once tagged, Not an accessorial takes it off.
+ */
+function fillAccTag(select, value, mixed) {
+  select.textContent = '';
+  const prompt = new Option(word(mixed ? 'byPage' : 'accessorialTag'), '', false, mixed || !value);
+  prompt.disabled = true;
+  prompt.hidden = true; // (shown on the tag, not offered in its list)
+  select.append(prompt);
+  for (const kind of ACC_FILE_KINDS) select.append(new Option(word(ACC_WORD[kind]), kind, false, !mixed && value === kind));
+  if (value || mixed) select.append(new Option(word('notAccessorial'), 'none'));
+  select.dataset.mixed = mixed ? 'yes' : '';
+  select.disabled = state.busy;
+  showAccTag(select);
 }
 
-/** Tagging a whole file as a lumper receipt (or not). This also undoes any page-by-page tags. */
-function setFileLumper(file, on) {
-  file.lumper = on;
-  file.lumperByHand = true; // Tag receipts by file name leaves it as you set it
-  file.pageLumper = null;
+/** The pill shows the drop-down's choice, in the tag's colors once it's tagged (or By page). */
+function showAccTag(select) {
+  const on = (!!select.value && select.value !== 'none') || select.dataset.mixed === 'yes';
+  select.classList.toggle('on', on);
+  const pill = select.parentElement;
+  if (!pill || !pill.classList.contains('acc-pill')) return;
+  pill.classList.toggle('on', on);
+  pill.querySelector('.acc-pill-text').textContent = select.selectedIndex >= 0 ? select.options[select.selectedIndex].text : '';
+}
+
+/**
+ * An Accessorial tag, on each checked file and on each page in the preview: a small pill that's as
+ * wide as its choice, with the drop-down itself (a select, for the keyboard and screen readers) laid
+ * over it, so a longer choice in its list doesn't widen it.
+ */
+function accTagPicker(value, mixed, label, onPick) {
+  const pill = el('span', 'acc-pill');
+  const text = el('span', 'acc-pill-text');
+  text.setAttribute('aria-hidden', 'true');
+  const select = document.createElement('select');
+  select.className = 'acc-tag';
+  select.setAttribute('aria-label', label);
+  pill.append(text, select);
+  fillAccTag(select, value, mixed);
+  select.addEventListener('change', () => {
+    showAccTag(select);
+    onPick(select.value === 'none' ? '' : select.value);
+  });
+  return pill;
+}
+
+/** A file's tag when it's tagged all through (Lumper's or Other's), else '' (a POD, or tagged By page). */
+function wholeTag(file) {
+  return file.accTag && !(file.pageAcc && file.pageAcc.size) ? file.accTag : '';
+}
+
+/** Sends a checked file to the very bottom of the order, below the files tagged before it. True if it moved. */
+function toBottom(file) {
+  const checked = checkedFiles();
+  if (!state.checked.has(file.id) || checked[checked.length - 1] === file) return false;
+  setCheckedOrder([...checked.filter((f) => f !== file), file]);
+  return true;
+}
+
+/**
+ * After a file's pages are tagged (or ticked) in the preview: tagged all through now, it's a tagged
+ * file, and goes to the very bottom like one tagged in the list. `before` is its wholeTag() before.
+ */
+function settleAccOrder(file, before) {
+  const after = wholeTag(file);
+  const moved = after && after !== before ? toBottom(file) : false;
+  return normalizeOrder() || moved;
+}
+
+/** Tagging a whole file Lumper or Other (or neither). This also undoes any page-by-page tags. */
+function setFileAcc(file, kind) {
+  file.accTag = kind;
+  file.accByHand = true; // Tag accessorials by file name leaves it as you set it
+  file.pageAcc = null;
   state.built.clear();
-  log(`Receipt: ${file.name} ${on ? 'yes' : 'no'}`);
-  const moved = normalizeOrder(); // a receipt moves below the PODs
+  log(`Accessorial: ${file.name} ${kind ? word(ACC_WORD[kind]) : 'none'}`);
+  // On a Multi-stop load, a receipt that was given a stop of its own goes with the PODs' last stop
+  if (kind && state.multiStop && state.checked.has(file.id) && !file.pageStops && !stopsInUse(file).has(file.stop || 1)) file.stop = lastPodStop(file);
+  // Tagged (Lumper or Other), it goes to the bottom of the order, whichever is picked; untagged, back above the tagged ones
+  const last = kind ? toBottom(file) : false;
+  const moved = normalizeOrder() || last;
   if (moved) glide(file, refreshList); // and slides there, so it's easy to see where it went
   else refreshList();
   if (moved) flashRow(file);
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
+  addTaggedAccessorials();
 }
 
-/** Tagging one page in the preview (a PDF with the POD and the lumper receipt in it). */
-function setPageLumper(file, page, on) {
-  file.lumperByHand = true;
-  if (!file.pageLumper) file.pageLumper = new Map();
-  file.pageLumper.set(page, on);
-  normalizePageLumper(file);
+/** Tagging one page in the preview (a PDF with the POD and a lumper receipt in it, say). */
+function setPageAcc(file, page, kind) {
+  const before = wholeTag(file);
+  file.accByHand = true;
+  if (!file.pageAcc) file.pageAcc = new Map();
+  file.pageAcc.set(page, kind);
+  normalizePageAcc(file);
   state.built.clear();
-  normalizeOrder(); // every page tagged makes it a whole-file receipt
+  settleAccOrder(file, before); // every page tagged makes it a tagged file
   refreshList();
   syncPreviewPages();
+  addTaggedAccessorials();
+}
+
+/** The accessorials the checked files (and pages) are tagged for, in their order. */
+function taggedKinds() {
+  const kinds = new Set();
+  for (const file of checkedFiles()) for (const part of partsOfFile(file)) if (part.acc) kinds.add(part.acc);
+  return ACC_FILE_KINDS.filter((kind) => kinds.has(kind));
+}
+
+/** The first checked file with something tagged for an accessorial (for a message), or null. */
+function taggedFile(kind) {
+  return checkedFiles().find((file) => partsOfFile(file).some((part) => part.acc === kind)) || null;
+}
+
+/**
+ * An open Create email step gets a box for each accessorial a checked file (or page) is tagged for. A
+ * box a tag brought goes again when nothing's tagged for it any more, if it's still empty (Lumper
+ * picked by mistake and changed to Other, say). Anything Create email said before is cleared: it's
+ * checked again on the next click.
+ */
+function addTaggedAccessorials() {
+  if (!emailDraft || $('load-form').hidden) return;
+  const tagged = taggedKinds();
+  for (const kind of ACC_FILE_KINDS) {
+    const box = $(`acc-${kind}-box`);
+    if (tagged.includes(kind)) {
+      if (box.hidden) emailDraft.byTag.add(kind);
+      box.hidden = false;
+    } else if (emailDraft.byTag.has(kind) && accBoxEmpty(kind)) {
+      box.hidden = true;
+      emailDraft.byTag.delete(kind);
+    }
+  }
+  $('acc-error').textContent = '';
+  syncAccessorialBoxes();
+  updateLoadHint();
+}
+
+/** Whether an accessorial's boxes are all still empty (nothing picked or typed). */
+function accBoxEmpty(kind) {
+  return ACC_FIELDS[kind].every((field) => !accInput(kind, field).value.trim());
 }
 
 function onMultiStopToggle(on) {
@@ -1854,7 +2005,7 @@ function renderList() {
 }
 
 // Redrawing the list keeps focus on the same control of the same file
-const ROW_CONTROLS = ['.order-grip', '.order-up', '.order-down', '.stop-pick', '.tag-chip input', '.file-label > input', '.eye'];
+const ROW_CONTROLS = ['.order-grip', '.order-up', '.order-down', '.stop-pick', '.acc-tag', '.file-label > input', '.eye'];
 
 function focusedSpot() {
   const node = document.activeElement;
@@ -1882,7 +2033,7 @@ function ordinal(n) {
 
 /**
  * Each checked file's place in its PDF (1, 2, 3…, counted per stop with Multi-stop on), or none
- * when fewer than two files are checked. The list keeps lumper receipts below the PODs, so these
+ * when fewer than two files are checked. The list keeps tagged files below the PODs, so these
  * are simply the list's order.
  */
 function orderPlaces() {
@@ -1906,19 +2057,19 @@ function setCheckedOrder(sorted) {
   state.built.clear();
 }
 
-/** Lumper receipts (whole files) go below the other checked files, keeping their own order. */
+/** Tagged files (Lumper's or Other's) go below the other checked files, keeping their own order. */
 function normalizeOrder() {
   const checked = checkedFiles();
-  const sorted = [...checked.filter((f) => !f.lumper), ...checked.filter((f) => f.lumper)];
+  const sorted = [...checked.filter((f) => !wholeTag(f)), ...checked.filter((f) => wholeTag(f))];
   if (sorted.every((f, i) => f === checked[i])) return false;
   setCheckedOrder(sorted);
   return true;
 }
 
-/** The checked file a step up (-1) or down (1) that `file` can swap with: same stop, both PODs or both receipts. */
+/** The checked file a step up (-1) or down (1) that `file` can swap with: same stop, both PODs or both tagged. */
 function neighbor(file, step) {
   const checked = checkedFiles();
-  const same = (f) => !!f.lumper === !!file.lumper && (!state.multiStop || (f.stop || 1) === (file.stop || 1));
+  const same = (f) => !!wholeTag(f) === !!wholeTag(file) && (!state.multiStop || (f.stop || 1) === (file.stop || 1));
   for (let i = checked.indexOf(file) + step; i >= 0 && i < checked.length; i += step) {
     if (same(checked[i])) return checked[i];
   }
@@ -1947,7 +2098,7 @@ function flashRow(file) {
   row.classList.add('moved');
 }
 
-// ---- files sliding to their new place (the up / down arrows, a Receipt tag, a drop)
+// ---- files sliding to their new place (the up / down arrows, an Accessorial tag, a drop)
 // The list is drawn again from scratch, so each file's spot is measured before and after, and every file
 // that changed places slides from its old spot to its new one: the moved file on top and highlighted, the
 // files it passes going the other way. Nothing slides for people who've asked their computer for less motion.
@@ -2190,8 +2341,8 @@ function fileRow(file) {
   if (!canCombine(file)) text.append(el('span', 'file-note', WHY_NOT[file.kind] || "Can't go into the PDF"));
   const note = stopNote(file) || pageNote(file);
   if (note) text.append(noteEl('file-note picked', note));
-  const lumperLine = lumperNote(file);
-  if (lumperLine) text.append(noteEl('file-note lumper', lumperLine));
+  const accLine = accNote(file);
+  if (accLine) text.append(noteEl('file-note lumper', accLine));
   const rcLine = rcNote(file);
   if (rcLine) text.append(noteEl(`file-note rc${rcLine.going ? '' : ' out'}`, rcLine.text)); // grey once it's not going in
 
@@ -2222,7 +2373,7 @@ function fileRow(file) {
   preview.innerHTML = EYE_SVG;
   preview.addEventListener('click', () => openPreview(file.id));
   row.append(label);
-  // Its place in the PDF, which stop it is, and whether it's a lumper receipt (outside the label,
+  // Its place in the PDF, which stop it is, and its Accessorial tag (outside the label,
   // so using them doesn't tick the file's own box)
   if (canCombine(file) && state.checked.has(file.id)) {
     const tags = el('div', 'row-tags');
@@ -2235,8 +2386,8 @@ function fileRow(file) {
       const mixed = !!(file.pageStops && file.pageStops.size);
       tags.append(stopPicker(file.stop || 1, `Stop for ${file.name}`, mixed, (stop) => setFileStop(file, stop)));
     }
-    const mixed = !!(file.pageLumper && file.pageLumper.size);
-    tags.append(lumperChip(!!file.lumper, mixed, `${file.name}: ${word('receipt')}`, (on) => setFileLumper(file, on)));
+    const mixed = !!(file.pageAcc && file.pageAcc.size);
+    tags.append(accTagPicker(file.accTag || '', mixed, `${file.name}: ${word('accessorialTag')}`, (kind) => setFileAcc(file, kind)));
     row.append(tags);
   }
   row.append(preview);
@@ -2273,7 +2424,7 @@ function updateSelectionUi() {
     box.disabled = state.busy || !canCombine(file);
     box.checked = state.checked.has(file.id);
   }
-  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .tag-chip input, #pv-body .tag-chip input, #file-list .order-grip')) pick.disabled = state.busy;
+  for (const pick of document.querySelectorAll('#file-list .stop-pick, #pv-body .stop-pick, #file-list .acc-tag, #pv-body .acc-tag, #file-list .order-grip')) pick.disabled = state.busy;
   for (const button of document.querySelectorAll('#file-list .order-step')) button.disabled = state.busy || button.dataset.edge === 'yes';
   if (!$('preview').hidden) {
     syncPreviewInclude();
@@ -2292,7 +2443,7 @@ function setChecked(id, on) {
   else state.checked.delete(id);
   if (on && state.multiStop && file) assignStop(file);
   state.built.clear();
-  normalizeOrder(); // a receipt that's ticked again goes back below the PODs
+  normalizeOrder(); // an accessorial file that's checked again goes back below the PODs
   updateSelectionUi();
 }
 
@@ -2301,6 +2452,7 @@ function onRowToggle(file, on) {
   setChecked(file.id, on);
   refreshList();
   if (!$('preview').hidden && state.files[state.previewIndex] === file) syncPreviewPages();
+  addTaggedAccessorials(); // a tagged file brings its accessorial to an open Create email step
 }
 
 /** Redraws the list after a file changes: that can move other files or change their places. */
@@ -2723,9 +2875,11 @@ function onRcLeaveOut() {
       file.pageChoice = null;
       state.checked.delete(file.id);
     } else {
+      const before = wholeTag(file);
       file.pageChoice = new Set(keep);
       normalizePageStops(file);
-      normalizePageLumper(file);
+      normalizePageAcc(file);
+      settleAccOrder(file, before); // (the receipt page left on its own: a tagged file now)
     }
   }
   state.built.clear();
@@ -2733,6 +2887,7 @@ function onRcLeaveOut() {
   countUsage('rateCon', { pages: problems.reduce((sum, { file, pages }) => sum + (pages ? pages.length : (file.pages || 1)), 0), files: problems.length });
   renderList();
   if (!$('preview').hidden) syncPreviewPages();
+  addTaggedAccessorials();
   setStatus('Rate confirmation left out.', 'ok');
 }
 
@@ -3078,11 +3233,11 @@ function pageHolder(file, index, canvas) {
   pick.className = 'stop-pick';
   pick.setAttribute('aria-label', `Stop for page ${index + 1}`);
   pick.addEventListener('change', () => setPageStop(file, index, Number(pick.value)));
-  const chip = lumperChip(false, false, `Page ${index + 1}: ${word('receipt')}`, (on) => setPageLumper(file, index, on));
+  const tag = accTagPicker('', false, `Page ${index + 1}: ${word('accessorialTag')}`, (kind) => setPageAcc(file, index, kind));
   const tags = el('div', 'pv-page-tags');
   const badge = el('span', 'rc-badge', word('rateConBadge'));
   badge.title = 'This page looks like a rate confirmation';
-  tags.append(badge, pick, chip, rotateButton(file, index, holder));
+  tags.append(badge, pick, tag, rotateButton(file, index, holder));
   top.append(bar, moveButtons(file, index, holder), tags);
   holder.append(top, canvas);
   syncPageHolder(holder, file); // right from the start, while later pages still render
@@ -3176,6 +3331,7 @@ function pageStopOf(file, index) {
 function syncPageHolder(holder, file) {
   const index = Number(holder.dataset.page);
   const box = holder.querySelector('.pv-page-bar input');
+  if (!box) return; // (a photo's or a fax page's holder: nothing to tick or tag on it)
   box.checked = isPageIncluded(file, index);
   box.disabled = state.busy || !canCombine(file);
   holder.classList.toggle('excluded', !box.checked);
@@ -3192,12 +3348,8 @@ function syncPageHolder(holder, file) {
   }
   const flags = rcFlags(file);
   holder.querySelector('.rc-badge').hidden = !(flags && flags.has(index));
-  const chip = holder.querySelector('.tag-chip');
-  const lumper = pageLumperOf(file, index);
-  chip.hidden = !box.checked;
-  chip.classList.toggle('on', lumper);
-  chip.querySelector('input').checked = lumper;
-  chip.querySelector('input').disabled = state.busy;
+  holder.querySelector('.acc-pill').hidden = !box.checked;
+  fillAccTag(holder.querySelector('.acc-tag'), pageAccOf(file, index), false);
 }
 
 function isPageIncluded(file, index) {
@@ -3215,6 +3367,7 @@ function syncPreviewPages() {
 
 /** Ticking pages in the preview: those exact pages go in (the file goes in if any are ticked). */
 function onPreviewPageToggle(file) {
+  const before = wholeTag(file);
   const holders = [...document.querySelectorAll('#pv-body .pv-page')];
   const shown = new Set(holders.map((h) => Number(h.dataset.page)));
   const pages = new Set();
@@ -3234,10 +3387,12 @@ function onPreviewPageToggle(file) {
     if (!state.checked.has(file.id)) setChecked(file.id, true);
   }
   normalizePageStops(file);
-  normalizePageLumper(file);
+  normalizePageAcc(file);
   state.built.clear();
+  settleAccOrder(file, before); // the pages left may all be tagged now (or none)
   refreshList();
   syncPreviewPages();
+  addTaggedAccessorials();
 }
 
 async function previewImage(file, body, token, waiting) {
@@ -3589,7 +3744,7 @@ async function withBusy(task) {
   }
 }
 
-/** Save PDF's one file: the checked files in the list's order, lumper receipts last. */
+/** Save PDF's one file: the checked files in the list's order, tagged files last. */
 async function combineChecked() {
   const [group] = fileGroups(false, false);
   if (!group) return null;
@@ -3602,34 +3757,39 @@ async function combineChecked() {
   return result;
 }
 
+/** Save PDF's files: one per stop with Multi-stop on, otherwise one, with the tagged files after the PODs. */
+function saveLayout() {
+  return { splitStops: state.multiStop, splitAcc: false };
+}
+
 /**
- * The files to email or save. `layout` says whether stops and lumper receipts get files of their
- * own: base-1.pdf, base-2.pdf… per stop (whatever their size), and lumperStem.pdf (or
- * lumperStem-1.pdf… per stop) for lumper receipts. A single POD PDF over 10 MB is split into -1, -2… instead.
- * Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
+ * The files to email or save. `layout` says whether stops get files of their own (base-1.pdf,
+ * base-2.pdf… per stop, whatever their size) and whether the files tagged Lumper and Other do (one
+ * each, named stems.lum and stems.oth, with -1, -2… per stop). A single POD PDF over 10 MB is split
+ * into -1, -2… instead. Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
  */
-async function makeFiles(base, layout = layoutOf(null), lumperStem = `${base} Receipt`) {
+async function makeFiles(base, layout = saveLayout(), stems = {}) {
   const files = [];
   const skipped = [];
-  for (const group of fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts)) {
-    const label = [group.lumper ? word('receipt') : '', group.stop ? word('stop', { n: group.stop }) : ''].filter(Boolean).join(', ');
+  for (const group of fileGroups(layout.splitStops, layout.splitAcc, layout.noAcc)) {
+    const label = [group.acc ? word(ACC_WORD[group.acc]) : '', group.stop ? word('stop', { n: group.stop }) : ''].filter(Boolean).join(', ');
     const result = await buildPdf(group.entries, label);
     skipped.push(...result.skipped);
     if (!result.pages) continue;
-    const stem = `${group.lumper ? lumperStem : base}${group.stop ? `-${group.stop}` : ''}`;
+    const stem = `${group.acc ? stems[group.acc] || `${base} ${word(ACC_WORD[group.acc])}` : base}${group.stop ? `-${group.stop}` : ''}`;
     logOrder(`${stem}.pdf`, group.entries);
-    if (!group.lumper && !group.stop) {
-      for (const part of await splitIntoFiles(result.bytes, stem)) files.push({ ...part, pages: part.pages || result.pages });
+    if (!group.stop) { // over 10 MB: split, into 3645493-1, -2… (or 3645493 Lumper-1, -2…)
+      for (const part of await splitIntoFiles(result.bytes, stem)) files.push({ ...part, pages: part.pages || result.pages, acc: group.acc });
     } else {
-      files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, lumper: group.lumper, over: false });
+      files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, acc: group.acc, over: false });
     }
   }
   if (!files.length) {
     setStatus(`None of the checked files could go into a PDF.${leftOutText({ skipped })}`, 'error');
     return null;
   }
-  for (const file of files) if (file.stop || file.lumper) file.over = file.bytes.length > SPLIT_LIMIT; // these aren't split by size
-  if (layout.splitStops || layout.splitLumpers) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
+  for (const file of files) if (file.stop) file.over = file.bytes.length > SPLIT_LIMIT; // stop files aren't split by size
+  if (layout.splitStops || files.some((f) => f.acc)) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
   return { files, skipped, pages: files.reduce((sum, f) => sum + (f.pages || 0), 0) };
 }
 
@@ -3861,10 +4021,16 @@ function recipientsText(t, load = '') {
   return parseAddresses(fill(t.to, load)).join(', ');
 }
 
-/** "pods@example.com · 4 questions" under a template's name (in Email ▾ and the template list). */
-function templateSub(t) {
+/**
+ * "pods@example.com · 4 questions" under a template's name (in Email ▾ and the template lists), with
+ * "Accessorial Only" for those (but not in the Email menu's own Accessorial Only section).
+ */
+function templateSub(t, accOnlyNote = true) {
   const n = questionCount(t);
-  return `${recipientsText(t) || 'No recipients set'}${n ? ` · ${plural(n, 'question')}` : ''}`;
+  const notes = [recipientsText(t) || 'No recipients set'];
+  if (n) notes.push(plural(n, 'question'));
+  if (accOnlyNote && t.accOnly) notes.push(word('accessorialOnly'));
+  return notes.join(' · ');
 }
 
 /** Every email's subject, whatever the template: "3645493 POD(s)" (WORDS.subject). */
@@ -3878,20 +4044,13 @@ function emailFileBase(t, load) {
   return safeName(base || load || state.topic || 'Combined attachments');
 }
 
-/** The lumper receipt PDF's name for an email, without .pdf: the template's lumper file name. */
-function lumperBase(t, load) {
-  const base = fill(receiptName(t), load).trim().replace(/\.pdf$/i, '');
-  return safeName(base || `${load} Receipt`);
-}
-
 /** The files an email will get, named before anything is built (for the hint under the load number). */
-function plannedFiles(base, layout = layoutOf(null), lumperStem = `${base} Receipt`) {
-  const groups = fileGroups(layout.splitStops, layout.splitLumpers, layout.noReceipts);
+function plannedFiles(base, layout, stems = {}) {
+  const groups = fileGroups(layout.splitStops, layout.splitAcc, layout.noAcc);
   if (!groups.length) return { names: [`${base}${layout.splitStops ? '-1' : ''}.pdf`], note: layout.splitStops ? '…' : '' };
-  const names = groups.map((g) => `${g.lumper ? lumperStem : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
+  const names = groups.map((g) => `${g.acc ? stems[g.acc] : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
   let note = '';
-  if (groups.some((g) => !g.stop && !g.lumper) && !likelyOneFile()) note += ` (split into -1, -2… if it's over ${SPLIT_MB} MB)`;
-  if (layout.splitLumpers && !layout.noReceipts && !groups.some((g) => g.lumper)) note += ` · no ${word('receipt').toLowerCase()} tagged`;
+  if (groups.some((g) => !g.stop) && !likelyOneFile()) note += ` (${names.length > 1 ? 'each ' : ''}split into -1, -2… if it's over ${SPLIT_MB} MB)`;
   return { names, note };
 }
 
@@ -3947,23 +4106,19 @@ function emailFields(t, load, acc, lines = true) {
 
 // ---- the separate accessorial email (a template setting)
 
-/** The ticked accessorials' names, in the form's order: Detention, Layover, Lumper, then Other's typed type. */
+/** The picked accessorials' names, in their order: Lumper, Detention, Layover, then Other's typed type. */
 function accessorialTypes(acc) {
   if (!acc) return [];
-  const types = [];
-  if (acc.det.on) types.push(word('detention'));
-  if (acc.lay && acc.lay.on) types.push(word('layover'));
-  if (acc.lum.on) types.push(word('lumper'));
-  if (acc.oth.on) types.push(String(acc.oth.type || '').trim() || word('other'));
-  return types;
+  return ACC_KINDS.filter((kind) => acc[kind] && acc[kind].on)
+    .map((kind) => (kind === 'oth' ? String(acc.oth.type || '').trim() || word('other') : word(ACC_WORD[kind])));
 }
 
-/** Whether Create email makes two emails: the template says so and an accessorial is ticked. */
+/** Whether Create email makes two emails: the template says so and an accessorial is picked. */
 function separateAccessorials(t, acc) {
   return !!(t && t.accSeparate && accessorialTypes(acc).length);
 }
 
-/** "3645493 - Detention/Lumper Request" */
+/** "3645493 - Lumper/Detention Request" */
 function accessorialSubject(load, acc) {
   return word('accessorialSubject', { load: String(load || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
 }
@@ -3991,60 +4146,71 @@ function accessorialFields(t, load, acc) {
   return form;
 }
 
-/** Whether any checked file (or page) is tagged Receipt, and whether anything else is. */
-function receiptMix() {
-  let receipts = false;
+/** Whether any checked file (or page) is tagged Lumper or Other, and whether anything else is. */
+function accMix() {
+  let tagged = false;
   let pods = false;
   for (const file of checkedFiles()) {
     for (const part of partsOfFile(file)) {
-      if (part.lumper) receipts = true;
+      if (part.acc) tagged = true;
       else pods = true;
     }
   }
-  return { receipts, pods };
+  return { tagged, pods };
 }
 
-// ---- accessorials (Detention, Layover, Lumper, Other) for the email body
+// ---- accessorials (Lumper, Detention, Layover, Other): each one picked with Add an accessorial, several on one load
 
-const ACC_FIELDS = {
-  det: ['at', 'in', 'appt', 'out', 'hours'],
-  lay: ['at', 'in', 'appt', 'out'],               // like Detention, without the hours
-  lum: ['at', 'total'],
-  oth: ['at', 'type', 'total'],
-};
+/** A field's box on the Create email step: lay + inDate -> #lay-in-date. */
+function accInput(kind, field) {
+  return $(`${kind}-${field.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`);
+}
 
 function emptyAccessorials() {
-  return {
-    det: { on: false, at: '', in: '', appt: '', out: '', hours: '' },
-    lay: { on: false, at: '', in: '', appt: '', out: '' },
-    lum: { on: false, at: '', total: '' },
-    oth: { on: false, at: '', type: '', total: '' },
-  };
+  const acc = {};
+  for (const kind of ACC_KINDS) {
+    acc[kind] = { on: false };
+    for (const field of ACC_FIELDS[kind]) acc[kind][field] = '';
+  }
+  return acc;
 }
 
+/** What's on the Create email step: each accessorial (on once it's been added) and its boxes, as typed. */
 function readAccessorials() {
   const acc = {};
-  for (const [kind, fields] of Object.entries(ACC_FIELDS)) {
-    acc[kind] = { on: $(`acc-${kind}`).checked };
-    for (const field of fields) acc[kind][field] = $(`${kind}-${field}`).value.trim();
+  for (const kind of ACC_KINDS) {
+    acc[kind] = { on: !$(`acc-${kind}-box`).hidden };
+    for (const field of ACC_FIELDS[kind]) acc[kind][field] = accInput(kind, field).value.trim();
   }
   return acc;
 }
 
 function fillAccessorials(acc) {
-  for (const [kind, fields] of Object.entries(ACC_FIELDS)) {
-    $(`acc-${kind}`).checked = !!acc[kind].on;
-    for (const field of fields) $(`${kind}-${field}`).value = acc[kind][field] || '';
+  for (const kind of ACC_KINDS) {
+    const saved = (acc && acc[kind]) || {};
+    $(`acc-${kind}-box`).hidden = !saved.on;
+    for (const field of ACC_FIELDS[kind]) {
+      const box = accInput(kind, field);
+      box.value = saved[field] || '';
+      markBad(box, false);
+    }
   }
   syncAccessorialBoxes();
 }
 
-/** Shows the boxes for the ticked accessorials. */
+/**
+ * Add an accessorial goes once all four are on the load; the legend says whether one is needed (an
+ * Accessorial Only template); a Shipper/Receiver drop-down with nothing picked shows its prompt in grey.
+ */
 function syncAccessorialBoxes() {
-  for (const kind of Object.keys(ACC_FIELDS)) {
-    $(`acc-${kind}-box`).hidden = !$(`acc-${kind}`).checked;
+  let on = 0;
+  for (const kind of ACC_KINDS) {
+    if (!$(`acc-${kind}-box`).hidden) on++;
     $(`${kind}-at`).classList.toggle('empty', !$(`${kind}-at`).value);
   }
+  $('acc-add-row').hidden = on === ACC_KINDS.length;
+  const t = emailDraft && emailDraft.template;
+  $('acc-need').textContent = t && t.accOnly ? '(pick at least one)' : '(optional)';
 }
 
 /**
@@ -4057,10 +4223,10 @@ function atChoices() {
   return [word('shipper'), ...(stops.length ? stops.map((stop) => word('receiverAtStop', { n: stop })) : [word('receiver')])];
 }
 
-/** Brings the three Shipper/Receiver drop-downs in line with the stops, keeping each pick that's still there. */
+/** Brings the Shipper/Receiver drop-downs in line with the stops, keeping each pick that's still there. */
 function syncAtChoices() {
   const choices = atChoices();
-  for (const kind of Object.keys(ACC_FIELDS)) {
+  for (const kind of ACC_KINDS) {
     const select = $(`${kind}-at`);
     const current = select.value;
     const offered = [...select.options].slice(1).map((option) => option.value);
@@ -4082,49 +4248,92 @@ function money(text) {
   return `$${Number(raw).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** [field id, message] for the first thing to fix, or null. */
-function accessorialProblem(acc) {
+/** How a time or date field is named in a message: "IN time", "APPT time", "OUT date". */
+function accFieldName(field) {
+  const which = /^in/.test(field) ? 'timeIn' : /^out/.test(field) ? 'timeOut' : 'appointment';
+  return `${word(which)} ${ACC_DATE_FIELDS.has(field) ? 'date' : 'time'}`;
+}
+
+/**
+ * [field id, message] for the first thing to fix, or null. An Accessorial Only template needs one
+ * picked, and so does a file tagged Lumper or Other; each one picked needs Shipper or Receiver, and its
+ * times, dates and amounts have to read as such.
+ */
+function accessorialProblem(acc, t) {
+  if (t && t.accOnly && !ACC_KINDS.some((kind) => acc[kind].on)) return ['acc-add', `Add an accessorial first: ${t.name} is Accessorial Only.`];
+  for (const kind of taggedKinds()) { // a file tagged Lumper (or Other) needs that accessorial on the email
+    if (!acc[kind].on) return ['acc-add', `${taggedFile(kind).name} is tagged ${word(ACC_WORD[kind])}. Add ${word(ACC_WORD[kind])}, or change its tag.`];
+  }
   const where = state.multiStop ? `${word('shipper')} or a stop` : `${word('shipper')} or ${word('receiver')}`;
-  if (acc.det.on && !acc.det.at) return ['det-at', `Pick ${where} for ${word('detention')}.`];
-  if (acc.lay.on && !acc.lay.at) return ['lay-at', `Pick ${where} for ${word('layover')}.`];
-  if (acc.lum.on && !acc.lum.at) return ['lum-at', `Pick ${where} for ${word('lumper')}.`];
-  if (acc.lum.on && money(acc.lum.total) === null) return ['lum-total', `The ${word('lumper')} ${word('total').toLowerCase()} should be an amount, like 350.00.`];
-  if (acc.oth.on && !acc.oth.at) return ['oth-at', `Pick ${where} for ${word('other')}.`];
-  if (acc.oth.on && !acc.oth.type) return ['oth-type', `Type what the ${word('other').toLowerCase()} accessorial is.`];
-  if (acc.oth.on && money(acc.oth.total) === null) return ['oth-total', `The ${word('other')} ${word('total').toLowerCase()} should be an amount, like 75.00.`];
+  for (const kind of ACC_KINDS) {
+    const a = acc[kind];
+    if (!a.on) continue;
+    const name = word(ACC_WORD[kind]);
+    if (!a.at) return [`${kind}-at`, `Pick ${where} for ${name}.`];
+    for (const field of ACC_FIELDS[kind]) {
+      const id = accInput(kind, field).id;
+      if (ACC_TIME_FIELDS.has(field) && parseTime(a[field]) === null) return [id, `${name}'s ${accFieldName(field)} should be a time, like 14:30.`];
+      if (ACC_DATE_FIELDS.has(field) && parseDate(a[field]) === null) return [id, `${name}'s ${accFieldName(field)} should be a date, like 10/19/26.`];
+    }
+    if (kind === 'oth' && !a.type) return ['oth-type', `Type what the ${word('other').toLowerCase()} accessorial is.`];
+    if ((kind === 'lum' || kind === 'oth') && money(a.total) === null) {
+      return [`${kind}-total`, `The ${kind === 'lum' ? name : a.type || name} ${word('total').toLowerCase()} should be an amount, like ${kind === 'lum' ? '350.00' : '75.00'}.`];
+    }
+  }
   return null;
 }
 
 /**
- * The ticked accessorials as lines for the email body (blank entries are left out). A template
- * set to say "No Lumper" gets that line when Lumper isn't ticked.
+ * The picked accessorials as lines for the email body (blank entries are left out). Other goes under
+ * its typed type, with the explanation as typed. A template set to say "No Lumper" gets that line when
+ * Lumper isn't picked.
  */
 function accessorialHtml(acc, t, lines = true) {
   if (!acc) acc = emptyAccessorials();
   const blocks = [];
-  const add = (title, at, entries) => {
-    const lines = [`<b>${escapeHtml(title)}</b> – ${escapeHtml(at)}`];
-    for (const [name, value] of entries) if (value) lines.push(`${escapeHtml(name)}: ${escapeHtml(value)}`);
-    blocks.push(lines.join('<br>'));
+  const add = (title, at, entries, text = '') => {
+    const out = [`<b>${escapeHtml(title)}</b> – ${escapeHtml(at)}`];
+    if (text.trim()) out.push(escapeHtml(text.trim()).replace(/\r?\n/g, '<br>'));
+    for (const [name, value] of entries) if (value) out.push(`${escapeHtml(name)}: ${escapeHtml(value)}`);
+    blocks.push(out.join('<br>'));
   };
-  if (lines && acc.det.on) add(word('detention'), acc.det.at, [[word('timeIn'), acc.det.in], [word('appointment'), acc.det.appt], [word('timeOut'), acc.det.out], [word('hoursRequested'), acc.det.hours]]);
-  if (lines && acc.lay.on) add(word('layover'), acc.lay.at, [[word('timeIn'), acc.lay.in], [word('appointment'), acc.lay.appt], [word('timeOut'), acc.lay.out]]);
+  const time = (text) => parseTime(text) || text;
+  const when = (date, at) => [parseDate(date) || date, time(at)].filter(Boolean).join(' '); // "10/19/26 18:00"
   if (acc.lum.on) {
     if (lines) add(word('lumper'), acc.lum.at, [[word('total'), money(acc.lum.total)]]);
   } else if (t && t.noLumper) blocks.push(`<b>No ${escapeHtml(word('lumper'))}</b>`);
-  if (lines && acc.oth.on) add(word('other'), acc.oth.at, [[word('otherType'), acc.oth.type], [word('total'), money(acc.oth.total)]]);
+  if (lines && acc.det.on) add(word('detention'), acc.det.at, [[word('timeIn'), time(acc.det.in)], [word('appointment'), time(acc.det.appt)], [word('timeOut'), time(acc.det.out)], [word('hoursRequested'), acc.det.hours]]);
+  if (lines && acc.lay.on) add(word('layover'), acc.lay.at, [[word('timeIn'), when(acc.lay.inDate, acc.lay.inTime)], [word('appointment'), time(acc.lay.appt)], [word('timeOut'), when(acc.lay.outDate, acc.lay.outTime)]]);
+  if (lines && acc.oth.on) add(String(acc.oth.type || '').trim() || word('other'), acc.oth.at, [[word('total'), money(acc.oth.total)]], String(acc.oth.explain || ''));
   return blocks.join('<br><br>');
 }
 
-/** "Detention at Receiver, Lumper at Receiver $350.00" for the status line and the report. */
+/** "Lumper at Receiver $350.00, Detention at Receiver (2.5 h)" for the status line and the report. */
 function accessorialSummary(acc) {
   if (!acc) return '';
   const parts = [];
+  if (acc.lum.on) parts.push(`${word('lumper')} at ${acc.lum.at}${money(acc.lum.total) ? ` ${money(acc.lum.total)}` : ''}`);
   if (acc.det.on) parts.push(`${word('detention')} at ${acc.det.at}${acc.det.hours ? ` (${acc.det.hours} h)` : ''}`);
   if (acc.lay.on) parts.push(`${word('layover')} at ${acc.lay.at}`);
-  if (acc.lum.on) parts.push(`${word('lumper')} at ${acc.lum.at}${money(acc.lum.total) ? ` ${money(acc.lum.total)}` : ''}`);
   if (acc.oth.on) parts.push(`${acc.oth.type} at ${acc.oth.at}${money(acc.oth.total) ? ` ${money(acc.oth.total)}` : ''}`);
   return parts.join(', ');
+}
+
+/**
+ * The accessorial files' names, without .pdf: the load number and the accessorial, like "3645493
+ * Lumper", and for Other its type, like "3645493 Driver Assist". Never the same as the POD file's
+ * name, or as each other's. { lum, oth }
+ */
+function accessorialStems(load, acc, base) {
+  const name = { lum: word('lumper'), oth: String((acc && acc.oth.type) || '').trim() || word('other') };
+  const stems = {};
+  for (const kind of ACC_FILE_KINDS) {
+    let stem = safeName(`${String(load || '').trim()} ${name[kind]}`.trim());
+    if (base && stem.toLowerCase() === String(base).toLowerCase()) stem = safeName(`${stem} ${word('accessorialTag')}`);
+    stems[kind] = stem;
+  }
+  if (stems.oth.toLowerCase() === stems.lum.toLowerCase()) stems.oth = safeName(`${stems.oth} (${word('other')})`);
+  return stems;
 }
 
 // ---- the menu
@@ -4154,46 +4363,52 @@ function renderEmailMenu() {
   const all = [...teamList, ...mine];
   const pinned = pinnedTemplates();
   const isPinned = new Set(pinned.map((t) => t.id));
-  const groups = (box, list) => { // the templates under their Team and Mine headings
+  const groups = (box, list, accOnlyNote = true) => { // the templates under their Team and Mine headings
     const team = list.filter((t) => teamList.includes(t));
     const own = list.filter((t) => mine.includes(t));
     if (team.length) {
       box.append(el('div', 'menu-group', word('team')));
-      for (const t of team) box.append(templateRow(t, ready, null));
+      for (const t of team) box.append(templateRow(t, ready, null, accOnlyNote));
     }
     if (own.length) {
       box.append(el('div', 'menu-group', word('mine')));
-      for (const t of own) box.append(templateRow(t, ready, null));
+      for (const t of own) box.append(templateRow(t, ready, null, accOnlyNote));
     }
   };
+  // A folded-up section: Other templates, or Accessorial Only (which stays closed when Other templates opens)
+  const section = (kind, label, list, open) => {
+    const toggle = el('button', 'menu-item menu-other-toggle');
+    toggle.type = 'button';
+    toggle.setAttribute('role', 'menuitem');
+    toggle.setAttribute('aria-expanded', String(!!state[open]));
+    toggle.dataset.kind = kind;
+    toggle.append(el('span', 'mi-name', `${label} (${list.length})`));
+    toggle.insertAdjacentHTML('beforeend', '<svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    const box = el('div', 'menu-other');
+    box.id = kind === 'other' ? 'menu-other' : 'menu-acc-only';
+    box.hidden = !state[open];
+    groups(box, list, kind !== 'acc-only');
+    toggle.addEventListener('click', () => {
+      state[open] = !state[open];
+      toggle.setAttribute('aria-expanded', String(state[open]));
+      box.hidden = !state[open];
+      if (state[open]) (box.querySelector('.menu-item:not(:disabled)') || box.querySelector('.menu-item') || toggle).scrollIntoView({ block: 'nearest' });
+    });
+    menu.append(toggle, box);
+  };
+  // Accessorial Only templates (unless they're pinned) wait in their own section, after the rest
+  const accOnly = all.filter((t) => t.accOnly && !isPinned.has(t.id));
+  const usual = all.filter((t) => !t.accOnly);
   if (pinned.length) {
     // Pinned templates first, in your order; the rest wait under Other templates
     menu.append(el('div', 'menu-group', word('pinned')));
     pinned.forEach((t, i) => menu.append(templateRow(t, ready, { at: i, of: pinned.length })));
-    const rest = all.filter((t) => !isPinned.has(t.id));
-    if (rest.length) {
-      const toggle = el('button', 'menu-item menu-other-toggle');
-      toggle.type = 'button';
-      toggle.setAttribute('role', 'menuitem');
-      toggle.setAttribute('aria-expanded', String(!!state.otherOpen));
-      toggle.dataset.kind = 'other';
-      toggle.append(el('span', 'mi-name', `${word('otherTemplates')} (${rest.length})`));
-      toggle.insertAdjacentHTML('beforeend', '<svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
-      const box = el('div', 'menu-other');
-      box.id = 'menu-other';
-      box.hidden = !state.otherOpen;
-      groups(box, rest);
-      toggle.addEventListener('click', () => {
-        state.otherOpen = !state.otherOpen;
-        toggle.setAttribute('aria-expanded', String(state.otherOpen));
-        box.hidden = !state.otherOpen;
-        if (state.otherOpen) (box.querySelector('.menu-item:not(:disabled)') || box.querySelector('.menu-item') || toggle).scrollIntoView({ block: 'nearest' });
-      });
-      menu.append(toggle, box);
-    }
+    const rest = usual.filter((t) => !isPinned.has(t.id));
+    if (rest.length) section('other', word('otherTemplates'), rest, 'otherOpen');
   } else {
-    groups(menu, all);
+    groups(menu, usual);
   }
+  if (accOnly.length) section('acc-only', word('accessorialOnly'), accOnly, 'accOnlyOpen');
   if (all.length) menu.append(el('div', 'menu-sep'));
   menu.append(menuItem(word('blankEmail'), word('blankEmailNote'), () => startEmail(null), !ready));
   if (canMakeOwn()) menu.append(menuItem(word('manageTemplates'), '', openTemplates, false)); // your own; the team's are made in the admin console
@@ -4208,8 +4423,8 @@ function renderEmailMenu() {
       target = pins[Math.min(focusedAt, pins.length - 1)] || menu.querySelector('.menu-other-toggle');
     }
     if (target) target.focus();
-  } else if (focusedKind === 'other') {
-    const toggle = menu.querySelector('.menu-other-toggle');
+  } else if (focusedKind === 'other' || focusedKind === 'acc-only') {
+    const toggle = menu.querySelector(`.menu-other-toggle[data-kind="${focusedKind}"]`);
     if (toggle) toggle.focus();
   }
 }
@@ -4221,11 +4436,11 @@ function pinnedTemplates() {
 }
 
 /** A template in Email ▾: its name and recipients, and its pin (with up and down arrows once it's pinned). */
-function templateRow(t, ready, place) {
+function templateRow(t, ready, place, accOnlyNote = true) {
   const row = el('div', 'menu-row');
   row.dataset.id = t.id;
   row.setAttribute('role', 'none');
-  const item = menuItem(t.name, templateSub(t), () => startEmail(t), !ready);
+  const item = menuItem(t.name, templateSub(t, accOnlyNote), () => startEmail(t), !ready);
   row.append(item);
   if (place) {
     const arrow = (svg, step, label) => {
@@ -4290,7 +4505,8 @@ function menuItem(title, sub, action, disabled) {
 }
 
 function openEmailMenu() {
-  state.otherOpen = false; // pinned templates first; Other templates opens the rest
+  state.otherOpen = false;   // pinned templates first; Other templates opens the rest
+  state.accOnlyOpen = false; // and Accessorial Only stays closed until it's opened itself
   renderEmailMenu();
   $('email-menu').hidden = false;
   $('btn-email').setAttribute('aria-expanded', 'true');
@@ -4335,7 +4551,7 @@ function onMenuKeys(event) {
 
 // ---- the create-email step: load number (every email's subject has it) and accessorials
 
-let emailDraft = null; // { template } while the step is open; template is null for a blank email
+let emailDraft = null; // { template, byTag } while the step is open; template is null for a blank email
 
 /** Picking a template (or Blank email) from Email ▾: its questions first, if it has any, then the step. */
 function startEmail(t) {
@@ -4354,7 +4570,7 @@ function startEmail(t) {
 }
 
 function openLoadForm(t) {
-  emailDraft = { template: t };
+  emailDraft = { template: t, byTag: new Set() }; // byTag: the accessorials a tagged file brought
   hideNameForm();
   $('save-actions').hidden = true;
   $('load-form').hidden = false;
@@ -4362,6 +4578,7 @@ function openLoadForm(t) {
   $('load-number').value = state.loadNumber || guessLoadNumber(state.fileName) || guessLoadNumber(state.topic) || '';
   syncAtChoices(); // before the remembered picks go back in, so a stop picked earlier can be found
   fillAccessorials(state.accessorials);
+  addTaggedAccessorials(); // a file tagged Lumper (or Other) brings its box
   $('acc-error').textContent = '';
   updateLoadHint();
   updateSelectionUi();
@@ -4370,7 +4587,12 @@ function openLoadForm(t) {
 }
 
 function hideLoadForm() {
-  if (!$('load-form').hidden) state.accessorials = readAccessorials(); // kept for this thread
+  closePopup(false);
+  if (!$('load-form').hidden) {
+    state.accessorials = readAccessorials(); // kept for this thread
+    // (but not a box a tag brought and that's still empty: the tag brings it again)
+    for (const kind of emailDraft ? emailDraft.byTag : []) if (accBoxEmpty(kind)) state.accessorials[kind].on = false;
+  }
   $('load-form').hidden = true;
   if ($('name-form').hidden) $('save-actions').hidden = false;
   emailDraft = null;
@@ -4386,19 +4608,22 @@ function updateLoadHint() {
   const separate = separateAccessorials(t, acc);
   const layout = layoutOf(t);
   const base = emailFileBase(t, load || '…');
-  const lumperStem = lumperBase(t, load || '…');
-  const { names, note } = plannedFiles(base, separate ? { ...layout, noReceipts: true } : layout, lumperStem);
+  const stems = accessorialStems(load || '…', acc, base);
+  const { names, note } = plannedFiles(base, separate ? { ...layout, noAcc: true } : layout, stems);
   const to = t ? recipientsText(t, load) : '';
+  // Lumper (or Other) picked without a file tagged for it, when each has a file of its own: worth a word, in case its receipt was missed
+  const tagged = taggedKinds();
+  const untagged = layout.splitAcc ? ACC_FILE_KINDS.filter((kind) => acc[kind].on && !tagged.includes(kind)).map((kind) => ` · no file tagged ${word(ACC_WORD[kind])}`).join('') : '';
   hint.textContent = '';
-  const podEmail = !separate || receiptMix().pods; // only receipts checked: just the request
-  if (podEmail) hint.append(`${t ? t.name : word('blankEmail')}: attaches `, namesFragment(names), `${note}${to ? ` · to ${to}` : ''}`);
+  const podEmail = !separate || accMix().pods; // only accessorial files checked: just the request
+  if (podEmail) hint.append(`${t ? t.name : word('blankEmail')}: attaches `, namesFragment(names), `${note}${separate ? '' : untagged}${to ? ` · to ${to}` : ''}`);
   if (separate) {
-    // The second email: the PODs and receipts, with the accessorials' details
-    const request = plannedFiles(base, layout, lumperStem);
+    // The second email: the PODs and the accessorial files, with the accessorials' details
+    const request = plannedFiles(base, layout, stems);
     const requestTo = accessorialRecipients(t, load).to.join(', ');
-    const both = !layout.splitLumpers && receiptMix().receipts ? ' (PODs and receipts)' : '';
+    const both = !layout.splitAcc && accMix().tagged ? ' (PODs and accessorials)' : ''; // (the same name as the POD email's file)
     if (podEmail) hint.append(el('br'));
-    hint.append(`${accessorialSubject(load || '…', acc)}: attaches `, namesFragment(request.names), `${both}${request.note}${requestTo ? ` · to ${requestTo}` : ''}`);
+    hint.append(`${accessorialSubject(load || '…', acc)}: attaches `, namesFragment(request.names), `${both}${request.note}${untagged}${requestTo ? ` · to ${requestTo}` : ''}`);
   } else if (t && t.accSeparate) {
     hint.append(' · accessorials get their own email');
   }
@@ -4416,8 +4641,11 @@ function onLoadSubmit(event) {
     $('load-number').focus();
     return;
   }
+  // Typed times and dates as they'll be written (dates first: n there also fills its time)
+  for (const input of $('load-form').querySelectorAll('.acc-box:not([hidden]) .date-in')) commitDate(input);
+  for (const input of $('load-form').querySelectorAll('.acc-box:not([hidden]) .time-in')) commitTime(input);
   const acc = readAccessorials();
-  const problem = accessorialProblem(acc);
+  const problem = accessorialProblem(acc, t);
   if (problem) {
     $('acc-error').textContent = problem[1];
     $(problem[0]).focus();
@@ -4433,12 +4661,6 @@ function onLoadSubmit(event) {
   createEmail(t, load, acc).catch(fail);
 }
 
-function onAccessorialPick(kind, on) {
-  syncAccessorialBoxes();
-  $('acc-error').textContent = '';
-  if (on) $(`${kind}-at`).focus();
-}
-
 /** Tidies a typed amount when you leave the box: 350 -> 350.00 */
 function onMoneyChange(event) {
   const value = money(event.target.value);
@@ -4449,6 +4671,595 @@ function onLoadCancel() {
   hideLoadForm();
   setStatus('');
   $('btn-email').focus();
+}
+
+// ---- Add an accessorial, and the × that takes one off again
+
+/** Adds an accessorial's box (from Add an accessorial) and goes to its Shipper/Receiver drop-down. */
+function addAccessorial(kind) {
+  $(`acc-${kind}-box`).hidden = false;
+  syncAccessorialBoxes();
+  $('acc-error').textContent = '';
+  updateLoadHint();
+  $(`${kind}-at`).focus();
+}
+
+/** Takes an accessorial off this load, emptying its boxes, and goes back to Add an accessorial. */
+function removeAccessorial(kind) {
+  closePopup(false);
+  $(`acc-${kind}-box`).hidden = true;
+  if (emailDraft) emailDraft.byTag.delete(kind);
+  for (const field of ACC_FIELDS[kind]) {
+    const box = accInput(kind, field);
+    box.value = '';
+    markBad(box, false);
+  }
+  syncAccessorialBoxes();
+  $('acc-error').textContent = '';
+  updateLoadHint();
+  $('acc-add').focus();
+}
+
+/** Add an accessorial's list: the ones not on this load yet, in their usual order. */
+function openAccMenu() {
+  closePopup(false);
+  const menu = $('acc-menu');
+  menu.textContent = '';
+  for (const kind of ACC_KINDS) {
+    if (!$(`acc-${kind}-box`).hidden) continue;
+    const item = el('button', 'menu-item');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.append(el('span', 'mi-name', word(ACC_WORD[kind])));
+    item.addEventListener('click', () => {
+      closePopup(false);
+      addAccessorial(kind);
+    });
+    menu.append(item);
+  }
+  if (!menu.children.length) return;
+  const button = $('acc-add');
+  openPopup(menu, button, (back) => {
+    button.setAttribute('aria-expanded', 'false');
+    if (back) button.focus();
+  });
+  button.setAttribute('aria-expanded', 'true');
+  menu.querySelector('.menu-item').focus();
+}
+
+function onAccMenuKeys(event) {
+  const items = [...$('acc-menu').querySelectorAll('.menu-item')];
+  const at = items.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    items[(at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    items[event.key === 'Home' ? 0 : items.length - 1].focus();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closePopup(true);
+  } else if (event.key === 'Tab') {
+    closePopup(true); // back on Add an accessorial, so Tab carries on from there
+  }
+}
+
+// ---- pop-ups (Add an accessorial's list, the times, the calendar): one at a time, fixed to the window
+// so the Create email step's scrolling can't clip them
+
+let popup = null; // { node, anchor, onClose } while one is open
+
+function openPopup(node, anchor, onClose) {
+  closePopup(false);
+  popup = { node, anchor, onClose };
+  node.hidden = false;
+  placePopup();
+}
+
+/** Under its box, or over it when there's no room below; always inside the panel. */
+function placePopup() {
+  if (!popup) return;
+  const zoom = pageZoom(); // (where things are on the page is in zoomed pixels, with the text size; the pop-up's own style isn't)
+  const { node, anchor } = popup;
+  const box = anchor.getBoundingClientRect();
+  node.style.minWidth = `${Math.round(box.width / zoom)}px`;
+  const { width: w, height: h } = node.getBoundingClientRect();
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  let top = box.bottom + 4;
+  if (top + h > height - 6) top = box.top - 4 - h >= 6 ? box.top - 4 - h : Math.max(6, height - 6 - h);
+  const left = Math.max(6, Math.min(box.left, width - 6 - w));
+  node.style.top = `${Math.round(top / zoom)}px`;
+  node.style.left = `${Math.round(left / zoom)}px`;
+}
+
+/** Closes the open pop-up; back: focus goes back to what opened it. */
+function closePopup(back) {
+  if (!popup) return;
+  const { node, onClose } = popup;
+  popup = null;
+  node.hidden = true;
+  if (onClose) onClose(back);
+}
+
+/** Inside the pop-up or the box it belongs to (its button, or the time box's input). */
+function inPopupArea(target) {
+  return !!popup && !!target && (popup.node.contains(target) || popup.anchor.contains(target));
+}
+
+function wirePopups() {
+  document.addEventListener('pointerdown', (event) => {
+    if (popup && !inPopupArea(event.target)) closePopup(false);
+  }, true);
+  document.addEventListener('focusin', (event) => {
+    if (popup && !inPopupArea(event.target)) closePopup(false);
+  });
+  // The step scrolls under it: the pop-up follows its box, and closes once the box scrolls out of sight
+  $('load-form').addEventListener('scroll', () => {
+    if (!popup) return;
+    const form = $('load-form').getBoundingClientRect();
+    const box = popup.anchor.getBoundingClientRect();
+    if (box.bottom < form.top || box.top > form.bottom) closePopup(false);
+    else placePopup();
+  });
+  window.addEventListener('resize', () => closePopup(false));
+  $('acc-add').addEventListener('click', () => (popup && popup.node === $('acc-menu') ? closePopup(true) : openAccMenu()));
+  $('acc-add').addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    openAccMenu();
+  });
+  $('acc-menu').addEventListener('keydown', onAccMenuKeys);
+  for (const button of document.querySelectorAll('.acc-remove')) button.addEventListener('click', () => removeAccessorial(button.dataset.remove));
+  for (const input of document.querySelectorAll('#load-form .time-in')) wireTimeBox(input);
+  for (const input of document.querySelectorAll('#load-form .date-in')) wireDateBox(input);
+  wireCalendar();
+}
+
+/** Marks a box (and its time or date box's frame) as not right, or right again. */
+function markBad(input, bad) {
+  if (bad) input.setAttribute('aria-invalid', 'true');
+  else input.removeAttribute('aria-invalid');
+  const frame = input.closest('.tbox, .dbox');
+  if (frame) frame.classList.toggle('bad', bad);
+}
+
+/** Accessorial boxes' names for screen readers, from WORDS: "Layover IN date" */
+function nameAccessorialBoxes() {
+  for (const kind of ACC_KINDS) {
+    for (const field of ACC_FIELDS[kind]) {
+      if (!ACC_TIME_FIELDS.has(field) && !ACC_DATE_FIELDS.has(field)) continue;
+      const label = kind === 'lay' ? accFieldName(field) : word(field === 'in' ? 'timeIn' : field === 'out' ? 'timeOut' : 'appointment');
+      accInput(kind, field).setAttribute('aria-label', `${word(ACC_WORD[kind])} ${label}`);
+    }
+  }
+}
+
+// ---- times: 24-hour, from a list every 15 minutes or typed (830, 0830, 8:30a, 2:37 pm, 1430; n is now)
+
+const TIME_STEP = 15; // minutes between the times in the list
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function hhmm(hours, minutes) {
+  return `${pad2(hours)}:${pad2(minutes)}`;
+}
+
+/** A typed time as 24-hour "14:30", '' when it's blank, or null when it isn't a time. */
+function parseTime(text, now = new Date()) {
+  const s = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!s) return '';
+  if (s === 'n' || s === 'now') return hhmm(now.getHours(), now.getMinutes());
+  if (s === 'noon') return '12:00';
+  if (s === 'midnight') return '00:00';
+  const m = /^(\d{1,2})(?:\s*[:.h]?\s*(\d{2}))?(?::\d{2})?\s*(?:([ap])\.?\s*(?:m\.?)?)?$/.exec(s);
+  if (!m) return null;
+  let hours = Number(m[1]);
+  const minutes = m[2] === undefined ? 0 : Number(m[2]);
+  if (minutes > 59) return null;
+  if (m[3]) { // 12-hour, with a or p (or am, pm, a.m.)
+    if (hours > 12) return null;
+    if (m[3] === 'p' && hours > 0 && hours < 12) hours += 12;
+    if (m[3] === 'a' && hours === 12) hours = 0;
+  } else if (hours > 23) return null;
+  return hhmm(hours, minutes);
+}
+
+/** The list's time nearest to "14:37" (as its place in the list). */
+function nearestSlot(time) {
+  const [h, m] = time.split(':').map(Number);
+  const slots = (24 * 60) / TIME_STEP;
+  return Math.round((h * 60 + m) / TIME_STEP) % slots;
+}
+
+let timeBox = null; // { input, nav } while a time list is open; nav: moved with the arrows (Enter then picks it)
+
+function wireTimeBox(input) {
+  const frame = input.closest('.tbox');
+  const button = el('button', 'tbox-btn');
+  button.type = 'button';
+  button.tabIndex = -1; // (the down arrow in the box opens the list too)
+  button.setAttribute('aria-label', 'Times');
+  button.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  frame.append(button);
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'none');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-controls', 'time-list');
+  button.addEventListener('mousedown', (event) => event.preventDefault()); // the box keeps the focus
+  button.addEventListener('click', () => {
+    if (timeBox && timeBox.input === input) closePopup(false);
+    else openTimeList(input);
+    input.focus();
+  });
+  input.addEventListener('keydown', (event) => onTimeKeys(event, input));
+  input.addEventListener('input', () => {
+    markBad(input, false);
+    if (!timeBox || timeBox.input !== input) return;
+    timeBox.nav = false; // typing: Enter keeps what's typed
+    const typed = parseTime(input.value);
+    if (typed) highlightTime(nearestSlot(typed), true);
+  });
+  input.addEventListener('change', () => commitTime(input));
+}
+
+/** Tidies a typed time into 14:30 (n becomes the time now); marks it when it isn't a time. */
+function commitTime(input) {
+  const time = parseTime(input.value);
+  if (time === null) {
+    markBad(input, true);
+    return;
+  }
+  input.value = time;
+  markBad(input, false);
+}
+
+function buildTimeList() {
+  const list = $('time-list');
+  if (list.children.length) return list;
+  const slots = (24 * 60) / TIME_STEP;
+  for (let i = 0; i < slots; i++) {
+    const item = el('li', '', hhmm(Math.floor((i * TIME_STEP) / 60), (i * TIME_STEP) % 60));
+    item.id = `time-${i}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', 'false');
+    list.append(item);
+  }
+  list.addEventListener('mousedown', (event) => event.preventDefault()); // the time box keeps the focus
+  list.addEventListener('click', (event) => {
+    const item = event.target.closest('li');
+    if (item && timeBox) pickTime(timeBox.input, item.textContent);
+  });
+  list.addEventListener('mousemove', (event) => {
+    const item = event.target.closest('li');
+    if (item && timeBox) highlightTime(Number(item.id.slice(5)), false);
+  });
+  return list;
+}
+
+/** Opens the list under a time box, at the time typed in it (or the time now), so it's a click away. */
+function openTimeList(input) {
+  closePopup(false); // (first, so another box's list closing can't undo this one)
+  const list = buildTimeList();
+  const typed = parseTime(input.value);
+  for (const item of list.children) item.setAttribute('aria-selected', String(!!typed && item.textContent === typed));
+  timeBox = { input, nav: false };
+  openPopup(list, input.closest('.tbox'), () => {
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    for (const item of list.querySelectorAll('.active')) item.classList.remove('active');
+    timeBox = null;
+  });
+  input.setAttribute('aria-expanded', 'true');
+  const now = new Date();
+  highlightTime(nearestSlot(typed || hhmm(now.getHours(), now.getMinutes())), true);
+}
+
+/** Highlights a time in the open list (scroll: bring it to the middle). */
+function highlightTime(i, scroll) {
+  const list = $('time-list');
+  const item = list.children[i];
+  if (!item || !timeBox) return;
+  for (const other of list.querySelectorAll('.active')) if (other !== item) other.classList.remove('active');
+  item.classList.add('active');
+  timeBox.input.setAttribute('aria-activedescendant', item.id);
+  if (scroll) list.scrollTop = item.offsetTop - list.clientHeight / 2 + item.offsetHeight / 2;
+  else if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+  else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+}
+
+function pickTime(input, time) {
+  input.value = time;
+  markBad(input, false);
+  $('acc-error').textContent = '';
+  closePopup(false);
+  input.focus();
+  updateLoadHint();
+}
+
+function onTimeKeys(event, input) {
+  const open = !!timeBox && timeBox.input === input;
+  const list = $('time-list');
+  const active = open ? list.querySelector('.active') : null;
+  const at = active ? Number(active.id.slice(5)) : -1;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || ((event.key === 'PageDown' || event.key === 'PageUp') && open)) {
+    event.preventDefault();
+    if (!open) {
+      openTimeList(input);
+      const active = list.querySelector('.active');
+      timeBox.nav = !input.value.trim() || (!!active && active.textContent === parseTime(input.value)); // Enter then picks it
+      return;
+    }
+    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 4, PageUp: -4 }[event.key]; // a page is an hour
+    timeBox.nav = true;
+    highlightTime(Math.max(0, Math.min(list.children.length - 1, at + step)), false);
+  } else if (event.key === 'Enter' && open) {
+    event.preventDefault(); // (not Create email)
+    if (timeBox.nav && active) pickTime(input, active.textContent);
+    else {
+      closePopup(false);
+      commitTime(input);
+    }
+  } else if (event.key === 'Escape' && open) {
+    event.preventDefault();
+    event.stopPropagation(); // just the list, not the whole step
+    closePopup(false);
+  } else if (event.key === 'Tab' && open) {
+    if (timeBox.nav && active) input.value = active.textContent;
+    closePopup(false);
+    commitTime(input);
+  }
+}
+
+// ---- dates: a calendar, or typed in most ways (10/19, 10-19-2026, 2026-10-19, Oct 19, 19 October),
+// shown as MM/DD/YY. No year is this year; t or today is today; n is today, and the time now in its time box
+
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+function mdy(date) {
+  return `${pad2(date.getMonth() + 1)}/${pad2(date.getDate())}/${pad2(date.getFullYear() % 100)}`;
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate(); // month 1-12
+}
+
+/** "oct", "october", "sept" -> 10, 10, 9; null for anything else. */
+function monthNumber(text) {
+  if (text.length < 3) return null;
+  const at = MONTH_NAMES.findIndex((name) => name.startsWith(text));
+  return at < 0 ? null : at + 1;
+}
+
+/** A typed date as "10/19/26", '' when it's blank, or null when it isn't a date. */
+function parseDate(text, now = new Date()) {
+  let s = String(text || '').trim().toLowerCase();
+  if (!s) return '';
+  if (['t', 'today', 'n', 'now'].includes(s)) return mdy(now);
+  s = s.replace(/^(?:sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?,?\s*/, '')  // "Mon, Oct 19"
+    .replace(/(\d)(?:st|nd|rd|th)\b/g, '$1')                            // "19th"
+    .replace(/\bof\b/g, ' ')                                            // "19th of October"
+    .replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+  let year = null;
+  let month = null;
+  let day = null;
+  let m;
+  if ((m = /^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/.exec(s))) [year, month, day] = [m[1], m[2], m[3]].map(Number);
+  else if ((m = /^(\d{1,2})[-/. ](\d{1,2})(?:[-/. ](\d{2}|\d{4}))?$/.exec(s))) [month, day, year] = [Number(m[1]), Number(m[2]), m[3] ? Number(m[3]) : null];
+  else if (/^\d{4}$|^\d{6}$/.test(s)) [month, day, year] = [Number(s.slice(0, 2)), Number(s.slice(2, 4)), s.length === 6 ? Number(s.slice(4)) : null];
+  else if (/^\d{8}$/.test(s)) {
+    const [mo, d, y] = [Number(s.slice(0, 2)), Number(s.slice(2, 4)), Number(s.slice(4))]; // MMDDYYYY, else YYYYMMDD
+    [month, day, year] = mo >= 1 && mo <= 12 && d >= 1 && d <= daysInMonth(y, mo) ? [mo, d, y] : [Number(s.slice(4, 6)), Number(s.slice(6)), Number(s.slice(0, 4))];
+  } else if ((m = /^([a-z]+)\.? ?(\d{1,2})(?: (\d{2}|\d{4}))?$/.exec(s))) [month, day, year] = [monthNumber(m[1]), Number(m[2]), m[3] ? Number(m[3]) : null];
+  else if ((m = /^(\d{1,2})[ -]?([a-z]+)\.?(?:[ -](\d{2}|\d{4}))?$/.exec(s))) [month, day, year] = [monthNumber(m[2]), Number(m[1]), m[3] ? Number(m[3]) : null];
+  else return null;
+  if (year === null) year = now.getFullYear();
+  else if (year < 100) year += 2000;
+  if (!month || month < 1 || month > 12 || !day || day < 1 || day > daysInMonth(year, month)) return null;
+  return mdy(new Date(year, month - 1, day));
+}
+
+/** "10/19/26" -> that day (a Date); null for anything else. */
+function dateOf(text) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{2})$/.exec(String(text || ''));
+  return m ? new Date(2000 + Number(m[3]), Number(m[1]) - 1, Number(m[2])) : null;
+}
+
+function wireDateBox(input) {
+  const frame = input.closest('.dbox');
+  const button = el('button', 'dbox-btn');
+  button.type = 'button';
+  button.setAttribute('aria-label', `Calendar: ${input.getAttribute('aria-label') || 'date'}`);
+  button.setAttribute('aria-haspopup', 'dialog');
+  button.setAttribute('aria-expanded', 'false');
+  button.innerHTML = '<svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 8.5h14M7 2.8v3.2M13 2.8v3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  frame.append(button);
+  button.addEventListener('click', () => {
+    if (calBox && calBox.input === input) closePopup(true);
+    else openCalendar(input);
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' && event.altKey) {
+      event.preventDefault();
+      openCalendar(input);
+    }
+  });
+  input.addEventListener('input', () => markBad(input, false));
+  input.addEventListener('change', () => commitDate(input));
+}
+
+/** Tidies a typed date into 10/19/26; n also puts the time now in its time box. Marks it when it isn't a date. */
+function commitDate(input) {
+  const raw = input.value.trim().toLowerCase();
+  const date = parseDate(raw);
+  if (date === null) {
+    markBad(input, true);
+    return;
+  }
+  input.value = date;
+  markBad(input, false);
+  const time = input.dataset.time && $(input.dataset.time);
+  if (time && (raw === 'n' || raw === 'now')) {
+    const now = new Date();
+    time.value = hhmm(now.getHours(), now.getMinutes());
+    markBad(time, false);
+  }
+}
+
+// ---- the calendar
+
+let calBox = null; // { input, month, focus, picked } while it's open: month is the 1st of the month shown
+
+function sameDay(a, b) {
+  return !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+/** Opens the calendar on the box's date (or today), with that day ready for the arrow keys. */
+function openCalendar(input) {
+  closePopup(false); // (first, so another box's calendar closing can't undo this one)
+  const picked = dateOf(parseDate(input.value) || '');
+  const focus = picked || startOfToday();
+  const button = input.closest('.dbox').querySelector('.dbox-btn');
+  calBox = { input, month: new Date(focus.getFullYear(), focus.getMonth(), 1), focus, picked };
+  renderCalendar();
+  openPopup($('cal'), input.closest('.dbox'), (back) => {
+    calBox = null;
+    button.setAttribute('aria-expanded', 'false');
+    if (back) input.focus();
+  });
+  button.setAttribute('aria-expanded', 'true');
+  focusCalDay();
+}
+
+function renderCalendar() {
+  const { month, focus, picked } = calBox;
+  const today = startOfToday();
+  $('cal-title').textContent = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const grid = $('cal-grid');
+  grid.textContent = '';
+  const head = el('tr');
+  for (const name of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
+    const cell = el('th', 'cal-dow', name.slice(0, 2));
+    cell.scope = 'col';
+    cell.abbr = name;
+    head.append(cell);
+  }
+  const thead = el('thead');
+  thead.append(head);
+  const body = el('tbody');
+  const first = new Date(month.getFullYear(), month.getMonth(), 1 - month.getDay()); // the Sunday on or before the 1st
+  for (let week = 0; week < 6; week++) {
+    const row = el('tr');
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + week * 7 + i);
+      const cell = el('td');
+      const button = el('button', 'cal-day', String(day.getDate()));
+      button.type = 'button';
+      button.tabIndex = sameDay(day, focus) ? 0 : -1;
+      button.dataset.day = String(day.getTime());
+      button.setAttribute('aria-label', day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }));
+      if (day.getMonth() !== month.getMonth()) button.classList.add('out');
+      if (sameDay(day, today)) {
+        button.classList.add('today');
+        button.setAttribute('aria-current', 'date');
+      }
+      if (sameDay(day, picked)) {
+        button.classList.add('picked');
+        cell.setAttribute('aria-selected', 'true');
+      }
+      cell.append(button);
+      row.append(cell);
+    }
+    body.append(row);
+  }
+  grid.append(thead, body);
+}
+
+function focusCalDay() {
+  const button = $('cal-grid').querySelector('.cal-day[tabindex="0"]');
+  if (button) button.focus();
+}
+
+/** Moves the calendar's focus to a day, turning the month when it's in another one. */
+function moveCalFocus(day) {
+  calBox.focus = day;
+  if (day.getMonth() !== calBox.month.getMonth() || day.getFullYear() !== calBox.month.getFullYear()) {
+    calBox.month = new Date(day.getFullYear(), day.getMonth(), 1);
+  }
+  renderCalendar();
+  focusCalDay();
+}
+
+/** Turns the month (prev and next), keeping the same day where it can. */
+function turnCalMonth(step) {
+  const { month, focus } = calBox;
+  const next = new Date(month.getFullYear(), month.getMonth() + step, 1);
+  calBox.month = next;
+  calBox.focus = new Date(next.getFullYear(), next.getMonth(), Math.min(focus.getDate(), daysInMonth(next.getFullYear(), next.getMonth() + 1)));
+  renderCalendar();
+}
+
+function pickDate(day) {
+  const { input } = calBox;
+  input.value = mdy(day);
+  markBad(input, false);
+  $('acc-error').textContent = '';
+  closePopup(true);
+  updateLoadHint();
+}
+
+function wireCalendar() {
+  $('cal-prev').addEventListener('click', () => turnCalMonth(-1));
+  $('cal-next').addEventListener('click', () => turnCalMonth(1));
+  $('cal-today').addEventListener('click', () => pickDate(startOfToday()));
+  $('cal-grid').addEventListener('click', (event) => {
+    const button = event.target.closest('.cal-day');
+    if (button && calBox) pickDate(new Date(Number(button.dataset.day)));
+  });
+  $('cal').addEventListener('keydown', (event) => {
+    if (!calBox) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation(); // just the calendar, not the whole step
+      closePopup(true);
+      return;
+    }
+    if (event.key === 'Tab') { // Tab goes round the calendar's buttons: prev, next, the day, Today
+      const stops = [$('cal-prev'), $('cal-next'), $('cal-grid').querySelector('.cal-day[tabindex="0"]'), $('cal-today')].filter(Boolean);
+      const at = stops.indexOf(document.activeElement);
+      event.preventDefault();
+      stops[(at + (event.shiftKey ? -1 : 1) + stops.length) % stops.length].focus();
+      return;
+    }
+    if (!event.target.closest('.cal-day')) return;
+    const { focus } = calBox;
+    const shift = (days) => new Date(focus.getFullYear(), focus.getMonth(), focus.getDate() + days);
+    const months = (n) => {
+      const target = new Date(focus.getFullYear(), focus.getMonth() + n, 1);
+      return new Date(target.getFullYear(), target.getMonth(), Math.min(focus.getDate(), daysInMonth(target.getFullYear(), target.getMonth() + 1)));
+    };
+    const moves = {
+      ArrowLeft: () => shift(-1),
+      ArrowRight: () => shift(1),
+      ArrowUp: () => shift(-7),
+      ArrowDown: () => shift(7),
+      Home: () => shift(-focus.getDay()),
+      End: () => shift(6 - focus.getDay()),
+      PageUp: () => months(event.shiftKey ? -12 : -1),
+      PageDown: () => months(event.shiftKey ? 12 : 1),
+    };
+    if (!moves[event.key]) return;
+    event.preventDefault();
+    moveCalFocus(moves[event.key]());
+  });
 }
 
 // ---- a template's questions: a pop-up before the create-email step
@@ -4609,32 +5420,32 @@ function onQuizKeys(event) {
 async function createEmail(template, load, acc) {
   const base = emailFileBase(template, load);
   const layout = layoutOf(template);
-  const lumperStem = lumperBase(template, load);
+  const stems = accessorialStems(load, acc, base);
   const separate = separateAccessorials(template, acc);
-  const result = await withBusy(() => makeFiles(base, layout, lumperStem));
+  const result = await withBusy(() => makeFiles(base, layout, stems));
   if (!result) return;
 
   // The emails to open, each with its files: the usual one, or with the accessorials in a separate
-  // email, the PODs in one and the request (with the PODs and receipts) in the other
+  // email, the PODs in one and the request (with the PODs and the accessorial files) in the other
   const emails = [];
+  const mix = accMix();
   if (!separate) {
     emails.push({ form: emailFields(template, load, acc), files: result.files });
   } else {
-    const mix = receiptMix();
-    let podFiles = result.files;
-    if (mix.receipts && layout.splitLumpers) podFiles = result.files.filter((f) => !f.lumper);
-    else if (mix.receipts && mix.pods) {
-      const pods = await withBusy(() => makeFiles(base, { ...layout, noReceipts: true }, lumperStem));
+    let podFiles = result.files.filter((f) => !f.acc);
+    if (mix.tagged && mix.pods && !layout.splitAcc) {
+      // The tagged files are in with the PODs (no file of their own): the POD email gets a file made without them
+      const pods = await withBusy(() => makeFiles(base, { ...layout, noAcc: true }, stems));
       if (!pods) return;
       podFiles = pods.files;
     }
-    // Only receipts checked (a lumper request on its own): just the request, no empty POD email
+    // Only accessorial files checked (a lumper request on its own): just the request, no empty POD email
     if (mix.pods) emails.push({ form: emailFields(template, load, acc, false), files: podFiles });
     emails.push({ form: accessorialFields(template, load, acc), files: result.files });
   }
   const namesOf = (files) => files.map((f) => f.name).join(', ');
-  // The request's file has the same name as the POD email's when the receipts go in it, so say so
-  const both = separate && !layout.splitLumpers && receiptMix().receipts ? ' (PODs and receipts)' : '';
+  // The request's file has the same name as the POD email's when the accessorial files go in it, so say so
+  const both = separate && !layout.splitAcc && mix.tagged ? ' (PODs and accessorials)' : '';
   const toOf = (form) => (form.toRecipients || []).join(', ');
   const allFiles = [...new Set(emails.flatMap((e) => e.files))];
 
@@ -4715,7 +5526,7 @@ async function createEmail(template, load, acc) {
   if (emails.length === 1) {
     const [only] = emails;
     const to = toOf(only.form);
-    // (with the accessorials in a separate email, this is the request: only receipts were checked)
+    // (with the accessorials in a separate email, this is the request: only accessorial files were checked)
     const what = separate ? `: ${only.form.subject}` : '';
     const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
     const extra = `${extras ? ` In the message: ${extras}.` : ''}${tail}`;
@@ -4876,7 +5687,7 @@ async function splitIntoFiles(bytes, base) {
 function oversizeNote(files) {
   const over = files.filter((f) => f.over);
   if (!over.length) return '';
-  const why = over[0].stop || over[0].lumper ? ' (stop and receipt files aren\'t split by size)' : ', because a single page is that big';
+  const why = over[0].stop ? ' (stop files aren\'t split by size)' : ', because a single page is that big';
   return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over ${SPLIT_MB} MB${why}.`;
 }
 
@@ -4998,11 +5809,12 @@ function cleanTemplates(list) {
       body: String(t.body || ''),
       file: String(t.file || ''),
       stopFiles: t.stopFiles !== false,             // Multi-stop: each stop its own file (else all stops in one)
-      lumperSeparate: !!t.lumperSeparate,           // lumper receipts in their own file
-      lumperName: receiptName(t),
+      lumperSeparate: !!t.lumperSeparate,           // Accessorials in their own file: each one tagged (Lumper, Other) in a file of its own
+      lumperName: receiptName(t),                   // (that file's own name until 0.23: kept for older panels)
       receiptNamed: !!t.receiptNamed,             // saved in 0.16 or later: its receipt name is what was typed
-      noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't ticked
-      accSeparate: !!t.accSeparate,                 // accessorials in a separate email, when one is ticked
+      accOnly: !!t.accOnly,                         // Accessorial Only: for customers that get the POD only with an accessorial
+      noLumper: !!t.noLumper,                       // say "No Lumper" when Lumper isn't picked
+      accSeparate: !!t.accSeparate,                 // accessorials in a separate email, when one is picked
       accTo: String(t.accTo || ''),                 // that email's To (blank: the POD email's) and CC (blank: none)
       accCc: String(t.accCc || ''),
       accBody: String(t.accBody || ''),             // its message (blank: WORDS.accessorialIntro)
@@ -5146,7 +5958,7 @@ function cleanTeam(data) {
     azure: cleanAzure(data && data.azure),
     repTemplates: !!(data && data.repTemplates), // reps may make their own templates (off to start)
     rateCon: cleanRateCon(data && data.rateCon),  // the sample rate confirmation (null: check is off)
-    receiptWords: cleanReceiptWords(data && data.receiptWords), // file names that start out tagged Receipt (null: lumper, receipt)
+    receiptWords: cleanReceiptWords(data && data.receiptWords), // file names that start out tagged Lumper (null: lumper, receipt)
     usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
     sentWith: !!(data && data.sentWith),         // the sent with restack line on every email (off to start)
   };
@@ -5411,8 +6223,9 @@ function editTemplate(scope, id) {
   $('tpl-no-lumper').checked = !!(t && t.noLumper);
   $('tpl-stop-files').checked = !!t && t.stopFiles !== false; // a new template starts with every box unticked
   $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
-  $('tpl-lumper-name').value = receiptName(t);
-  syncLumperNameRow();
+  syncAccFilesHint();
+  $('tpl-acc-only').checked = !!(t && t.accOnly);
+  syncAccOnlyHint();
   $('tpl-acc-sep').checked = !!(t && t.accSeparate);
   $('tpl-acc-to').value = t ? t.accTo || '' : '';
   $('tpl-acc-cc').value = t ? t.accCc || '' : '';
@@ -5463,9 +6276,14 @@ function onTemplateDuplicate() {
   log(`Templates: copying "${name}"`);
 }
 
-/** Shows the lumper file name box only when lumper receipts get their own file. */
-function syncLumperNameRow() {
+/** Says how the accessorial files are named, once Accessorials in their own file is ticked. */
+function syncAccFilesHint() {
   $('tpl-lumper-row').hidden = !$('tpl-lumper-sep').checked;
+}
+
+/** Says what Accessorial Only does, once it's ticked. */
+function syncAccOnlyHint() {
+  $('tpl-acc-only-hint').hidden = !$('tpl-acc-only').checked;
 }
 
 /** Shows the accessorial email's To, CC and message only when the template sends one. */
@@ -5647,9 +6465,6 @@ const ADDRESS_LOOK = /^[^\s@<>()]+@[^\s@<>()]+\.[^\s@<>()]+$/; // something@some
 
 function templateProblem(t) {
   if (!t.name) return 'Give the template a name.';
-  if (t.lumperSeparate && fill(t.lumperName, 'X').toLowerCase() === fill(t.file || '{load}', 'X').toLowerCase()) {
-    return 'The receipt file needs a different name from the PDF name.';
-  }
   for (const [label, text] of [['To', t.to], ['CC', t.cc], ['Accessorial email To', t.accTo], ['Accessorial email CC', t.accCc]]) {
     const bad = badAddress(text);
     if (bad) return `${label}: "${bad}" doesn't look like an email address.`;
@@ -5839,6 +6654,7 @@ async function saveTeamDraft(changes) {
 async function onTemplateSubmit(event) {
   event.preventDefault();
   if (!editing) return;
+  const before = editing.id ? (editing.scope === 'team' ? teamTemplates() : state.myTemplates).find((x) => x.id === editing.id) : null;
   const data = {
     id: editing.id || newId(),
     name: $('tpl-name').value.trim(),
@@ -5846,6 +6662,7 @@ async function onTemplateSubmit(event) {
     cc: $('tpl-cc').value.trim(),
     body: $('tpl-message').value.replace(/\s+$/, ''),
     file: $('tpl-file').value.trim().replace(/\.pdf$/i, '') || '{load}',
+    accOnly: $('tpl-acc-only').checked,
     noLumper: $('tpl-no-lumper').checked,
     accSeparate: $('tpl-acc-sep').checked,
     accTo: $('tpl-acc-to').value.trim(),
@@ -5853,7 +6670,7 @@ async function onTemplateSubmit(event) {
     accBody: $('tpl-acc-message').value.replace(/\s+$/, ''),
     stopFiles: $('tpl-stop-files').checked,
     lumperSeparate: $('tpl-lumper-sep').checked,
-    lumperName: $('tpl-lumper-name').value.trim().replace(/\.pdf$/i, '') || NEW_TEMPLATE.lumperName,
+    lumperName: before ? receiptName(before) : NEW_TEMPLATE.lumperName, // (no longer asked: the accessorial file is named for the picks)
     receiptNamed: true,
     questions: null,
   };
@@ -6005,7 +6822,7 @@ function cleanReceiptWords(value) {
   return [...new Set(words)].slice(0, 20);
 }
 
-/** The words that make a file start out tagged Receipt (the team's, else lumper and receipt). */
+/** The words that make a file start out tagged Lumper (the team's, else lumper and receipt). */
 function receiptWords() {
   const settings = teamSettings();
   return settings && settings.receiptWords ? settings.receiptWords : DEFAULT_RECEIPT_WORDS;
@@ -6025,7 +6842,7 @@ async function onReceiptWordsSave(words) {
     setStatusIn('rw-status', `Couldn't save them: ${error.message}`, 'error');
     return;
   }
-  log(`Receipt file names: ${list.join(', ') || 'none'} (not published yet)`);
+  log(`Accessorial file names: ${list.join(', ') || 'none'} (not published yet)`);
   renderPublishBox();
   renderReceiptWords(list.length ? `Saved. ${publishWhere()} to share them with your reps.` : 'Saved with no words, so nothing is tagged by its name. Publish to share it.', 'ok');
   applyReceiptNames();
@@ -6601,7 +7418,7 @@ function usageFigures(files) {
     pdfs: files.length,
     pages: files.reduce((sum, file) => sum + (file.pages || 0), 0),
     files: checkedFiles().length,
-    split: files.filter((file) => !file.stop && !file.lumper).length > 1, // over 10 MB, in parts
+    split: files.filter((file) => !file.stop && !file.acc).length > 1, // over 10 MB, in parts
     multiStop: !!state.multiStop,
   };
 }
@@ -7522,8 +8339,9 @@ function wireReadUi() {
     }
     state.built.clear();
     normalizeOrder();
-    renderList(); // places, stop pickers and lumper tags come and go with the ticks
+    renderList(); // places, stop pickers and Accessorial tags come and go with the ticks
     if (!$('preview').hidden) syncPreviewPages();
+    addTaggedAccessorials();
   });
   $('multi-stop').addEventListener('change', (event) => onMultiStopToggle(event.target.checked));
   $('show-logos').addEventListener('change', (event) => {
@@ -7539,12 +8357,11 @@ function wireReadUi() {
   });
   $('load-form').addEventListener('submit', onLoadSubmit);
   $('load-cancel').addEventListener('click', onLoadCancel);
-  for (const kind of Object.keys(ACC_FIELDS)) {
-    $(`acc-${kind}`).addEventListener('change', (event) => onAccessorialPick(kind, event.target.checked));
-    $(`${kind}-at`).addEventListener('change', syncAccessorialBoxes);
-  }
+  for (const kind of ACC_KINDS) $(`${kind}-at`).addEventListener('change', syncAccessorialBoxes);
   for (const id of ['lum-total', 'oth-total']) $(id).addEventListener('change', onMoneyChange);
-  $('load-form').addEventListener('input', () => { // (ticks fire this too: the hint follows the accessorials)
+  nameAccessorialBoxes();
+  wirePopups(); // Add an accessorial, the ×s, the time lists and the calendar
+  $('load-form').addEventListener('input', () => { // (the hint follows the accessorials: Other's type names its file)
     $('acc-error').textContent = '';
     updateLoadHint();
   });
@@ -7554,7 +8371,8 @@ function wireReadUi() {
   $('cust-add').addEventListener('click', addCustomer);
   for (const id of ['tpl-name', 'tpl-to']) $(id).addEventListener('input', (event) => event.target.removeAttribute('aria-invalid'));
   $('tpl-cancel').addEventListener('click', cancelEdit);
-  $('tpl-lumper-sep').addEventListener('change', syncLumperNameRow);
+  $('tpl-lumper-sep').addEventListener('change', syncAccFilesHint);
+  $('tpl-acc-only').addEventListener('change', syncAccOnlyHint);
   $('tpl-acc-sep').addEventListener('change', syncAccRow);
   $('q-add').addEventListener('click', addQuestion);
   $('q-intro').addEventListener('input', (event) => { qDraft.intro = event.target.value; });
@@ -7608,7 +8426,8 @@ function wireReadUi() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || CONSOLE) return;
-    if (!$('quiz').hidden) cancelQuiz();
+    if (popup) closePopup(true); // a time list, the calendar or Add an accessorial's list, before the step itself
+    else if (!$('quiz').hidden) cancelQuiz();
     else if (!$('howto').hidden) closeHowto(true);
     else if (!$('preview').hidden) closePreview();
     else if (!$('templates').hidden) {
@@ -7660,7 +8479,7 @@ const VIEW_WORD = { large: 'viewLarge', medium: 'viewMedium', small: 'viewSmall'
 const prefs = {
   textSize: 'small',
   view: 'medium',
-  tagReceipts: false, // files named like receipts start out tagged Receipt (the team admin sets the words)
+  tagReceipts: false, // Tag accessorials by file name: files named like receipts start out tagged Lumper (the team admin sets the words)
   keepAdding: false,  // each email clicked adds its files to the list, for people who don't use conversations
   pins: [],           // pinned templates (ids), in the order they want them
 };

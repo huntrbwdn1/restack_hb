@@ -205,7 +205,7 @@ input[type="checkbox"]:disabled { cursor: default; }
 .pv-page { margin: 0 0 12px; }
 .pv-page canvas { margin-bottom: 0; }
 .pv-page.excluded canvas { opacity: .38; }
-.pv-page-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 5px; min-height: 29px; }
+.pv-page-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; padding: 0 2px 5px; min-height: 29px; }
 .pv-page-bar {
   display: flex; align-items: center; gap: 8px;
   font-size: 12px; font-weight: 600; cursor: pointer;
@@ -333,17 +333,77 @@ input[type="checkbox"]:disabled { cursor: default; }
 .field-stack { display: grid; gap: 6px; }
 .acc { margin: 2px 0 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; }
 .acc legend { padding: 0; margin-bottom: 6px; }
-.acc-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; } /* Detention, Layover / Lumper, Other */
-@media (min-width: 480px) { .acc-picks { grid-template-columns: repeat(4, max-content); gap: 6px 18px; } }
-.acc-pick { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+/* Add an accessorial: looks like a drop-down; each one picked gets its box under it */
+.acc-add-row { display: flex; }
+.acc-add {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 196px; height: 30px; padding: 0 8px 0 10px;
+  border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; cursor: pointer;
+}
+.acc-add:hover { border-color: var(--fg); }
+.acc-add:focus-visible, .acc-add[aria-expanded="true"] { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.acc-add .chev { flex: none; color: var(--muted); }
 .acc-box { display: grid; gap: 8px; padding: 10px; border-radius: 6px; background: var(--surface-2); }
-.acc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.acc-title { font-weight: 600; }
+.acc-head { display: flex; align-items: center; gap: 8px; }
+.acc-title { flex: 1; min-width: 0; font-weight: 600; }
+.acc-remove { flex: none; width: 26px; height: 26px; margin: -2px -4px -2px -2px; }
+.acc-opt { font-weight: 400; }
+/* IN, APPT and OUT, one under the other: a time box each (and a date box for Layover's IN and OUT) */
+.acc-when { display: grid; grid-template-columns: 44px auto; justify-content: start; align-items: center; gap: 6px 8px; }
+.acc-when-dated { grid-template-columns: 44px auto auto; }
+.acc-when-label { font-size: 11px; font-weight: 600; color: var(--muted); }
+.tbox, .dbox {
+  display: flex; align-items: center; height: 28px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface);
+}
+.tbox { width: 92px; }
+.dbox { width: 120px; }
+.tbox input, .dbox input {
+  flex: 1; min-width: 0; height: 100%; padding: 0 0 0 7px; border: 0; outline: 0; background: transparent;
+  font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--fg);
+}
+.tbox input::placeholder, .dbox input::placeholder { color: var(--muted); opacity: .75; }
+.tbox:focus-within, .dbox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tbox.bad, .dbox.bad { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+.tbox-btn, .dbox-btn {
+  flex: none; display: grid; place-items: center; width: 26px; height: 100%; padding: 0; border: 0; border-radius: 0 3px 3px 0;
+  background: none; color: var(--muted); cursor: pointer;
+}
+.tbox-btn:hover, .dbox-btn:hover, .dbox-btn[aria-expanded="true"] { color: var(--fg); background: var(--hover-strong); }
+.dbox-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.acc-stack textarea {
+  width: 100%; min-height: 58px; padding: 5px 7px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface);
+  font: inherit; font-size: 13px; font-weight: 400; line-height: 1.35; color: var(--fg); resize: vertical;
+}
+.acc-stack textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* The step's pop-ups: Add an accessorial's list, the times every 15 minutes, the calendar */
+.popup { position: fixed; right: auto; bottom: auto; z-index: 60; margin: 0; background: var(--surface); border: 1px solid var(--btn-line); border-radius: 6px; box-shadow: var(--shadow-menu); }
+.acc-menu { min-width: 196px; padding: 4px 0; }
+.time-list { max-height: 196px; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0; list-style: none; }
+.time-list li { padding: 3px 12px; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.time-list li.active { background: var(--hover-strong); }
+.time-list li[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.cal { width: 246px; padding: 8px 8px 6px; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.cal-head .icon-btn { width: 28px; height: 28px; }
+.cal-title { font-size: 13px; font-weight: 600; }
+.cal-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.cal-dow { padding: 3px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; }
+.cal-grid td { padding: 1px; text-align: center; }
+.cal-day {
+  width: 100%; height: 28px; padding: 0; border: 0; border-radius: 4px; background: none;
+  font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--fg); cursor: pointer;
+}
+.cal-day:hover { background: var(--hover-strong); }
+.cal-day.out { color: var(--muted); }
+.cal-day.today { box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.cal-day.picked { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.cal-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cal-foot { display: flex; justify-content: flex-end; padding: 4px 2px 0; }
+.cal-foot .link-btn { color: var(--accent); font-size: 12px; }
 .acc select {
   height: 28px; min-width: 0; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface); font: inherit; color: inherit;
 }
 .acc select:invalid, .acc select.empty { color: var(--muted); }
-.acc-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .acc-field { display: grid; gap: 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
 .acc-field input, .acc-field .money {
   width: 100%; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 4px; background: var(--surface);
@@ -367,15 +427,27 @@ input[type="checkbox"]:disabled { cursor: default; }
 .nowrap { white-space: nowrap; }
 .check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 
-/* ---- lumper receipt tags and template options */
-.tag-chip {
-  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px 0 7px;
+/* ---- the Accessorial tag (a drop-down for Lumper or Other) and template options:
+   a pill as wide as its choice, with the drop-down (a select) laid over it, unseen */
+.acc-pill {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; height: 24px; max-width: 100%; padding: 0 9px 0 10px;
   border: 1px solid var(--chip-line); border-radius: 12px; background: var(--surface); color: var(--muted);
-  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
 }
-.tag-chip input { width: 14px; height: 14px; accent-color: var(--tag-ink); }
-.tag-chip.on { border-color: var(--tag-line); background: var(--tag-bg); color: var(--tag-ink); }
-.pv-page-tags { display: flex; align-items: center; gap: 6px; }
+.acc-pill.on { border-color: var(--tag-line); background: var(--tag-bg); color: var(--tag-ink); }
+.acc-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.acc-pill::after { /* its arrow */
+  content: ''; flex: none; width: 5px; height: 5px; margin: -3px 1px 0 0; border: solid currentColor; border-width: 0 1.6px 1.6px 0; transform: rotate(45deg);
+}
+.acc-tag {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; border-radius: 12px; opacity: 0;
+  font: inherit; font-size: 13px; font-weight: 400; cursor: pointer;
+}
+.acc-tag option { background: var(--surface); color: var(--fg); font-weight: 400; }
+.acc-pill:has(> .acc-tag:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.acc-pill:has(> .acc-tag:disabled) { opacity: .5; }
+.acc-tag:disabled { cursor: default; }
+.pv-page-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; margin-left: auto; } /* (on a narrow panel they go under the page's name) */
 /* moving a page: up and down arrows next to its name */
 .pv-move { display: inline-flex; align-items: center; gap: 0; margin-right: auto; }
 .pv-move-btn { width: 26px; height: 26px; }

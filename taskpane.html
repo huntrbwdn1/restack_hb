@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.22.0">
+  <meta name="restack-version" content="0.23.0">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.22.0"></script>
+  <script src="mode.js?v=0.23.0"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.22.0">
-  <script type="module" src="taskpane.js?v=0.22.0"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.23.0">
+  <script type="module" src="taskpane.js?v=0.23.0"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -129,66 +129,75 @@
         </div>
         <p id="load-hint" class="hint"></p>
         <fieldset class="acc">
-          <legend class="name-label"><span data-w="accessorials">Accessorials</span> <span class="muted">(optional)</span></legend>
-          <div class="acc-picks">
-            <label class="acc-pick"><input type="checkbox" id="acc-det"><span data-w="detention">Detention</span></label>
-            <label class="acc-pick"><input type="checkbox" id="acc-lay"><span data-w="layover">Layover</span></label>
-            <label class="acc-pick"><input type="checkbox" id="acc-lum"><span data-w="lumper">Lumper</span></label>
-            <label class="acc-pick"><input type="checkbox" id="acc-oth"><span data-w="other">Other</span></label>
+          <legend class="name-label"><span data-w="accessorials">Accessorials</span> <span id="acc-need" class="muted">(optional)</span></legend>
+          <!-- Add an accessorial drops down the ones not on this load yet (several can go on one load).
+               Each one picked gets its box below, in this order, with a × to take it off again. -->
+          <div id="acc-add-row" class="acc-add-row">
+            <button id="acc-add" class="acc-add" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="acc-menu">
+              <span data-w="addAccessorial">Add an accessorial</span>
+              <svg class="chev" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 7.5 10 12.5l5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
-          <div id="acc-det-box" class="acc-box" hidden>
+          <div id="acc-lum-box" class="acc-box" data-kind="lum" hidden>
             <div class="acc-head">
-              <span class="acc-title" data-w="detention">Detention</span>
-              <select id="det-at" aria-label="Detention at">
-                <option value="">Shipper or receiver?</option>
-                <option>Shipper</option>
-                <option>Receiver</option>
-              </select>
-            </div>
-            <div class="acc-grid3">
-              <label class="acc-field"><span data-w="timeIn">IN</span><input id="det-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span data-w="appointment">APPT</span><input id="det-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span data-w="timeOut">OUT</span><input id="det-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-            </div>
-            <label class="acc-field acc-inline"><span data-w="hoursRequested">Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
-          </div>
-          <div id="acc-lay-box" class="acc-box" hidden>
-            <div class="acc-head">
-              <span class="acc-title" data-w="layover">Layover</span>
-              <select id="lay-at" aria-label="Layover at">
-                <option value="">Shipper or receiver?</option>
-                <option>Shipper</option>
-                <option>Receiver</option>
-              </select>
-            </div>
-            <div class="acc-grid3">
-              <label class="acc-field"><span data-w="timeIn">IN</span><input id="lay-in" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span data-w="appointment">APPT</span><input id="lay-appt" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-              <label class="acc-field"><span data-w="timeOut">OUT</span><input id="lay-out" type="text" autocomplete="off" spellcheck="false" maxlength="40"></label>
-            </div>
-          </div>
-          <div id="acc-lum-box" class="acc-box" hidden>
-            <div class="acc-head">
-              <span class="acc-title" data-w="lumper">Lumper</span>
+              <span id="lum-title" class="acc-title" data-w="lumper">Lumper</span>
               <select id="lum-at" aria-label="Lumper at">
                 <option value="">Shipper or receiver?</option>
                 <option>Shipper</option>
                 <option>Receiver</option>
               </select>
+              <button class="icon-btn acc-remove" type="button" data-remove="lum" aria-label="Remove Lumper" title="Remove"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
             </div>
             <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="lum-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
           </div>
-          <div id="acc-oth-box" class="acc-box" hidden>
+          <div id="acc-det-box" class="acc-box" data-kind="det" hidden>
             <div class="acc-head">
-              <span class="acc-title" data-w="other">Other</span>
-              <select id="oth-at" aria-label="Other accessorial at">
+              <span id="det-title" class="acc-title" data-w="detention">Detention</span>
+              <select id="det-at" aria-label="Detention at">
                 <option value="">Shipper or receiver?</option>
                 <option>Shipper</option>
                 <option>Receiver</option>
               </select>
+              <button class="icon-btn acc-remove" type="button" data-remove="det" aria-label="Remove Detention" title="Remove"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            </div>
+            <!-- times, one under the other: a list every 15 minutes, or type one (n is now) -->
+            <div class="acc-when">
+              <span class="acc-when-label" data-w="timeIn">IN</span><span class="tbox"><input id="det-in" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+              <span class="acc-when-label" data-w="appointment">APPT</span><span class="tbox"><input id="det-appt" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+              <span class="acc-when-label" data-w="timeOut">OUT</span><span class="tbox"><input id="det-out" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+            </div>
+            <label class="acc-field acc-inline"><span data-w="hoursRequested">Hours requested</span><input id="det-hours" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="e.g. 2.5"></label>
+          </div>
+          <div id="acc-lay-box" class="acc-box" data-kind="lay" hidden>
+            <div class="acc-head">
+              <span id="lay-title" class="acc-title" data-w="layover">Layover</span>
+              <select id="lay-at" aria-label="Layover at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+              <button class="icon-btn acc-remove" type="button" data-remove="lay" aria-label="Remove Layover" title="Remove"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+            </div>
+            <!-- IN and OUT have a date (a calendar, or type one: t is today, n is now) and a time; APPT is a time -->
+            <div class="acc-when acc-when-dated">
+              <span class="acc-when-label" data-w="timeIn">IN</span><span class="dbox"><input id="lay-in-date" class="date-in" type="text" autocomplete="off" spellcheck="false" maxlength="30" placeholder="mm/dd/yy" data-time="lay-in-time"></span><span class="tbox"><input id="lay-in-time" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+              <span class="acc-when-label" data-w="appointment">APPT</span><span class="acc-when-gap"></span><span class="tbox"><input id="lay-appt" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+              <span class="acc-when-label" data-w="timeOut">OUT</span><span class="dbox"><input id="lay-out-date" class="date-in" type="text" autocomplete="off" spellcheck="false" maxlength="30" placeholder="mm/dd/yy" data-time="lay-out-time"></span><span class="tbox"><input id="lay-out-time" class="time-in" type="text" autocomplete="off" spellcheck="false" maxlength="20" placeholder="hh:mm"></span>
+            </div>
+          </div>
+          <div id="acc-oth-box" class="acc-box" data-kind="oth" hidden>
+            <div class="acc-head">
+              <span id="oth-title" class="acc-title" data-w="other">Other</span>
+              <select id="oth-at" aria-label="Other at">
+                <option value="">Shipper or receiver?</option>
+                <option>Shipper</option>
+                <option>Receiver</option>
+              </select>
+              <button class="icon-btn acc-remove" type="button" data-remove="oth" aria-label="Remove Other" title="Remove"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
             </div>
             <label class="acc-field acc-inline"><span data-w="otherType">Type</span><input id="oth-type" type="text" autocomplete="off" maxlength="60" placeholder="e.g. Driver assist"></label>
-            <label class="acc-field acc-inline"><span data-w="total">Total</span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
+            <label class="acc-field acc-stack"><span data-w="explain">Explain</span><textarea id="oth-explain" rows="3" maxlength="2000"></textarea></label>
+            <label class="acc-field acc-inline"><span><span data-w="total">Total</span> <span class="acc-opt">(optional)</span></span><span class="money"><span aria-hidden="true">$</span><input id="oth-total" type="text" inputmode="decimal" autocomplete="off" maxlength="20" placeholder="0.00"></span></label>
           </div>
         </fieldset>
         <p id="acc-error" class="hint error" role="alert"></p>
@@ -255,7 +264,7 @@
               <button class="set-opt" type="button" role="option" data-value="tiles" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.4" height="7" rx="1.2"/><rect x="11.1" y="2.5" width="6.4" height="7" rx="1.2"/><path d="M2.5 13h6.4M11.1 13h6.4M2.5 16h4M11.1 16h4"/></svg></span><span class="opt-name" data-w="viewTiles">Tiles</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div id="set-sep-prefs" class="menu-sep" hidden></div>
-          <button id="set-tag-receipts" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="tagReceipts">Tag receipts by file name</span><span class="switch" aria-hidden="true"></span></button>
+          <button id="set-tag-receipts" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="tagAccessorials">Tag accessorials by file name</span><span class="switch" aria-hidden="true"></span></button>
           <button id="set-keep-adding" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="keepAdding">Keep adding</span><span class="switch" aria-hidden="true"></span></button>
         </div>
       </div>
@@ -356,9 +365,18 @@
           <span>Message</span>
           <textarea id="tpl-message" rows="5"></textarea>
         </label>
+        <div class="field">
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-acc-only">
+            <span>Accessorial Only</span>
+          </label>
+          <div id="tpl-acc-only-hint" class="tpl-sub" hidden>
+            <small class="hint">For customers that get the POD only when there's an accessorial. It's listed under <b>Accessorial Only</b> in the Email menu (closed to start), and Create email needs an accessorial picked.</small>
+          </div>
+        </div>
         <label class="check-row tpl-check">
           <input type="checkbox" id="tpl-no-lumper">
-          <span>Say <b>No Lumper</b> in the message when Lumper isn't ticked</span>
+          <span>Say <b>No Lumper</b> in the message when Lumper isn't picked</span>
         </label>
         <div class="field">
           <label class="check-row tpl-check">
@@ -366,7 +384,7 @@
             <span>Accessorials in a separate email</span>
           </label>
           <div id="tpl-acc-row" class="tpl-sub tpl-acc" hidden>
-            <small class="hint">When Detention, Layover, Lumper or Other is ticked, Create email opens two emails: the PODs, and a request like <b>3645493 - Detention/Lumper Request</b> with the PODs and receipts attached and the details in it.</small>
+            <small class="hint">When an accessorial is picked, Create email opens two emails: the PODs, and a request like <b>3645493 - Lumper/Detention Request</b> with the PODs and accessorial files attached and the details in it.</small>
             <label class="field">
               <span>To <span class="muted">(blank: the same as above)</span></span>
               <input id="tpl-acc-to" type="text" autocomplete="off" spellcheck="false" placeholder="accessorials@example.com">
@@ -378,7 +396,7 @@
             <label class="field">
               <span>Message <span class="muted">(optional)</span></span>
               <textarea id="tpl-acc-message" rows="3"></textarea>
-              <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Detention, Lumper and so on.</small>
+              <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Lumper, Detention and so on.</small>
             </label>
           </div>
         </div>
@@ -408,17 +426,13 @@
           </label>
           <label class="check-row tpl-check">
             <input type="checkbox" id="tpl-lumper-sep">
-            <span>Receipts in their own file</span>
+            <span>Accessorials in their own file</span>
           </label>
           <div id="tpl-lumper-row" class="tpl-sub" hidden>
-            <span class="name-field">
-              <input id="tpl-lumper-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-label="Receipt file name">
-              <span class="name-ext" aria-hidden="true">.pdf</span>
-            </span>
-            <small class="hint">Tick <b data-w="receipt">Receipt</b> on those files in the list, or on their pages in the preview.</small>
+            <small class="hint">Each accessorial tagged in the list (or on its pages, in the preview) gets a file of its own: <b data-w="lumper">Lumper</b> in one like <b>3645493 Lumper</b>, and <b data-w="other">Other</b> in one named for its type, like <b>3645493 Scale Ticket</b>. Detention and Layover go with the PODs. Off: tagged files go after the PODs, in the same file.</small>
           </div>
         </div>
-        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>. A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files and receipt files are kept whole.</p>
+        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>. A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files are kept whole.</p>
         <p id="tpl-error" class="status error" role="alert"></p>
         <div class="btn-row">
           <button id="tpl-save" class="btn primary" type="submit">Save template</button>
@@ -489,7 +503,7 @@
       </section>
       <section id="receipts-section" class="team-section" hidden>
         <div class="azure-form">
-          <p class="hint">Files with one of these words in their name start out tagged <b>Receipt</b>, so they go after the PODs (or into their own file) without a click. It works for each rep who turns on <b>Tag receipts by file name</b> in their Settings.</p>
+          <p class="hint">Files with one of these words in their name start out tagged <b>Lumper</b>, so they go to the bottom and into a Lumper file of their own without a click. It works for each rep who turns on <b>Tag accessorials by file name</b> in their Settings.</p>
           <label class="field">
             <span>Words</span>
             <input id="rw-words" type="text" autocomplete="off" spellcheck="false" maxlength="300" placeholder="lumper, receipt">
@@ -627,7 +641,7 @@
             <div class="con-card-body"></div>
           </article>
           <article class="con-card" data-section="receipts-section">
-            <header class="con-card-head"><h2>Receipt file names</h2><span id="receipts-state" class="con-chip"></span></header>
+            <header class="con-card-head"><h2>Accessorial file names</h2><span id="receipts-state" class="con-chip"></span></header>
             <div class="con-card-body"></div>
           </article>
           <article class="con-card" data-section="usage-section" id="con-card-usage">
@@ -718,6 +732,20 @@
         <button id="quiz-cancel" class="link-btn" type="button">Cancel</button>
       </div>
     </div>
+  </div>
+
+  <!-- The Create email step's pop-ups, fixed to the window so its scrolling can't clip them:
+       Add an accessorial's list, the times every 15 minutes, and the calendar -->
+  <div id="acc-menu" class="menu popup acc-menu" role="menu" aria-label="Accessorials" hidden></div>
+  <ul id="time-list" class="popup time-list" role="listbox" aria-label="Times" hidden></ul>
+  <div id="cal" class="popup cal" role="dialog" aria-label="Pick a date" hidden>
+    <div class="cal-head">
+      <button id="cal-prev" class="icon-btn" type="button" aria-label="Previous month"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M12.5 5 7.5 10l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <span id="cal-title" class="cal-title" aria-live="polite"></span>
+      <button id="cal-next" class="icon-btn" type="button" aria-label="Next month"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M7.5 5 12.5 10l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+    <table id="cal-grid" class="cal-grid" role="grid" aria-labelledby="cal-title"></table>
+    <div class="cal-foot"><button id="cal-today" class="link-btn" type="button">Today</button></div>
   </div>
 
 </body>
