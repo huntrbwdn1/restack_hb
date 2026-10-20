@@ -281,6 +281,11 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tpl-actions { padding: 12px 14px; }
 #mine-section .tpl-head { display: none; } /* Outlook's My templates: the sheet's own title names it */
 .tpl-form { display: grid; gap: 10px; padding: 12px 14px 16px; }
+/* the template form's groups: the email, its accessorials, the PDF, and questions */
+.tpl-group { display: grid; gap: 10px; min-width: 0; }
+.tpl-group + .tpl-group { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line); }
+.tpl-group-title { margin: 0; font-size: 13px; font-weight: 700; color: var(--fg); }
+.tpl-group-title .muted { font-weight: 400; }
 .field { display: grid; gap: 4px; font-size: 12px; font-weight: 600; }
 .field > input, .field > textarea {
   width: 100%; padding: 6px 8px; border: 1px solid var(--field-line); border-radius: 4px;
@@ -301,7 +306,7 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tpl-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .tpl-empty { margin: 0; padding: 2px 14px 6px; font-size: 12px; color: var(--muted); }
 .tpl-actions { display: grid; gap: 10px; justify-items: start; }
-.menu-group { padding: 6px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.menu-group { padding: 8px 12px 2px; font-size: 12px; font-weight: 600; color: var(--muted); } /* a menu's headings: Pinned, Team, Mine */
 .lock-card { display: grid; gap: 10px; padding: 20px 14px; }
 .lock-card p { margin: 0; }
 .lock-card code { font: 12px Consolas, "Cascadia Mono", ui-monospace, monospace; overflow-wrap: anywhere; }
@@ -789,6 +794,8 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 .settings-pop .menu-item:focus-visible { background: var(--hover-strong); }
 .set-row { display: flex; align-items: center; gap: 8px; }
 .set-row .mi-name { flex: 0 1 auto; min-width: 0; }
+.set-row .mi-text { flex: 1 1 auto; min-width: 0; } /* a switch's name, and what it does under it */
+.set-row .mi-text .mi-sub { white-space: normal; }
 .set-now { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .set-now > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .set-now-icon, .set-now-icon svg, .set-now-icon .size-a { display: block; flex: none; }
@@ -880,7 +887,11 @@ html.is-console body { overflow-y: scroll; }
 .con-publish.pending .con-publish-text { color: var(--header-fg); font-weight: 600; }
 .con-publish.pending .con-publish-text::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: var(--g2); vertical-align: 1px; }
 .con-publish .btn { height: 36px; padding: 0 18px; }
-.con-tabs { display: flex; gap: 4px; max-width: 1240px; margin: 0 auto; padding: 0 24px 6px; }
+.con-tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 1240px; margin: 0 auto; padding: 0 24px 6px 24px; }
+.con-tabs { display: flex; gap: 4px; min-width: 0; }
+.con-help { display: inline-flex; align-items: center; gap: 5px; padding: 8px 8px; border-radius: 5px; color: var(--header-muted); font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.con-help:hover { color: var(--header-fg); background: var(--hover); }
+.con-help:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .con-tab {
   position: relative; padding: 10px 10px 12px; border: 0; background: none; color: var(--header-muted);
   font-size: 15px; font-weight: 600; cursor: pointer; border-radius: 4px;
@@ -931,7 +942,12 @@ html.is-console .tpl-empty { padding: 12px 16px; }
 html.is-console #tpl-form {
   max-width: 780px; padding: 22px 26px 26px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); gap: 14px;
 }
-html.is-console #tpl-form .btn-row { display: flex; gap: 8px; }
+html.is-console #tpl-form .btn-row {
+  display: flex; gap: 8px; position: sticky; bottom: 0; z-index: 2;
+  margin: 4px -26px 0; padding: 12px 26px; border-top: 1px solid var(--line); background: var(--surface);
+} /* (Save and Cancel stay in sight at the bottom of the window while the form scrolls) */
+html.is-console .tpl-group-title { font-size: 15px; }
+html.is-console .tpl-group + .tpl-group { padding-top: 18px; }
 html.is-console #tpl-form .btn-row .btn { min-width: 120px; height: 36px; }
 html.is-console .field > input, html.is-console .field > textarea, html.is-console .name-field { font-size: 14px; }
 html.is-console .cust-item { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.35fr) 24px; gap: 8px; } /* a customer a row: name, then To */
@@ -944,8 +960,33 @@ html.is-console .cust-item input { height: 32px; font-size: 14px; }
   html.is-console .cust-item .icon-btn { grid-column: 3; }
 }
 
-/* Team settings: a card for each */
-.con-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 20px; align-items: start; }
+/* Team settings: a list of them on the left (as Templates has its list), each one's card on the right, in groups */
+.con-settings { display: grid; grid-template-columns: minmax(230px, 280px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.set-nav { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 6px 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.set-nav-head { margin: 0; padding: 10px 16px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.set-nav-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 36px; padding: 6px 12px 6px 16px;
+  border: 0; background: none; color: var(--fg); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.set-nav-item:hover { background: var(--hover); }
+.set-nav-item[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--g2); }
+.set-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.set-nav-item .con-chip { flex: none; }
+.set-jump { display: none; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.set-jump select { flex: 1; min-width: 0; height: 36px; padding: 0 8px; border: 1px solid var(--field-line); border-radius: 5px; background: var(--surface); color: var(--fg); font: inherit; font-size: 14px; }
+.con-cards { display: grid; gap: 16px; max-width: 820px; align-items: start; }
+.con-group { margin: 14px 0 -4px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.con-group:first-child { margin-top: 0; }
+.con-card { scroll-margin-top: 16px; }
+.con-card.flash { animation: card-flash 1.4s ease-out; }
+@keyframes card-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--g2); } 100% { box-shadow: 0 0 0 2px transparent; } }
+@media (prefers-reduced-motion: reduce) { .con-card.flash { animation: none; } }
+@media (max-width: 900px) {
+  .con-settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .set-nav { position: static; max-height: none; padding: 0; border: 0; background: none; overflow: visible; }
+  .set-nav-list { display: none; }
+  .set-jump { display: flex; }
+}
 .con-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); min-width: 0; }
 .con-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 18px 4px; }
 .con-card-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
@@ -1012,12 +1053,14 @@ html.is-console .cust-item input { height: 32px; font-size: 14px; }
 
 @media (max-width: 760px) {
   .con-top-in, .con-main, .con-foot { padding-left: 16px; padding-right: 16px; }
-  .con-tabs { padding-left: 8px; padding-right: 8px; overflow-x: auto; }
+  .con-tabs-row { padding-left: 8px; padding-right: 8px; }
+  .con-tabs { overflow-x: auto; }
   .con-brand img { height: 22px; }
   .con-title { font-size: 17px; }
   html.is-console #templates .sheet-body { grid-template-columns: minmax(0, 1fr); }
   html.is-console #tpl-list-view { position: static; max-height: none; }
   html.is-console #tpl-form { padding: 16px; }
+  html.is-console #tpl-form .btn-row { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
   .tpl-pick { min-height: 120px; }
   .us-actions { margin-left: 0; }
 }

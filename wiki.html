@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- In the beta folder, this page sends you on to the main site's (at the same place in it), so the same file is safe in both folders -->
+  <script>if (/\/beta\/wiki\.html$/i.test(location.pathname)) location.replace('../wiki.html' + location.hash);</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restack wiki</title>
+  <link rel="icon" href="icon-32.png">
+  <style>
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --fg: #242424; --muted: #5e5e5e; --line: #e6e6e6; --panel: #f7f6f5;
+      --accent: #c2410c; --accent-hover: #9a3412; --soft: #fff1e8; --soft-ink: #8a2e06;
+      --note: #fff8e6; --note-line: #f3dfae; --code: #f5f2ef; --shot-line: #d9d6d2;
+      --g1: #f5aa2b; --g2: #f37f29; --g3: #f05026;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #1b1b1b; --fg: #f3f3f3; --muted: #ababab; --line: #333; --panel: #222;
+        --accent: #ff8a3d; --accent-hover: #ffa766; --soft: #3a2414; --soft-ink: #ffc7a1;
+        --note: #2b2316; --note-line: #5c4a22; --code: #2a2a2a; --shot-line: #3a3a3a;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-padding-top: 16px; }
+    body { margin: 0; font: 16px/1.6 "Jost", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif; word-spacing: -.06em; color: var(--fg); background: var(--bg); }
+    a { color: var(--accent); }
+    a:hover { color: var(--accent-hover); }
+    a:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+    /* the masthead, as on the install page: the restack logo, and the stripe under it */
+    .mast { position: relative; border-bottom: 1px solid var(--line); }
+    .mast-in { max-width: 1160px; margin: 0 auto; padding: 26px 24px 28px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+    .mast::after { content: ""; position: absolute; left: 0; right: 96px; bottom: -1px; height: 8px;
+      background: linear-gradient(90deg, var(--g1), var(--g2)); clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); }
+    .mast::before { content: ""; position: absolute; right: 14px; bottom: -1px; width: 74px; height: 8px;
+      background: linear-gradient(90deg, var(--g2) 0 34px, transparent 34px 44px, var(--g3) 44px 74px); transform: skewX(-45deg); transform-origin: 0 100%; }
+    .logo { display: block; height: 40px; width: auto; margin-left: -3px; }
+    h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 700; }
+    h1 .sub { display: block; margin-top: 8px; font-size: 22px; line-height: 1.2; font-weight: 400; color: var(--muted); }
+    .mast-links { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 15px; }
+    .tag { display: inline-block; padding: 1px 9px; border-radius: 10px; background: var(--soft); color: var(--soft-ink); font-size: 13px; font-weight: 600; }
+
+    /* contents on the left (it stays put), the page on the right */
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 28px 24px 72px; display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 48px; align-items: start; }
+    .toc { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; font-size: 15px; padding-right: 4px; }
+    .toc summary { display: none; }
+    .toc-find { width: 100%; height: 36px; margin: 0 0 12px; padding: 0 10px; border: 1px solid var(--shot-line); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; }
+    .toc ol { list-style: none; margin: 0; padding: 0; }
+    .toc > div > ol > li { margin: 0 0 10px; }
+    .toc > div > ol > li > a { font-weight: 700; }
+    .toc ol ol { margin: 2px 0 0; }
+    .toc ol ol a { display: block; padding: 2px 0 2px 12px; border-left: 2px solid var(--line); color: var(--muted); }
+    .toc a { display: block; padding: 2px 0; color: var(--fg); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+    .toc a.here { color: var(--accent); border-left-color: var(--g2); font-weight: 600; }
+    .toc .none { margin: 6px 0; color: var(--muted); font-size: 14px; }
+
+    article { max-width: 760px; min-width: 0; }
+    .lead { margin: 0 0 8px; font-size: 19px; color: var(--muted); }
+    h2 { margin: 56px 0 6px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 26px; line-height: 1.25; font-weight: 700; }
+    h2:first-of-type { margin-top: 28px; }
+    .who { display: inline-block; margin-left: 8px; padding: 1px 9px; border-radius: 10px; background: var(--soft); color: var(--soft-ink); font-size: 13px; font-weight: 600; vertical-align: 5px; }
+    h3 { margin: 32px 0 6px; font-size: 20px; line-height: 1.3; font-weight: 700; }
+    h4 { margin: 20px 0 4px; font-size: 16px; font-weight: 700; }
+    p { margin: 8px 0; }
+    ol, ul { margin: 8px 0; padding-left: 24px; }
+    li { margin: 5px 0; }
+    li > ul, li > ol { margin: 4px 0; }
+    .intro { color: var(--muted); }
+    .note { margin: 14px 0; padding: 12px 14px; border-radius: 6px; background: var(--note); border: 1px solid var(--note-line); font-size: 15px; }
+    .note p { margin: 4px 0; }
+    code { font: 14px Consolas, "Cascadia Mono", ui-monospace, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+    kbd { font: 13px Consolas, "Cascadia Mono", ui-monospace, monospace; padding: 1px 6px; border: 1px solid var(--shot-line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel); }
+    dl.terms { margin: 10px 0; }
+    dl.terms dt { margin-top: 12px; font-weight: 700; }
+    dl.terms dd { margin: 2px 0 0; }
+
+    /* screenshots: the panel's at its own size (narrower when tall), side by side where they fit */
+    figure { margin: 18px 0 22px; }
+    figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--shot-line); border-radius: 8px; background: #fff; }
+    figcaption { margin-top: 8px; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 46ch; }
+    .shots { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: flex-start; margin: 18px 0 22px; }
+    .shots figure { margin: 0; flex: 0 1 auto; }
+    .tall img { width: 300px; }
+    .wide figcaption { max-width: 70ch; }
+
+    footer { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+    .top-link { font-size: 14px; }
+
+    @media (max-width: 880px) {
+      .wrap { grid-template-columns: minmax(0, 1fr); gap: 8px; padding-top: 18px; }
+      .toc { position: static; max-height: none; overflow: visible; padding: 0; }
+      .toc summary { display: block; padding: 10px 14px; border: 1px solid var(--shot-line); border-radius: 6px; font-weight: 700; cursor: pointer; }
+      .toc[open] summary { margin-bottom: 12px; }
+      .toc .toc-find { margin-top: 0; }
+      h2 { font-size: 23px; }
+    }
+    @media (max-width: 420px) {
+      .mast-in, .wrap { padding-left: 16px; padding-right: 16px; }
+      .tall img { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="mast">
+    <div class="mast-in">
+      <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
+      <div class="mast-links"><span class="tag">For version 0.24</span><a href="./">Install page</a></div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <details id="toc" class="toc" open>
+      <summary>Contents</summary>
+      <div>
+        <input id="toc-find" class="toc-find" type="search" placeholder="Find a topic" aria-label="Find a topic" autocomplete="off">
+        <ol id="toc-list">
+          <li><a href="#start">Getting started</a>
+            <ol>
+              <li><a href="#what">What Restack does</a></li>
+              <li><a href="#install">Install Restack</a></li>
+              <li><a href="#open">Open Restack on a thread</a></li>
+              <li><a href="#keep-adding">Keep adding</a></li>
+            </ol>
+          </li>
+          <li><a href="#files">The file list</a>
+            <ol>
+              <li><a href="#check">Check the files you want</a></li>
+              <li><a href="#preview">Preview a file</a></li>
+              <li><a href="#order">Put the files in order</a></li>
+              <li><a href="#tags">Accessorial tags</a></li>
+              <li><a href="#multi-stop">Multi-stop loads</a></li>
+              <li><a href="#rate-con">Rate confirmation check</a></li>
+            </ol>
+          </li>
+          <li><a href="#email">Emailing PDFs</a>
+            <ol>
+              <li><a href="#email-menu">Pick a template</a></li>
+              <li><a href="#questions">Template questions</a></li>
+              <li><a href="#create">The Create email step</a></li>
+              <li><a href="#accessorials">Accessorials</a></li>
+              <li><a href="#times-dates">Typing times and dates</a></li>
+              <li><a href="#the-email">What the email has</a></li>
+              <li><a href="#attach">Attaching the PDF</a></li>
+              <li><a href="#separate">Accessorials in a separate email</a></li>
+              <li><a href="#file-names">File names and sizes</a></li>
+              <li><a href="#save">Save PDF</a></li>
+            </ol>
+          </li>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#templates">Templates</a>
+            <ol>
+              <li><a href="#my-templates">Your own templates</a></li>
+              <li><a href="#template-options">Every template option</a></li>
+              <li><a href="#several">Several templates at once</a></li>
+              <li><a href="#copy-delete">Make a copy, or delete</a></li>
+            </ol>
+          </li>
+          <li><a href="#admin-console">Admin console</a>
+            <ol>
+              <li><a href="#console-open">Open the console</a></li>
+              <li><a href="#publish">Publish to team</a></li>
+              <li><a href="#console-templates">Templates tab</a></li>
+              <li><a href="#team-settings">Team settings tab</a></li>
+              <li><a href="#usage">Usage tab</a></li>
+            </ol>
+          </li>
+          <li><a href="#team-admin">For the team admin</a>
+            <ol>
+              <li><a href="#setup">Set up your team</a></li>
+              <li><a href="#update">Update Restack</a></li>
+              <li><a href="#beta">Restack Beta</a></li>
+              <li><a href="#wording">Change the wording</a></li>
+            </ol>
+          </li>
+          <li><a href="#privacy">Privacy</a></li>
+          <li><a href="#faq">Troubleshooting</a></li>
+        </ol>
+        <p id="toc-none" class="none" hidden>No topic matches that.</p>
+      </div>
+    </details>
+
+    <article>
+      <p class="lead">How to install Restack and use every part of it: the file list, emailing, templates, Settings and, for team admins, the admin console.</p>
+
+      <!-- ===================================================== Getting started -->
+      <h2 id="start">Getting started</h2>
+
+      <h3 id="what">What Restack does</h3>
+      <p>Restack is an Outlook add-in for sending PODs. In an email thread, it lists every attachment once, shows you a small picture of each, and combines the ones you pick into one PDF. It then opens an email from one of your team's templates, with the recipients, message and accessorials filled in, or saves the PDF for you.</p>
+      <p>Everything happens in the side panel, on your computer. The attachments in Outlook aren't changed.</p>
+
+      <h3 id="install">Install Restack</h3>
+      <p>Your team admin sends you an install file, <code>restack-team.xml</code>. Then:</p>
+      <ol>
+        <li>Save the <code>restack-team.xml</code> file.</li>
+        <li>Open <a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a>. Outlook opens the <strong>Add-ins for Outlook</strong> window after a few seconds.</li>
+        <li>Choose <strong>My add-ins</strong>. If an older copy (Restack or Thread Attachments) is under <strong>Custom Addins</strong>, choose <strong>… → Remove</strong> on it first. Removing it may also clear what's saved in it, like your own templates.</li>
+        <li>Choose <strong>Add a custom add-in → Add from File</strong>, pick the file, and choose <strong>Install</strong>.</li>
+      </ol>
+      <p>New Outlook and Outlook on the web show the <strong>Restack</strong> button right away. Classic Outlook can take up to a day.</p>
+      <div class="note">
+        <p>No <strong>Add a custom add-in</strong> option? Your organization doesn't allow installing custom add-ins. An IT admin can deploy the same file from the Microsoft 365 admin center (<strong>Settings → Integrated apps</strong>).</p>
+        <p>Keep the install file within your team: it carries your team's key, which opens your team's templates.</p>
+      </div>
+
+      <h3 id="open">Open Restack on a thread</h3>
+      <ol>
+        <li>Select every email in the thread, so Restack can read all of their attachments.
+          <ul>
+            <li><strong>New Outlook and Outlook on the web:</strong> click the arrow next to the conversation to open it, then tick the checkbox at its top.</li>
+            <li><strong>Classic Outlook:</strong> click the arrow next to the conversation, click the first email under it, then hold <kbd>Shift</kbd> and click the last one.</li>
+          </ul>
+        </li>
+        <li>Click <strong>Restack</strong> on the ribbon. The panel lists every attachment once, oldest first, even if it was sent back and forth.</li>
+      </ol>
+      <p>If only one email came through, a tip at the top says so. Its info icon shows how to select every email in your Outlook (New Outlook, Classic Outlook, or mail that isn't shown as conversations).</p>
+      <div class="shots">
+        <figure><img src="wiki/one-email.png" width="300" height="283" alt="The tip that says only 1 email came through" loading="lazy"><figcaption>When only one email came through.</figcaption></figure>
+        <figure><img src="wiki/howto.png" width="300" height="328" alt="How to select every email in the thread, for New Outlook" loading="lazy"><figcaption>The info icon shows how, for your Outlook.</figcaption></figure>
+      </div>
+
+      <h3 id="keep-adding">Keep adding</h3>
+      <p>For mail that isn't shown as conversations. Pin the panel in Outlook, then turn on <strong>Keep adding</strong> (in the tip, or in <a href="#settings">Settings</a>). Each email you click adds its files to the list.</p>
+      <ul>
+        <li>The bar at the top says how many emails are in. <strong>Start over</strong> starts a new list from the email you have selected; <strong>Turn off</strong> stops adding.</li>
+        <li>If an email looks like a different load, Restack asks first: <strong>Add its files</strong>, or <strong>Start over with it</strong>.</li>
+      </ul>
+      <figure><img src="wiki/keep-adding.png" width="300" height="283" alt="The Keep adding bar" loading="lazy"><figcaption>Keep adding is on: click each email in the thread.</figcaption></figure>
+
+      <!-- ===================================================== The file list -->
+      <h2 id="files">The file list</h2>
+
+      <h3 id="check">Check the files you want</h3>
+      <p>Tick each file to put in the PDF, or <strong>Select all</strong>. Nothing is checked until you pick. Each file shows a small picture (page 1 of a PDF or fax, or the photo), so you can tell a POD scan from a photo of the truck.</p>
+      <div class="shots">
+        <figure class="tall"><img src="wiki/list.png" width="300" height="600" alt="The file list with five files checked" loading="lazy"><figcaption>Checked files are numbered in the order they go into the PDF. lumper.pdf is tagged Lumper, so it's last.</figcaption></figure>
+      </div>
+      <dl class="terms">
+        <dt>What goes into the PDF</dt>
+        <dd>PDFs (fax-style and JPEG 2000 scans too), photos and multi-page fax scans (TIFF). Word and Excel files, iPhone photos (.heic), attached emails and cloud links are listed but can't be combined yet. Photos go in at most 2000 pixels on their long side: the whole photo, smaller, never cropped.</dd>
+        <dt>Logos and icons</dt>
+        <dd>Small pictures from email signatures are hidden. <strong>Show logos &amp; icons</strong> under the list shows them.</dd>
+        <dt>Views</dt>
+        <dd><strong>Settings → View</strong> shows the list as Large, Medium or Small pictures, a List, Details (with columns) or Tiles, like File Explorer.</dd>
+      </dl>
+
+      <h3 id="preview">Preview a file</h3>
+      <p>Click a file's picture or its eye icon. The preview shows its pages (the first 40 of a long file), and the attachment itself is never changed:</p>
+      <ul>
+        <li><strong>Leave a page out:</strong> untick it, for example a rate confirmation sent in the same PDF as the POD.</li>
+        <li><strong>Turn a page:</strong> the turn button on a sideways page or photo gives it a quarter turn per click.</li>
+        <li><strong>Reorder a scan's pages:</strong> the arrows next to each page move it up or down. <strong>Reset page order</strong> puts them back.</li>
+        <li><strong>Tag a page</strong> Lumper or Other (see <a href="#tags">Accessorial tags</a>), and with Multi-stop, pick its stop.</li>
+        <li>The arrows at the top go to the previous or next file. <strong>Include in PDF</strong> at the bottom checks or unchecks the whole file. The back arrow (or <kbd>Esc</kbd>) goes back to the list.</li>
+      </ul>
+      <p>A PDF's pages can be left out, tagged and given a stop. A fax's (TIFF) pages can be moved and turned, but not left out or tagged.</p>
+      <figure class="tall"><img src="wiki/preview.png" width="300" height="600" alt="The preview of a two-page PDF, with page 2 tagged Other" loading="lazy"><figcaption>Each page of a PDF has its box, arrows, Accessorial tag and turn button.</figcaption></figure>
+
+      <h3 id="order">Put the files in order</h3>
+      <p>Checked files are numbered in the order they go into the PDF. To change it, drag a file by its number, or use its up and down arrows. With the number selected, the <kbd>↑</kbd> and <kbd>↓</kbd> keys move it too. Files tagged Lumper or Other stay below the others.</p>
+
+      <h3 id="tags">Accessorial tags</h3>
+      <p>Tag a lumper receipt (or another accessorial's paperwork) so it goes after the PODs and, with the right template, into a file of its own.</p>
+      <ul>
+        <li><strong>Tag a file:</strong> each checked file has an <strong>Accessorial</strong> drop-down. Pick <strong>Lumper</strong> or <strong>Other</strong>. A tagged file goes to the bottom of the list, every time you tag it.</li>
+        <li><strong>Tag a page:</strong> for a PDF with the POD and a receipt in it, use the drop-down on the page in the preview. The file then says which pages are tagged, like <em>Other: page 2</em>, and its own tag says <strong>By page</strong>.</li>
+        <li><strong>Take a tag off:</strong> pick <strong>Not an accessorial</strong>.</li>
+        <li>Detention and Layover aren't in the drop-down: the PODs are their paperwork.</li>
+        <li>Tagging a file adds that accessorial on the <a href="#create">Create email</a> step, ready for its details.</li>
+      </ul>
+      <p><strong>Where tagged files go:</strong> after the PODs, in the same PDF. With a template set to <a href="#template-options">Accessorials in their own file</a>, each one tagged gets a file of its own: <code>3645493 Lumper.pdf</code>, and Other's named for its type, like <code>3645493 Scale Ticket.pdf</code>. Save PDF never gives them a file of their own: they go last.</p>
+      <p><strong>Tag accessorials by file name</strong> (in <a href="#settings">Settings</a>, off to start): turn it on, and files with words like <em>lumper</em> or <em>receipt</em> in their name start out tagged Lumper. Your team admin sets the words. A tag you set by hand stays as you set it.</p>
+      <figure><img src="wiki/tags.png" width="300" height="392" alt="Files tagged Lumper and by page" loading="lazy"><figcaption>lumper.pdf is tagged Lumper; mixed.pdf has page 2 tagged Other.</figcaption></figure>
+
+      <h3 id="multi-stop">Multi-stop loads</h3>
+      <ol>
+        <li>Tick <strong>Multi-stop</strong> above the list. Each checked file gets a stop number.</li>
+        <li>Change a file's stop with its picker if it's wrong, or to put two photos in one stop.</li>
+        <li>If one PDF holds several stops, open its preview and pick a stop for each page. Its picker then says <strong>By page</strong>.</li>
+      </ol>
+      <p>Save PDF, Blank email and templates with <strong>each stop in its own file</strong> ticked make one PDF per stop, named <code>3645493-1</code>, <code>3645493-2</code> and so on. A stop's POD that comes in later can go out on its own as <code>-2</code>. Other templates put every stop in one file, in stop order (a new template starts with that box unticked). A file tagged Lumper or Other goes with the PODs' last stop; its picker changes that. On the Create email step, the Shipper or Receiver choices name the stop, like <em>Receiver (Stop 2)</em>.</p>
+      <figure><img src="wiki/multi-stop.png" width="300" height="389" alt="Multi-stop on, with a stop picker on each file" loading="lazy"><figcaption>With Multi-stop on, each file has its stop.</figcaption></figure>
+
+      <h3 id="rate-con">Rate confirmation check</h3>
+      <p>If your team admin has set a sample rate confirmation, pages that look like it are flagged in the list, and a warning shows above the buttons. They have to come out before you can email or save:</p>
+      <ul>
+        <li><strong>Leave it out</strong> (or <strong>Leave them out</strong>, for more than one) unticks those pages, or the file.</li>
+        <li><strong>Not a rate con</strong> clears the warning for this thread.</li>
+      </ul>
+      <p>Digital copies, scans and faxes of a rate con are caught, compared by their words and their layout. So are pages that say Rate Confirmation or Load Confirmation, and pages with the same barcode number as a flagged page. Phone photos of a rate con usually aren't recognized. The check reads the first 30 pages of a PDF and the first 10 of a fax. While it's still checking, Email and Save PDF wait: try again in a moment.</p>
+      <figure><img src="wiki/rate-con.png" width="300" height="196" alt="The rate confirmation warning above the Email button" loading="lazy"><figcaption>A flagged page has to come out before you email or save.</figcaption></figure>
+
+      <!-- ===================================================== Emailing -->
+      <h2 id="email">Emailing PDFs</h2>
+
+      <h3 id="email-menu">Pick a template</h3>
+      <p>Choose <strong>Email ▾</strong>. Your team's templates are listed A to Z, each with who it goes to.</p>
+      <ul>
+        <li><strong>Pin the ones you use most:</strong> click the pin next to a template. Pinned templates stay at the top, and the arrows next to them put them in your order. The rest are under <strong>Other templates</strong>. Pins are saved for you.</li>
+        <li><strong>Accessorial Only</strong> templates, for customers that get the POD only when there's an accessorial, have their own section, closed to start.</li>
+        <li><strong>Blank email</strong> is just the PDF, with no recipients.</li>
+        <li><strong>My templates…</strong> opens <a href="#my-templates">your own templates</a>, if your team allows them.</li>
+      </ul>
+      <p>With the keyboard: <kbd>↑</kbd> and <kbd>↓</kbd> move through the menu, <kbd>→</kbd> reaches a template's pin, <kbd>Alt</kbd>+<kbd>↑</kbd> or <kbd>↓</kbd> moves a pinned template, and <kbd>Esc</kbd> closes it.</p>
+      <figure><img src="wiki/email-menu.png" width="296" height="305" alt="The Email menu with two pinned templates" loading="lazy"><figcaption>Two pinned templates, with the rest under Other templates.</figcaption></figure>
+
+      <h3 id="questions">Template questions</h3>
+      <p>Some templates ask a question or two first, in a pop-up. Each answer goes on to the next question, jumps ahead to a later one, goes on to the email, or stops with a message about what's missing, like <em>Get a signed POD first.</em> <strong>Back</strong> goes to the question before, and <strong>Cancel</strong> closes it. After a message that stops you, <strong>Change my answer</strong> goes back, and <strong>Close</strong> closes it.</p>
+      <figure><img src="wiki/questions.png" width="300" height="188" alt="A template's question: Did the driver sign the POD?" loading="lazy"><figcaption>A template's question, before the email.</figcaption></figure>
+
+      <h3 id="create">The Create email step</h3>
+      <ol>
+        <li>Check the <strong>Load number</strong>. Restack fills it in from the thread's subject, or the one you used earlier on this thread.</li>
+        <li>The line under it says which files the email will get, and who it goes to.</li>
+        <li>Add the load's <a href="#accessorials">accessorials</a>, if any.</li>
+        <li>Choose <strong>Create email</strong>. <strong>Cancel</strong> goes back to the list.</li>
+      </ol>
+      <figure class="tall"><img src="wiki/create-email.png" width="300" height="667" alt="The Create email step with Lumper and Detention filled in" loading="lazy"><figcaption>Lumper (brought by the tagged file) and Detention, filled in.</figcaption></figure>
+
+      <h3 id="accessorials">Accessorials</h3>
+      <p><strong>Add an accessorial</strong> adds each one the load has; several can go on one load. Each gets its own box, with a × to take it off. Every one needs <strong>Shipper</strong> or <strong>Receiver</strong> (or, on a Multi-stop load, the stop).</p>
+      <dl class="terms">
+        <dt>Lumper</dt><dd>The total.</dd>
+        <dt>Detention</dt><dd>IN, APPT and OUT times, and the hours requested.</dd>
+        <dt>Layover</dt><dd>The IN date and time, the APPT time, and the OUT date and time.</dd>
+        <dt>Other</dt><dd>Its type (like <em>Driver Assist</em>), an explanation, and a total if there is one.</dd>
+      </dl>
+      <p>They're written into the email's message in that order, Other under its type with your explanation. A template that's <strong>Accessorial Only</strong> needs at least one. A file tagged Lumper or Other brings its box; if you take that box off while the file is still tagged, Create email asks for it (or for the tag to change).</p>
+
+      <h3 id="times-dates">Typing times and dates</h3>
+      <p><strong>Times</strong> are 24-hour, like <code>14:30</code>. Pick one from the list (every 15 minutes: the arrow on the box, or <kbd>↓</kbd>), or type it: <code>830</code>, <code>0830</code>, <code>8:30a</code>, <code>2:37 pm</code>, <code>1430</code>, <code>noon</code> and <code>midnight</code> all work. <code>n</code> is the time now.</p>
+      <p><strong>Dates</strong> have a calendar (the button on the box, or <kbd>Alt</kbd>+<kbd>↓</kbd>), or type one: <code>10/19</code>, <code>10-19-2026</code>, <code>2026-10-19</code>, <code>Oct 19</code> or <code>19 October 2026</code>. They show as <code>10/19/26</code>. No year means this year. <code>t</code> or <code>today</code> is today; <code>n</code> is today, with the time now in its time box.</p>
+      <p>In the time list, <kbd>↑</kbd> <kbd>↓</kbd> move 15 minutes, <kbd>Page Up</kbd> and <kbd>Page Down</kbd> an hour, <kbd>Enter</kbd> picks and <kbd>Esc</kbd> closes it. In the calendar, the arrow keys move by day and week, <kbd>Page Up</kbd> and <kbd>Page Down</kbd> by month, <kbd>Enter</kbd> picks, and <strong>Today</strong> picks today.</p>
+      <div class="shots">
+        <figure><img src="wiki/time-list.png" width="300" height="270" alt="The list of times every 15 minutes" loading="lazy"><figcaption>The time list.</figcaption></figure>
+        <figure><img src="wiki/calendar.png" width="300" height="332" alt="The calendar for a Layover's IN date" loading="lazy"><figcaption>The calendar.</figcaption></figure>
+      </div>
+
+      <h3 id="the-email">What the email has</h3>
+      <ul>
+        <li><strong>Subject:</strong> the load number and POD(s), like <code>3645493 POD(s)</code>.</li>
+        <li><strong>To, CC and message:</strong> from the template, with the load number filled in, and the accessorials' details under the message. A template can also say <strong>No Lumper</strong> when Lumper isn't picked.</li>
+        <li><strong>The PDF</strong>, named after the load: <code>3645493.pdf</code> (or the template's own name for it). See <a href="#file-names">File names and sizes</a>.</li>
+        <li>If your team turned on <strong>Sent with restack</strong>, a small "sent with restack" line goes under the message, above your own signature.</li>
+      </ul>
+
+      <h3 id="attach">Attaching the PDF</h3>
+      <p>If your team admin set up automatic attaching, the new email opens with the PDF already attached. If that doesn't work, the email still opens, the panel's status line says why, and you can attach it as below.</p>
+      <p>Otherwise, click <strong>Attach PDF</strong> on the new email's ribbon. If you haven't changed the email's subject, Restack attaches the PDF straight away; if you have, choose <strong>Attach PDF</strong> in the panel (or pick which email's files go on it). The PDF waits up to 2 hours, and only your latest one waits: attach it before you make the next email.</p>
+
+      <h3 id="separate">Accessorials in a separate email</h3>
+      <p>With a template set to send accessorials separately, Create email opens two emails whenever an accessorial is picked (just the request, if only tagged files are checked):</p>
+      <ol>
+        <li>The <strong>POD email</strong>, with the usual subject and the PODs.</li>
+        <li>The <strong>request</strong>, like <code>3645493 - Lumper/Detention Request</code> (Other's type goes in it too), with the PODs and the accessorial files, each accessorial's details, and the template's own accessorial To, CC and message.</li>
+      </ol>
+      <p>Didn't see the second email? <strong>Open it again</strong> under the panel's status line opens it again.</p>
+      <figure class="wide"><img src="wiki/two-emails.png" width="592" height="507" alt="The POD email and the Lumper/Detention request" loading="lazy"><figcaption>The two emails. Lumper's receipt is in its own file because the template puts accessorials in their own file; Detention has none, since the PODs are its paperwork.</figcaption></figure>
+
+      <h3 id="file-names">File names and sizes</h3>
+      <ul>
+        <li>The PDF is named after the load (<code>3645493.pdf</code>), or the template's PDF name with the load number in it.</li>
+        <li><strong>Multi-stop:</strong> one PDF per stop, <code>3645493-1</code>, <code>3645493-2</code>…, unless the template puts every stop in one file.</li>
+        <li><strong>Accessorials in their own file:</strong> <code>3645493 Lumper</code>, and Other's named for its type, like <code>3645493 Scale Ticket</code>. On a Multi-stop load, one for each stop.</li>
+        <li><strong>Every PDF stays under 10 MB.</strong> A bigger one is split, in page order, into <code>3645493-1</code>, <code>3645493-2</code> and so on, all attached to the same email. A Lumper or Other file is split the same way, like <code>3645493 Lumper-1</code>. Stop files are kept whole, and so is a single page over 10 MB; the panel says so when that happens.</li>
+      </ul>
+
+      <h3 id="save">Save PDF</h3>
+      <ol>
+        <li>Choose <strong>Save PDF…</strong> under the Email button.</li>
+        <li>Check the name (the load number is suggested) and choose <strong>Save</strong>.</li>
+      </ol>
+      <p>You get one PDF (one per stop, with Multi-stop on), with any tagged files last, in your Downloads, in parts if it's over 10 MB. Where Outlook allows it and there's one file, Windows' <strong>Save As</strong> window opens so you can pick the folder. For several files, if Outlook asks about downloading multiple files, choose <strong>Allow</strong>; the panel also has a button for each file, in case one didn't come through.</p>
+      <figure><img src="wiki/save-pdf.png" width="300" height="233" alt="Naming the PDF to save" loading="lazy"><figcaption>Name the PDF, then Save.</figcaption></figure>
+
+      <!-- ===================================================== Settings -->
+      <h2 id="settings">Settings</h2>
+      <p>The gear at the bottom right of the panel, there whatever email is selected.</p>
+      <figure><img src="wiki/settings.png" width="290" height="397" alt="The Settings menu" loading="lazy"><figcaption>Settings, as a team admin sees it.</figcaption></figure>
+      <dl class="terms">
+        <dt>My templates…</dt><dd><a href="#my-templates">Your own templates</a>, when your team allows them.</dd>
+        <dt>Admin console</dt><dd>For team admins only: opens the <a href="#admin-console">admin console</a> in your browser.</dd>
+        <dt>Appearance</dt><dd>Light, Dark, or Match Outlook.</dd>
+        <dt>Text size</dt><dd>Small, Medium or Large.</dd>
+        <dt>View</dt><dd>Large, Medium or Small pictures, List, Details or Tiles.</dd>
+        <dt>Tag accessorials by file name</dt><dd>Files named like receipts start out tagged Lumper. See <a href="#tags">Accessorial tags</a>.</dd>
+        <dt>Keep adding</dt><dd>Each email you click adds its files. See <a href="#keep-adding">Keep adding</a>.</dd>
+        <dt>Help</dt><dd>Opens this wiki.</dd>
+      </dl>
+      <p>Your choices (and pins, and your own templates) are saved in your Outlook account. Outlook keeps about 32 KB of each person's Restack settings. A change that won't fit isn't saved: saving a template says so, and a Settings choice or a pin just doesn't stick.</p>
+      <p><strong>Test report</strong>, at the bottom left, is a log of what Restack did. If something isn't working, choose <strong>Copy report</strong> and send it to your team admin. <kbd>Esc</kbd> closes whatever is open: a pop-up, the preview, a menu or the Create email step.</p>
+
+      <!-- ===================================================== Templates -->
+      <h2 id="templates">Templates</h2>
+      <p>The team's templates are made by team admins, in the <a href="#console-templates">admin console</a>. Reps can make their own, too, if the team admin allows it.</p>
+
+      <h3 id="my-templates">Your own templates</h3>
+      <p>If your team admin turned on <strong>Reps' own templates</strong>, <strong>Settings → My templates…</strong> (also at the bottom of <strong>Email ▾</strong>) lists yours. <strong>New template</strong> makes one; <strong>Edit</strong> changes one. They're saved in your Outlook account, and only you see them. They show under <strong>Mine</strong> in the Email menu.</p>
+      <figure class="tall"><img src="wiki/template-form.png" width="300" height="600" alt="A new template's form" loading="lazy"><figcaption>A template, in its groups: Email, Accessorials, PDF and Questions.</figcaption></figure>
+
+      <h3 id="template-options">Every template option</h3>
+      <h4>Email</h4>
+      <ul>
+        <li><strong>Template name</strong>, <strong>To</strong> (separate addresses with <code>;</code> or <code>,</code>), <strong>CC</strong> (optional) and <strong>Message</strong>.</li>
+        <li>Type <code>{load}</code> wherever the load number goes, in To, CC or Message (and the PDF name). You're asked for it each time. The subject is always the load number and POD(s).</li>
+      </ul>
+      <h4>Accessorials</h4>
+      <ul>
+        <li><strong>Accessorial Only:</strong> for customers that get the POD only when there's an accessorial. It's listed under Accessorial Only in the Email menu, and Create email needs an accessorial picked.</li>
+        <li><strong>Say No Lumper</strong> in the message when Lumper isn't picked.</li>
+        <li><strong>Accessorials in their own file:</strong> each accessorial tagged in the list gets a file of its own, like <code>3645493 Lumper</code>. Off: tagged files go after the PODs, in the same file.</li>
+        <li><strong>Accessorials in a separate email:</strong> <a href="#separate">two emails</a> when an accessorial is picked. The request's <strong>To</strong> (blank: the same as the POD email's), <strong>CC</strong> and <strong>Message</strong>. In its message, <code>{types}</code> is Lumper, Detention and so on.</li>
+      </ul>
+      <h4>PDF</h4>
+      <ul>
+        <li><strong>PDF name</strong>, with <code>{load}</code> for the load number.</li>
+        <li><strong>Multi-stop loads: each stop in its own file.</strong> Off: all stops in one file, in stop order.</li>
+      </ul>
+      <h4>Questions before Create email</h4>
+      <ul>
+        <li>An <strong>opening line</strong> (<code>{company}</code> shows the template's name), then up to 12 questions with up to 8 answers each.</li>
+        <li>Each answer goes to the next question, jumps ahead to a later one, continues to the email, or stops with your message.</li>
+      </ul>
+      <p>A new template starts with every box unticked.</p>
+
+      <h3 id="several">Several templates at once</h3>
+      <p>On a new template (or a copy), <strong>Add Customer</strong> adds another template name and To. Saving (the button then says <strong>Save 3 templates</strong>, say) makes one template for each customer, all with the same CC, message, accessorial options, questions, PDF name and file options. Each can be changed on its own afterwards. Names and addresses copied from two columns in Excel paste in one go, up to 50 at a time.</p>
+
+      <h3 id="copy-delete">Make a copy, or delete</h3>
+      <p>Under a saved template: <strong>Make a copy</strong> starts a new template with the same settings, named "… (copy)". <strong>Delete this template</strong> asks you to click again, since there's no undo.</p>
+
+      <!-- ===================================================== Admin console -->
+      <h2 id="admin-console">Admin console <span class="who">Team admins</span></h2>
+      <p>The admin console is where the team's templates and settings are made, full size in your browser.</p>
+
+      <h3 id="console-open">Open the console</h3>
+      <p>In Restack, choose <strong>Settings → Admin console</strong>. Only team admins see it. The link carries your team key, and the browser keeps it so a bookmark to the console works next time (<a href="#team-settings">This browser</a> removes it). With nothing published yet, whoever opens the console from Outlook sets up the team and becomes its admin.</p>
+
+      <h3 id="publish">Publish to team</h3>
+      <p>Your reps don't see changes until you publish. The top right of the console says when there are changes they can't see yet.</p>
+      <ul>
+        <li><strong>Publish to team</strong> downloads <code>team.json</code>. Upload it to your GitHub repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
+        <li>With a GitHub token under <strong>Team settings → Publishing</strong>, it goes straight to GitHub instead.</li>
+        <li>Unpublished changes stay in the browser they were made in, so publish soon after editing.</li>
+      </ul>
+
+      <h3 id="console-templates">Templates tab</h3>
+      <p>The team's templates on the left, with search and <strong>New template</strong>; the template you pick opens on the right. The form has the <a href="#template-options">same options</a> as above, and <strong>Save template</strong> stays in sight at the bottom of the window as you scroll.</p>
+      <figure class="wide"><img src="wiki/console-templates.png" width="760" height="487" alt="The admin console's Templates tab, editing a template" loading="lazy"><figcaption>The Templates tab.</figcaption></figure>
+
+      <h3 id="team-settings">Team settings tab</h3>
+      <p>The list on the left goes to each setting and shows how it's set (on a narrow window, it's a <strong>Go to</strong> drop-down). Changes reach your reps once you publish.</p>
+      <figure class="wide"><img src="wiki/console-team.png" width="760" height="487" alt="The admin console's Team settings tab" loading="lazy"><figcaption>The Team settings tab.</figcaption></figure>
+      <h4>Publishing and access</h4>
+      <dl class="terms">
+        <dt>Publishing</dt><dd>Your repository (<code>owner/repository</code>) and, optionally, a GitHub token: a fine-grained personal access token for that one repository, with <strong>Contents: Read and write</strong>. Make one on GitHub under <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>. Tick <strong>Remember it in this browser</strong> to keep it after the tab closes. <strong>Test</strong> checks it; <strong>Remove the token</strong> forgets it.</dd>
+        <dt>Install files</dt><dd><strong>Download restack-team.xml</strong>, what your reps install, and <strong>restack-beta.xml</strong>, <a href="#beta">Restack Beta</a> for you. Both carry your team key, so keep them within your team.</dd>
+        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. To publish, an admin also needs upload access to your GitHub repository.</dd>
+        <dt>This browser</dt><dd><strong>Remove them from this browser</strong>: your team key, usage admin key, any remembered GitHub token, and changes you haven't published (it asks first). Do this on a shared computer.</dd>
+      </dl>
+      <h4>Reps' panels and emails</h4>
+      <dl class="terms">
+        <dt>Reps' own templates</dt><dd>On: reps can make their own templates (Settings → My templates). Off: they use only the team's; their own stay in their Outlook either way.</dd>
+        <dt>Sent with restack</dt><dd>On: every email Restack creates, the accessorial email too, ends with a small "sent with restack" line under the message, above the rep's own Outlook signature.</dd>
+        <dt>Accessorial file names</dt><dd>The words for <a href="#tags">Tag accessorials by file name</a>, separated by commas (<code>lumper, receipt</code> to start). Capital letters don't matter, and a word can be part of a longer name. A <em>Delivery Receipt</em> is a POD, so that "receipt" doesn't count.</dd>
+        <dt>Rate confirmation check</dt><dd><strong>Choose a rate con PDF…</strong> from your computer to turn on the <a href="#rate-con">check</a>; its first 3 pages are kept as the sample. <strong>Remove the sample</strong> turns it off.</dd>
+      </dl>
+      <h4>Azure functions</h4>
+      <p>These need your own Azure Function Apps; each one's folder has its setup steps.</p>
+      <dl class="terms">
+        <dt>Attach automatically</dt><dd>Your PDF Emails function's address (its Default domain, from the Function App's Overview page) and an upload key (<strong>Generate</strong>, then <strong>Copy</strong> it into the Function App's <code>THREAD_ATTACHMENTS_UPLOAD_KEY</code> setting). Then <strong>Test connection</strong>, <strong>Save</strong>, and publish. Create email then opens with the PDF already attached, for everyone.</dd>
+        <dt>Usage counts</dt><dd>Your Restack Usage function's address, a counting key (its <code>RESTACK_USAGE_KEY</code> setting; it's published with your templates, so reps' panels can send counts) and an admin key (<code>RESTACK_USAGE_ADMIN_KEY</code>; it stays in this browser and isn't published). Then the Usage tab shows everyone's numbers.</dd>
+      </dl>
+
+      <h3 id="usage">Usage tab</h3>
+      <p>What your team makes with Restack, once usage counts are set up.</p>
+      <ul>
+        <li>Pick the dates: <strong>Last 7 days</strong>, <strong>Last 30 days</strong>, <strong>This month</strong>, <strong>Last month</strong>, <strong>This year</strong>, or any <strong>From</strong> and <strong>To</strong>.</li>
+        <li>The totals: emails created, PDFs saved, files combined, pages, rate cons caught, reps, and time saved. Time saved counts the minutes you set per email created (3 to start; a POD email and its request count once) and per PDF saved (1 to start).</li>
+        <li>Per day, by rep, by template, and the versions in use. <strong>Refresh</strong> gets the latest; <strong>Download CSV</strong> saves them.</li>
+      </ul>
+      <p>An email for the same load and template counts once a day, however many times it's created. Only counts are kept: the rep's email address, when, the Restack version, how many files, pages and PDFs, the template's name, which accessorials, and whether it was split, Multi-stop, a separate email or attached automatically. Never the files, file names, load numbers or customer addresses.</p>
+      <figure class="wide"><img src="wiki/console-usage.png" width="760" height="487" alt="The admin console's Usage tab" loading="lazy"><figcaption>The Usage tab, for the last 30 days.</figcaption></figure>
+
+      <!-- ===================================================== For the team admin -->
+      <h2 id="team-admin">For the team admin <span class="who">Team admins</span></h2>
+
+      <h3 id="setup">Set up your team</h3>
+      <p>Do this once. You'll manage the team's templates, and only people you send the install file to can use the add-in.</p>
+      <ol>
+        <li>On the <a href="./">install page</a>, choose <strong>Create team install file</strong>. It downloads <code>restack-team.xml</code>.</li>
+        <li>Install it in Outlook, as in <a href="#install">Install Restack</a>.</li>
+        <li>In Restack, choose <strong>Settings → Admin console</strong>. Add your templates there and choose <strong>Publish to team</strong>.</li>
+        <li>Send the same <code>restack-team.xml</code> to your reps.</li>
+      </ol>
+      <div class="note"><p>Keep that file. Choosing <strong>Create team install file</strong> again makes a new team key, which can't open the templates you've already published. You can download it again any time from <strong>Team settings → Install files</strong>.</p></div>
+
+      <h3 id="update">Update Restack</h3>
+      <ol>
+        <li>Upload the new version's files to your repository, next to the ones already there. Keep the <code>team.json</code> that's there.</li>
+        <li>That's all: everyone gets the new version the next time they open the panel. If it still shows the old one, close and reopen Outlook.</li>
+      </ol>
+
+      <h3 id="beta">Restack Beta</h3>
+      <p>A second copy of the add-in, just for you, that runs whatever is in your repository's <code>beta</code> folder. It sits next to Restack in Outlook, so you can try a new version on real emails before your reps get it.</p>
+      <ol>
+        <li>Once: upload the <code>beta</code> folder (a full copy of Restack) to your repository.</li>
+        <li>Once: in the admin console, choose <strong>Team settings → Install files → Download restack-beta.xml</strong> and install it the same way. It shows up as <strong>Restack Beta</strong>, with a black β on its icon.</li>
+        <li>Each new version: upload it into the <code>beta</code> folder first and try it. When it's ready, upload the same files to the main folder.</li>
+      </ol>
+      <p>Restack Beta uses your published templates and team settings. Its own choices (Appearance, Text size, View, the two switches, pinned templates), your own templates and any unpublished changes are kept apart from Restack's. Keep <code>restack-beta.xml</code> to yourself: it carries your team key.</p>
+
+      <h3 id="wording">Change the wording</h3>
+      <p>Most labels reps see on the panel (Select all, Accessorial, Email, Create email, Detention, Include in PDF and so on) are in one list at the top of <code>taskpane.js</code>, called <code>WORDS</code>. Change the text between the double quotes, keep anything in {curly brackets}, and upload the file. An apostrophe is fine, but don't type a double quote inside the text: it stops the panel from loading. Each label changes everywhere it's used, including the email's accessorial lines.</p>
+
+      <!-- ===================================================== Privacy -->
+      <h2 id="privacy">Privacy</h2>
+      <ul>
+        <li>The add-in runs inside Outlook. Attachments are read and combined on your computer.</li>
+        <li>With automatic attaching on, PDFs made with Email are uploaded to your team admin's own Azure function, so Outlook can download them into the new email. Those links stop working after an hour, and the files are then deleted.</li>
+        <li>With usage counts on, your panel sends counts to your team admin's own Azure function: your email address, when, the Restack version, how many files, pages and PDFs, the template's name, which accessorials, and whether it was split, Multi-stop, a separate email or attached automatically. Never the files, file names, load numbers or customer addresses.</li>
+        <li>Team templates and settings are stored on the Restack site encrypted with your team's key. Only your install file and your team admins' console have it. Your own templates and choices are saved in your Outlook account.</li>
+      </ul>
+
+      <!-- ===================================================== Troubleshooting -->
+      <h2 id="faq">Troubleshooting</h2>
+      <dl class="terms">
+        <dt>Only one email's files show up</dt>
+        <dd>Select every email in the thread (<a href="#open">how</a>), or use <a href="#keep-adding">Keep adding</a>.</dd>
+        <dt>"This copy of Restack isn't set up for a team."</dt>
+        <dd>It was installed some other way than from your team's install file. Remove it, and install the <code>restack-team.xml</code> your team admin sent (<a href="#install">how</a>).</dd>
+        <dt>"This install file doesn't match your team."</dt>
+        <dd>The file is old, or from another team. Ask your team admin for the current one.</dd>
+        <dt>There's no Restack button on the ribbon</dt>
+        <dd>Classic Outlook can take up to a day after installing. If it's still missing, install it again (<a href="#install">how</a>).</dd>
+        <dt>Restack looks the same after an update</dt>
+        <dd>Close and reopen Outlook.</dd>
+        <dt>The Email menu says to check the files first</dt>
+        <dd>Tick at least one file in the list.</dd>
+        <dt>A page is flagged as a rate con, but it isn't one</dt>
+        <dd>Choose <strong>Not a rate con</strong> (<a href="#rate-con">more</a>).</dd>
+        <dt>Create email asks for an accessorial</dt>
+        <dd>The template is Accessorial Only, or a file is tagged Lumper or Other: add that accessorial, or change the file's tag (<a href="#accessorials">more</a>).</dd>
+        <dt>Attach PDF can't find the PDF</dt>
+        <dd>Create the email from Restack first. The PDF waits for up to 2 hours, and only the latest one waits.</dd>
+        <dt>I can't find My templates</dt>
+        <dd>Your team admin has to turn on Reps' own templates and publish.</dd>
+        <dt>A change in Settings or a pin didn't stick</dt>
+        <dd>Outlook keeps about 32 KB of your Restack settings, your own templates included. Delete one of your templates you don't use and try again.</dd>
+        <dt>Email and Save PDF say to try again in a moment</dt>
+        <dd>Restack is still checking the files for rate confirmations. Wait a second and try again.</dd>
+        <dt>Something else isn't working</dt>
+        <dd>Open <strong>Test report</strong> at the bottom of the panel, choose <strong>Copy report</strong>, and send it to your team admin.</dd>
+      </dl>
+
+      <footer>
+        <p><a class="top-link" href="#">Back to the top</a> · <a href="./">Install page</a> · Built with pdf-lib, PDF.js and UTIF.js, set in Jost. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a>.</p>
+      </footer>
+    </article>
+  </div>
+
+  <script>
+    (function () {
+      var toc = document.getElementById('toc');
+      var links = Array.prototype.slice.call(document.querySelectorAll('#toc-list a'));
+      var narrow = window.matchMedia('(max-width: 880px)');
+
+      // On a narrow window the contents start folded up, and fold up again after you pick a topic
+      function fit() { toc.open = !narrow.matches; }
+      fit();
+      if (narrow.addEventListener) narrow.addEventListener('change', fit);
+      links.forEach(function (link) {
+        link.addEventListener('click', function () { if (narrow.matches) toc.open = false; });
+      });
+
+      // Find a topic: shows the topics whose name, or whose part of the page, has every word typed
+      var find = document.getElementById('toc-find');
+      var none = document.getElementById('toc-none');
+      var text = {};
+      links.forEach(function (link) {
+        var id = link.getAttribute('href').slice(1);
+        var start = document.getElementById(id);
+        var words = link.textContent;
+        if (start) {
+          for (var node = start.nextElementSibling; node && !/^H[23]$/.test(node.tagName); node = node.nextElementSibling) words += ' ' + node.textContent;
+        }
+        text[id] = words.toLowerCase();
+      });
+      find.addEventListener('input', function () {
+        var terms = find.value.toLowerCase().split(/\s+/).filter(Boolean);
+        var shown = 0;
+        links.forEach(function (link) {
+          var id = link.getAttribute('href').slice(1);
+          var item = link.parentElement;
+          var hit = terms.every(function (t) { return text[id].indexOf(t) !== -1; });
+          var kids = item.querySelectorAll('ol a');
+          var kidHit = Array.prototype.some.call(kids, function (k) { var kid = k.getAttribute('href').slice(1); return terms.every(function (t) { return text[kid].indexOf(t) !== -1; }); });
+          item.hidden = !(hit || kidHit);
+          if (hit) shown++;
+        });
+        none.hidden = shown > 0 || !terms.length;
+      });
+
+      // The topic you're reading is marked in the contents
+      if ('IntersectionObserver' in window) {
+        var heads = links.map(function (link) { return document.getElementById(link.getAttribute('href').slice(1)); }).filter(Boolean);
+        var seen = {};
+        var watch = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+          var current = null;
+          for (var i = 0; i < heads.length; i++) {
+            if (heads[i].getBoundingClientRect().top <= window.innerHeight * 0.35) current = heads[i].id;
+          }
+          links.forEach(function (link) { link.classList.toggle('here', link.getAttribute('href') === '#' + current); });
+        }, { rootMargin: '0px 0px -60% 0px' });
+        heads.forEach(function (h) { watch.observe(h); });
+      }
+    })();
+  </script>
+</body>
+</html>

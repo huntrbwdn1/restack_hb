@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.23.0">
+  <meta name="restack-version" content="0.24.0">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.23.0"></script>
+  <script src="mode.js?v=0.24.0"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.23.0">
-  <script type="module" src="taskpane.js?v=0.23.0"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.24.0">
+  <script type="module" src="taskpane.js?v=0.24.0"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -213,7 +213,7 @@
     <div class="foot-row">
       <details id="diagnostics" class="diagnostics">
         <summary data-w="testReport">Test report</summary>
-        <p class="muted small">Try the buttons above, then copy this and paste it into the chat.</p>
+        <p class="muted small">If something isn't working, copy this and send it to your team admin.</p>
         <textarea id="report" readonly spellcheck="false" aria-label="Test report"></textarea>
         <button id="btn-copy-report" class="btn" type="button" data-w="copyReport">Copy report</button>
       </details>
@@ -264,8 +264,11 @@
               <button class="set-opt" type="button" role="option" data-value="tiles" aria-selected="false" tabindex="-1"><span class="opt-icon"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.4" height="7" rx="1.2"/><rect x="11.1" y="2.5" width="6.4" height="7" rx="1.2"/><path d="M2.5 13h6.4M11.1 13h6.4M2.5 16h4M11.1 16h4"/></svg></span><span class="opt-name" data-w="viewTiles">Tiles</span><svg class="opt-check" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.6 10.4 8.2 14l7.2-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div id="set-sep-prefs" class="menu-sep" hidden></div>
-          <button id="set-tag-receipts" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="tagAccessorials">Tag accessorials by file name</span><span class="switch" aria-hidden="true"></span></button>
-          <button id="set-keep-adding" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-name" data-w="keepAdding">Keep adding</span><span class="switch" aria-hidden="true"></span></button>
+          <button id="set-tag-receipts" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-text"><span class="mi-name" data-w="tagAccessorials">Tag accessorials by file name</span><span class="mi-sub" data-w="tagAccessorialsNote">Files named like receipts start out tagged Lumper</span></span><span class="switch" aria-hidden="true"></span></button>
+          <button id="set-keep-adding" class="menu-item set-row set-switch" type="button" role="switch" aria-checked="false" hidden><span class="mi-text"><span class="mi-name" data-w="keepAdding">Keep adding</span><span class="mi-sub" data-w="keepAddingSwitchNote">Each email you click adds its files</span></span><span class="switch" aria-hidden="true"></span></button>
+          <!-- Help: the Restack wiki (every feature, and how to install), in the browser -->
+          <div class="menu-sep"></div>
+          <button id="set-help" class="menu-item set-row" type="button"><span class="mi-name" data-w="help">Help</span><svg class="opt-ext" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5 9.5 10.5M8 5H4.5v10.5H15V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
       </div>
     </div>
@@ -343,65 +346,96 @@
       </div>
       <form id="tpl-form" class="tpl-form" hidden novalidate>
         <h2 id="tpl-form-title" class="tpl-form-title" hidden></h2>
-        <label class="field">
-          <span>Template name</span>
-          <input id="tpl-name" type="text" maxlength="60" autocomplete="off" placeholder="Walmart PODs">
-        </label>
-        <label class="field">
-          <span>To</span>
-          <input id="tpl-to" type="text" autocomplete="off" spellcheck="false" placeholder="pods@example.com">
-          <small class="hint">Separate addresses with ; or ,</small>
-        </label>
-        <div id="tpl-customers" class="tpl-customers" hidden>
-          <ol id="cust-list" class="cust-list" aria-label="More customers"></ol>
-          <div><button id="cust-add" class="btn" type="button">Add Customer</button></div>
-          <p id="cust-note" class="hint cust-note" hidden></p>
-        </div>
-        <label class="field">
-          <span>CC <span class="muted">(optional)</span></span>
-          <input id="tpl-cc" type="text" autocomplete="off" spellcheck="false">
-        </label>
-        <label class="field">
-          <span>Message</span>
-          <textarea id="tpl-message" rows="5"></textarea>
-        </label>
-        <div class="field">
-          <label class="check-row tpl-check">
-            <input type="checkbox" id="tpl-acc-only">
-            <span>Accessorial Only</span>
+        <section class="tpl-group">
+          <h3 class="tpl-group-title">Email</h3>
+          <label class="field">
+            <span>Template name</span>
+            <input id="tpl-name" type="text" maxlength="60" autocomplete="off" placeholder="Walmart PODs">
           </label>
-          <div id="tpl-acc-only-hint" class="tpl-sub" hidden>
-            <small class="hint">For customers that get the POD only when there's an accessorial. It's listed under <b>Accessorial Only</b> in the Email menu (closed to start), and Create email needs an accessorial picked.</small>
-          </div>
-        </div>
-        <label class="check-row tpl-check">
-          <input type="checkbox" id="tpl-no-lumper">
-          <span>Say <b>No Lumper</b> in the message when Lumper isn't picked</span>
-        </label>
-        <div class="field">
-          <label class="check-row tpl-check">
-            <input type="checkbox" id="tpl-acc-sep">
-            <span>Accessorials in a separate email</span>
+          <label class="field">
+            <span>To</span>
+            <input id="tpl-to" type="text" autocomplete="off" spellcheck="false" placeholder="pods@example.com">
+            <small class="hint">Separate addresses with ; or ,</small>
           </label>
-          <div id="tpl-acc-row" class="tpl-sub tpl-acc" hidden>
-            <small class="hint">When an accessorial is picked, Create email opens two emails: the PODs, and a request like <b>3645493 - Lumper/Detention Request</b> with the PODs and accessorial files attached and the details in it.</small>
-            <label class="field">
-              <span>To <span class="muted">(blank: the same as above)</span></span>
-              <input id="tpl-acc-to" type="text" autocomplete="off" spellcheck="false" placeholder="accessorials@example.com">
-            </label>
-            <label class="field">
-              <span>CC <span class="muted">(optional)</span></span>
-              <input id="tpl-acc-cc" type="text" autocomplete="off" spellcheck="false">
-            </label>
-            <label class="field">
-              <span>Message <span class="muted">(optional)</span></span>
-              <textarea id="tpl-acc-message" rows="3"></textarea>
-              <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Lumper, Detention and so on.</small>
-            </label>
+          <div id="tpl-customers" class="tpl-customers" hidden>
+            <ol id="cust-list" class="cust-list" aria-label="More customers"></ol>
+            <div><button id="cust-add" class="btn" type="button">Add Customer</button></div>
+            <p id="cust-note" class="hint cust-note" hidden></p>
           </div>
-        </div>
-        <div class="field q-field">
-          <span>Questions before Create email <span class="muted">(optional)</span></span>
+          <label class="field">
+            <span>CC <span class="muted">(optional)</span></span>
+            <input id="tpl-cc" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>Message</span>
+            <textarea id="tpl-message" rows="5"></textarea>
+          </label>
+          <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes: you're asked for it each time. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>.</p>
+        </section>
+        <section class="tpl-group">
+          <h3 class="tpl-group-title" data-w="accessorials">Accessorials</h3>
+          <div class="field">
+            <label class="check-row tpl-check">
+              <input type="checkbox" id="tpl-acc-only">
+              <span>Accessorial Only</span>
+            </label>
+            <div id="tpl-acc-only-hint" class="tpl-sub" hidden>
+              <small class="hint">For customers that get the POD only when there's an accessorial. It's listed under <b>Accessorial Only</b> in the Email menu (closed to start), and Create email needs an accessorial picked.</small>
+            </div>
+          </div>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-no-lumper">
+            <span>Say <b>No Lumper</b> in the message when Lumper isn't picked</span>
+          </label>
+          <div class="field">
+            <label class="check-row tpl-check">
+              <input type="checkbox" id="tpl-lumper-sep">
+              <span>Accessorials in their own file</span>
+            </label>
+            <div id="tpl-lumper-row" class="tpl-sub" hidden>
+              <small class="hint">Each accessorial tagged in the list (or on its pages, in the preview) gets a file of its own: <b data-w="lumper">Lumper</b> in one like <b>3645493 Lumper</b>, and <b data-w="other">Other</b> in one named for its type, like <b>3645493 Scale Ticket</b>. Detention and Layover go with the PODs. Off: tagged files go after the PODs, in the same file.</small>
+            </div>
+          </div>
+          <div class="field">
+            <label class="check-row tpl-check">
+              <input type="checkbox" id="tpl-acc-sep">
+              <span>Accessorials in a separate email</span>
+            </label>
+            <div id="tpl-acc-row" class="tpl-sub tpl-acc" hidden>
+              <small class="hint">When an accessorial is picked, Create email opens two emails: the PODs, and a request like <b>3645493 - Lumper/Detention Request</b> with the PODs and accessorial files attached and the details in it.</small>
+              <label class="field">
+                <span>To <span class="muted">(blank: the same as above)</span></span>
+                <input id="tpl-acc-to" type="text" autocomplete="off" spellcheck="false" placeholder="accessorials@example.com">
+              </label>
+              <label class="field">
+                <span>CC <span class="muted">(optional)</span></span>
+                <input id="tpl-acc-cc" type="text" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="field">
+                <span>Message <span class="muted">(optional)</span></span>
+                <textarea id="tpl-acc-message" rows="3"></textarea>
+                <small class="hint">Each accessorial's details go under it. Type <b>{types}</b> for Lumper, Detention and so on.</small>
+              </label>
+            </div>
+          </div>
+        </section>
+        <section class="tpl-group">
+          <h3 class="tpl-group-title">PDF</h3>
+          <label class="field">
+            <span>PDF name</span>
+            <span class="name-field">
+              <input id="tpl-file" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+              <span class="name-ext" aria-hidden="true">.pdf</span>
+            </span>
+          </label>
+          <label class="check-row tpl-check">
+            <input type="checkbox" id="tpl-stop-files">
+            <span>Multi-stop loads: each stop in its own file (-1, -2…). Off: all stops in one file, in stop order.</span>
+          </label>
+          <p class="hint">A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files are kept whole.</p>
+        </section>
+        <section class="tpl-group q-field">
+          <h3 class="tpl-group-title">Questions before Create email <span class="muted">(optional)</span></h3>
           <small class="hint">Asked in a pop-up when someone picks this template. Each answer goes to the next question, jumps ahead to a later one, continues to the email, or stops with your message.</small>
           <div id="q-intro-row" class="q-intro-row" hidden>
             <label for="q-intro" class="q-sub-label">Opening line</label>
@@ -410,29 +444,7 @@
           </div>
           <ol id="q-list" class="q-list"></ol>
           <div><button id="q-add" class="btn" type="button">Add a question</button></div>
-        </div>
-        <label class="field">
-          <span>PDF name</span>
-          <span class="name-field">
-            <input id="tpl-file" type="text" maxlength="120" autocomplete="off" spellcheck="false">
-            <span class="name-ext" aria-hidden="true">.pdf</span>
-          </span>
-        </label>
-        <div class="field">
-          <span>Files</span>
-          <label class="check-row tpl-check">
-            <input type="checkbox" id="tpl-stop-files">
-            <span>Multi-stop loads: each stop in its own file (-1, -2…). Off: all stops in one file, in stop order.</span>
-          </label>
-          <label class="check-row tpl-check">
-            <input type="checkbox" id="tpl-lumper-sep">
-            <span>Accessorials in their own file</span>
-          </label>
-          <div id="tpl-lumper-row" class="tpl-sub" hidden>
-            <small class="hint">Each accessorial tagged in the list (or on its pages, in the preview) gets a file of its own: <b data-w="lumper">Lumper</b> in one like <b>3645493 Lumper</b>, and <b data-w="other">Other</b> in one named for its type, like <b>3645493 Scale Ticket</b>. Detention and Layover go with the PODs. Off: tagged files go after the PODs, in the same file.</small>
-          </div>
-        </div>
-        <p class="hint tpl-tip">Type <b>{load}</b> wherever the load number goes. You'll be asked for it each time you use the template. The subject is always the load number and POD(s), like <b>3645493 POD(s)</b>. A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files are kept whole.</p>
+        </section>
         <p id="tpl-error" class="status error" role="alert"></p>
         <div class="btn-row">
           <button id="tpl-save" class="btn primary" type="submit">Save template</button>
@@ -567,11 +579,15 @@
           <button id="con-publish" class="btn primary" type="button">Publish to team</button>
         </div>
       </div>
-      <nav id="con-tabs" class="con-tabs" role="tablist" aria-label="Admin console" hidden>
-        <button id="con-tab-templates" class="con-tab" type="button" role="tab" aria-selected="true" aria-controls="con-templates">Templates</button>
-        <button id="con-tab-team" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-team" tabindex="-1">Team settings</button>
-        <button id="con-tab-usage" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-usage" tabindex="-1">Usage</button>
-      </nav>
+      <div class="con-tabs-row">
+        <nav id="con-tabs" class="con-tabs" role="tablist" aria-label="Admin console" hidden>
+          <button id="con-tab-templates" class="con-tab" type="button" role="tab" aria-selected="true" aria-controls="con-templates">Templates</button>
+          <button id="con-tab-team" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-team" tabindex="-1">Team settings</button>
+          <button id="con-tab-usage" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-usage" tabindex="-1">Usage</button>
+        </nav>
+        <!-- Help: the Restack wiki's admin console pages, in a new tab -->
+        <a id="con-help" class="con-help" href="wiki.html#admin-console" target="_blank" rel="noopener">Help<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5 9.5 10.5M8 5H4.5v10.5H15V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      </div>
     </header>
     <div class="con-main">
       <p id="con-note" class="con-note" role="status" hidden></p>
@@ -580,82 +596,93 @@
       <section id="con-templates" class="con-panel" role="tabpanel" aria-labelledby="con-tab-templates" hidden></section>
 
       <section id="con-team" class="con-panel" role="tabpanel" aria-labelledby="con-tab-team" hidden>
-        <div class="con-cards">
-          <article class="con-card" id="con-card-publishing">
-            <header class="con-card-head"><h2>Publishing</h2><span id="github-state" class="con-chip"></span></header>
-            <div class="con-card-body azure-form">
-              <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
-              <label class="field">
-                <span>Repository</span>
-                <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
-              </label>
-              <label class="field">
-                <span>GitHub token <span class="muted">(optional)</span></span>
-                <input id="gh-token" type="text" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
-                <small class="hint">A fine-grained personal access token for this one repository, with <b>Contents: Read and write</b>. Make one on GitHub under Settings → Developer settings → Personal access tokens → Fine-grained tokens.</small>
-              </label>
-              <label class="check-row tpl-check"><input id="gh-remember" type="checkbox"><span>Remember it in this browser (otherwise it's forgotten when you close this tab)</span></label>
-              <p id="gh-status" class="hint" role="status"></p>
-              <div class="btn-row">
-                <button id="gh-save" class="btn primary" type="button">Save</button>
-                <button id="gh-test" class="btn" type="button">Test</button>
-                <button id="gh-forget" class="btn" type="button">Remove the token</button>
+        <!-- The settings in four groups, with a list of them on the left (a drop-down on a narrow window)
+             that goes to each one and shows how it's set -->
+        <div class="con-settings">
+          <nav id="set-nav" class="set-nav" aria-label="Team settings">
+            <label class="set-jump"><span>Go to</span><select id="set-jump"></select></label>
+            <div id="set-nav-list" class="set-nav-list"></div>
+          </nav>
+          <div class="con-cards">
+            <h2 class="con-group">Publishing and access</h2>
+            <article class="con-card" id="con-card-publishing">
+              <header class="con-card-head"><h2>Publishing</h2><span id="github-state" class="con-chip"></span></header>
+              <div class="con-card-body azure-form">
+                <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
+                <label class="field">
+                  <span>Repository</span>
+                  <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
+                </label>
+                <label class="field">
+                  <span>GitHub token <span class="muted">(optional)</span></span>
+                  <input id="gh-token" type="text" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+                  <small class="hint">A fine-grained personal access token for this one repository, with <b>Contents: Read and write</b>. Make one on GitHub under Settings → Developer settings → Personal access tokens → Fine-grained tokens.</small>
+                </label>
+                <label class="check-row tpl-check"><input id="gh-remember" type="checkbox"><span>Remember it in this browser (otherwise it's forgotten when you close this tab)</span></label>
+                <p id="gh-status" class="hint" role="status"></p>
+                <div class="btn-row">
+                  <button id="gh-save" class="btn primary" type="button">Save</button>
+                  <button id="gh-test" class="btn" type="button">Test</button>
+                  <button id="gh-forget" class="btn" type="button">Remove the token</button>
+                </div>
               </div>
-            </div>
-          </article>
-          <article class="con-card" id="con-card-install">
-            <header class="con-card-head"><h2>Install files</h2></header>
-            <div class="con-card-body azure-form">
-              <p class="hint"><b>restack-team.xml</b> is what reps install. <b>restack-beta.xml</b> is Restack Beta, for you: it runs whatever is in your repository's <b>beta</b> folder, next to Restack, so you can try a new version before reps get it. Both carry your team key, so keep them within your team.</p>
-              <div class="btn-row">
-                <button id="con-share" class="btn" type="button">Download restack-team.xml</button>
-                <button id="con-share-beta" class="btn" type="button">Download restack-beta.xml</button>
+            </article>
+            <article class="con-card" id="con-card-install">
+              <header class="con-card-head"><h2>Install files</h2></header>
+              <div class="con-card-body azure-form">
+                <p class="hint"><b>restack-team.xml</b> is what reps install. <b>restack-beta.xml</b> is Restack Beta, for you: it runs whatever is in your repository's <b>beta</b> folder, next to Restack, so you can try a new version before reps get it. Both carry your team key, so keep them within your team.</p>
+                <div class="btn-row">
+                  <button id="con-share" class="btn" type="button">Download restack-team.xml</button>
+                  <button id="con-share-beta" class="btn" type="button">Download restack-beta.xml</button>
+                </div>
               </div>
-            </div>
-          </article>
-          <article class="con-card" data-section="admins-section" id="con-card-admins">
-            <header class="con-card-head"><h2>Team admins</h2><span id="admins-state" class="con-chip"></span></header>
-            <div class="con-card-body"></div>
-          </article>
-          <article class="con-card" id="con-card-reps">
-            <header class="con-card-head"><h2>Reps' own templates</h2></header>
-            <div class="con-card-body azure-form">
-              <button id="con-rep-templates" class="con-switch" type="button" role="switch" aria-checked="false"><span>Reps can make their own templates</span><span class="switch" aria-hidden="true"></span></button>
-              <p class="hint">Off: reps use only the team templates. Their own templates stay in their Outlook either way.</p>
-            </div>
-          </article>
-          <article class="con-card" id="con-card-sent-with">
-            <header class="con-card-head"><h2>Sent with restack</h2></header>
-            <div class="con-card-body azure-form">
-              <button id="con-sent-with" class="con-switch" type="button" role="switch" aria-checked="false"><span>Add this line to every email Restack creates</span><span class="switch" aria-hidden="true"></span></button>
-              <img class="sent-with-sample" src="sent-with-restack.png" width="136" height="23" alt="sent with restack">
-              <p class="hint">It goes under the message, above the rep's own Outlook signature, in the POD email and the accessorial email. It's a small picture inside the email, so it looks the same in every mail app.</p>
-            </div>
-          </article>
-          <article class="con-card" data-section="rc-section">
-            <header class="con-card-head"><h2>Rate confirmation check</h2><span id="rc-state" class="con-chip"></span></header>
-            <div class="con-card-body"></div>
-          </article>
-          <article class="con-card" data-section="azure-section">
-            <header class="con-card-head"><h2>Attach automatically</h2><span id="azure-state" class="con-chip"></span></header>
-            <div class="con-card-body"></div>
-          </article>
-          <article class="con-card" data-section="receipts-section">
-            <header class="con-card-head"><h2>Accessorial file names</h2><span id="receipts-state" class="con-chip"></span></header>
-            <div class="con-card-body"></div>
-          </article>
-          <article class="con-card" data-section="usage-section" id="con-card-usage">
-            <header class="con-card-head"><h2>Usage counts</h2><span id="usage-state" class="con-chip"></span></header>
-            <div class="con-card-body"></div>
-          </article>
-          <article class="con-card" id="con-card-browser">
-            <header class="con-card-head"><h2>This browser</h2></header>
-            <div class="con-card-body azure-form">
-              <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
-              <p id="forget-status" class="hint" role="status"></p>
-              <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
-            </div>
-          </article>
+            </article>
+            <article class="con-card" data-section="admins-section" id="con-card-admins">
+              <header class="con-card-head"><h2>Team admins</h2><span id="admins-state" class="con-chip"></span></header>
+              <div class="con-card-body"></div>
+            </article>
+            <article class="con-card" id="con-card-browser">
+              <header class="con-card-head"><h2>This browser</h2></header>
+              <div class="con-card-body azure-form">
+                <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
+                <p id="forget-status" class="hint" role="status"></p>
+                <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
+              </div>
+            </article>
+            <h2 class="con-group">Reps' panels and emails</h2>
+            <article class="con-card" id="con-card-reps">
+              <header class="con-card-head"><h2>Reps' own templates</h2><span id="reps-state" class="con-chip"></span></header>
+              <div class="con-card-body azure-form">
+                <button id="con-rep-templates" class="con-switch" type="button" role="switch" aria-checked="false"><span>Reps can make their own templates</span><span class="switch" aria-hidden="true"></span></button>
+                <p class="hint">Off: reps use only the team templates. Their own templates stay in their Outlook either way.</p>
+              </div>
+            </article>
+            <article class="con-card" id="con-card-sent-with">
+              <header class="con-card-head"><h2>Sent with restack</h2><span id="sent-with-state" class="con-chip"></span></header>
+              <div class="con-card-body azure-form">
+                <button id="con-sent-with" class="con-switch" type="button" role="switch" aria-checked="false"><span>Add this line to every email Restack creates</span><span class="switch" aria-hidden="true"></span></button>
+                <img class="sent-with-sample" src="sent-with-restack.png" width="136" height="23" alt="sent with restack">
+                <p class="hint">It goes under the message, above the rep's own Outlook signature, in the POD email and the accessorial email. It's a small picture inside the email, so it looks the same in every mail app.</p>
+              </div>
+            </article>
+            <article class="con-card" data-section="receipts-section" id="con-card-receipts">
+              <header class="con-card-head"><h2>Accessorial file names</h2><span id="receipts-state" class="con-chip"></span></header>
+              <div class="con-card-body"></div>
+            </article>
+            <article class="con-card" data-section="rc-section" id="con-card-rc">
+              <header class="con-card-head"><h2>Rate confirmation check</h2><span id="rc-state" class="con-chip"></span></header>
+              <div class="con-card-body"></div>
+            </article>
+            <h2 class="con-group">Azure functions</h2>
+            <article class="con-card" data-section="azure-section" id="con-card-azure">
+              <header class="con-card-head"><h2>Attach automatically</h2><span id="azure-state" class="con-chip"></span></header>
+              <div class="con-card-body"></div>
+            </article>
+            <article class="con-card" data-section="usage-section" id="con-card-usage">
+              <header class="con-card-head"><h2>Usage counts</h2><span id="usage-state" class="con-chip"></span></header>
+              <div class="con-card-body"></div>
+            </article>
+          </div>
         </div>
       </section>
 

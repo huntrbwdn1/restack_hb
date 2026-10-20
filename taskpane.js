@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.23.0';
+const VERSION = '0.24.0';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -212,7 +212,10 @@ const WORDS = {
   viewDetails: "Details",
   viewTiles: "Tiles",
   tagAccessorials: "Tag accessorials by file name", // a switch: files named like receipts start out tagged Lumper
+  tagAccessorialsNote: "Files named like receipts start out tagged Lumper", // under that switch
   keepAdding: "Keep adding",                       // a switch: each email you click adds its files to the list
+  keepAddingSwitchNote: "Each email you click adds its files", // under that switch
+  help: "Help",                                    // the last thing in Settings: opens the Restack wiki in your browser
 
   // A new email
   attachPdf: "Attach PDF",                         // in the panel and messages (the ribbon's is in the install file)
@@ -7058,6 +7061,26 @@ function consoleUrl() {
   return `${new URL('console.html', window.location.href).href}#${parts.join('&')}`; // the beta opens the beta's console
 }
 
+/**
+ * Settings → Help: the Restack wiki (every feature, how to use it, and how to install), in the browser.
+ * It's on this site, next to the panel (the beta's copy sends you on to the main site's); the team key
+ * in the panel's address doesn't go with it.
+ */
+function openHelp() {
+  closeSettings(false);
+  const url = new URL('wiki.html', window.location.href).href;
+  log('Help: the wiki');
+  try {
+    if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.openBrowserWindow === 'function') {
+      Office.context.ui.openBrowserWindow(url);
+      return;
+    }
+  } catch (error) {
+    // a new window below
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
 /** Settings → Admin console (team admins): the team's templates and settings, in a browser. */
 async function openConsole() {
   const url = consoleUrl();
@@ -7517,6 +7540,13 @@ function showConsoleLocked() {
       `Check your internet connection and try again. (${team.error})`],
   }[team.status] || ['Something went wrong', team.error || ''];
   card.append(el('h1', '', title), ...lines.map((line) => el('p', '', line)));
+  const help = el('a', 'con-locked-help', 'How the admin console works');
+  help.href = 'wiki.html#admin-console';
+  help.target = '_blank';
+  help.rel = 'noopener';
+  const helpLine = el('p', 'con-locked-more');
+  helpLine.append(help);
+  card.append(helpLine);
   const row = el('div', 'btn-row');
   if (team.status === 'wrongkey') {
     const forget = el('button', 'btn', 'Remove the key from this browser');
@@ -7565,7 +7595,101 @@ function showConsoleTab(tab, focus = true) {
   if (tab === 'usage') loadUsageReport().catch(fail);
 }
 
+// ---- Team settings: a list of them on the left, with how each is set, that goes to its card
+
+/**
+ * Builds the list (and the drop-down for narrow windows) from the cards and their group headings,
+ * once. Each item shows its card's chip (On, Off, 1 admin…), kept in step as the cards change.
+ */
+function buildSettingsNav() {
+  const list = $('set-nav-list');
+  const jump = $('set-jump');
+  if (!list || list.childElementCount) return;
+  let group = null;
+  let optgroup = null;
+  for (const node of document.querySelectorAll('#con-team .con-cards > .con-group, #con-team .con-cards > .con-card')) {
+    if (node.classList.contains('con-group')) {
+      group = el('div', 'set-nav-group');
+      group.append(el('h3', 'set-nav-head', node.textContent));
+      list.append(group);
+      optgroup = document.createElement('optgroup');
+      optgroup.label = node.textContent;
+      jump.append(optgroup);
+      continue;
+    }
+    const name = node.querySelector('.con-card-head h2').textContent;
+    const item = el('button', 'set-nav-item');
+    item.type = 'button';
+    item.dataset.card = node.id;
+    item.append(el('span', 'set-nav-name', name), el('span', 'con-chip'));
+    item.addEventListener('click', () => goToSetting(node.id));
+    (group || list).append(item);
+    (optgroup || jump).append(new Option(name, node.id));
+  }
+  jump.addEventListener('change', () => goToSetting(jump.value));
+  syncSettingsNav();
+  // Each item's chip follows its card's, and the switches' On and Off, whenever they change
+  new MutationObserver(() => syncSettingsNav()).observe($('con-team'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-checked'] });
+  // The one in view is marked in the list, as you scroll
+  if ('IntersectionObserver' in window) {
+    const seen = new Map();
+    const watch = new IntersectionObserver((entries) => {
+      for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+      if (Date.now() < settingPicked) return; // (going to a setting picked in the list: it stays marked, even near the bottom)
+      const cards = [...document.querySelectorAll('#con-team .con-card')];
+      const top = cards.find((card) => (seen.get(card.id) || 0) > 0);
+      if (top) markSetting(top.id);
+    }, { rootMargin: '0px 0px -55% 0px', threshold: [0, 0.01] });
+    for (const card of document.querySelectorAll('#con-team .con-card')) watch.observe(card);
+  }
+}
+
+/** Copies each card's chip into its item in the list (the switches' cards say On or Off). */
+function syncSettingsNav() {
+  const on = (id) => $(id) && $(id).getAttribute('aria-checked') === 'true';
+  const chip = (id, text) => {
+    const node = $(id);
+    if (node && node.textContent !== text) node.textContent = text;
+  };
+  chip('reps-state', on('con-rep-templates') ? 'On' : 'Off');
+  chip('sent-with-state', on('con-sent-with') ? 'On' : 'Off');
+  for (const item of document.querySelectorAll('#set-nav-list .set-nav-item')) {
+    const source = $(item.dataset.card).querySelector('.con-card-head .con-chip');
+    const target = item.querySelector('.con-chip');
+    const text = source ? source.textContent : '';
+    if (target.textContent !== text) target.textContent = text;
+  }
+}
+
+/** Marks a setting in the list (and the drop-down) as the one you're at. */
+function markSetting(id) {
+  for (const item of document.querySelectorAll('#set-nav-list .set-nav-item')) {
+    if (item.dataset.card === id) item.setAttribute('aria-current', 'true');
+    else item.removeAttribute('aria-current');
+  }
+  if ($('set-jump').value !== id) $('set-jump').value = id;
+}
+
+let settingPicked = 0; // until when the setting picked in the list stays marked while the page scrolls to it
+
+/** Goes to a setting's card: scrolls it to the top, gives it a moment's highlight, and puts the focus in it. */
+function goToSetting(id) {
+  const card = $(id);
+  if (!card) return;
+  markSetting(id);
+  settingPicked = Date.now() + 1500;
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+  card.classList.remove('flash');
+  void card.offsetWidth; // restart the highlight
+  card.classList.add('flash');
+  const heading = card.querySelector('.con-card-head h2');
+  heading.tabIndex = -1;
+  heading.focus({ preventScroll: true });
+}
+
 function renderConsole() {
+  buildSettingsNav();
   renderConsolePublish();
   renderTemplateSheet();
   renderAdminsBox();
@@ -8767,6 +8891,7 @@ function wireSettings() {
   $('set-keep-adding').addEventListener('click', () => setKeepAdding(!prefs.keepAdding));
   // The admin console (team admins): the team's templates and settings are made there
   $('team-console').addEventListener('click', openConsole);
+  $('set-help').addEventListener('click', openHelp);
   box.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || pop.hidden) return;
     event.stopPropagation(); // just Settings, not the screen behind it
