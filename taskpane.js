@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.24.1';
+const VERSION = '0.24.2';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -7520,7 +7520,7 @@ function readConsoleHash() {
 
 async function startConsole() {
   document.documentElement.classList.add('is-console');
-  document.title = BETA ? 'Restack Beta admin console' : 'Restack admin console';
+  document.title = BETA ? 'Admin Console - Restack Beta' : 'Admin Console - Restack'; // the browser tab's name, as mode.js sets it (with the icon)
   $('app').hidden = true;
   $('console').hidden = false;
   $('con-beta').hidden = !BETA;
