@@ -27,7 +27,7 @@ const TEAM_FILE = 'team.json';
 // start): one small picture from this site, attached inside the email so it shows without a "download
 // pictures" prompt and looks the same in every mail app. Drawn at 3x for sharp screens, shown at this size.
 const SENT_WITH = { file: 'sent-with-restack.png', width: 136, height: 23, alt: 'sent with restack' };
-const MAX_ADMINS = 20;                  // team admins (Settings → Team → Team admins)
+const MAX_ADMINS = 20;                  // team admins (the admin console's Team settings tab)
 const MAX_CUSTOMERS = 50;               // templates made at once with Add Customer (the first one included)
 const ROAMING_ROOM = 32 * 1024;         // what Outlook keeps of Restack's roaming settings, for each person
 // The beta: the site's beta folder, installed as "Restack Beta" next to Restack, for trying a new
@@ -130,8 +130,7 @@ const WORDS = {
   otherTemplates: "Other templates",               // under them: opens the rest, A to Z
   pin: "Pin to the top",                           // the pin on each template
   unpin: "Unpin",
-  manageTemplates: "Manage templates…",
-  createTemplate: "Create a template…",            // in place of Manage templates, before there are any
+  manageTemplates: "My templates…",                // your own templates (the team's are made in the admin console)
 
   // Save PDF
   nameThePdf: "Name the PDF",
@@ -169,7 +168,6 @@ const WORDS = {
   leaveThemOut: "Leave them out",
   notARateCon: "Not a rate con",
   rateConBadge: "Rate con?",                       // on a flagged page in the preview
-  useAsRcSample: "Use as rate con sample",         // the team admin's link at the bottom of the preview
 
   // The preview
   includeInPdf: "Include in PDF",
@@ -2268,7 +2266,7 @@ function updateSelectionUi() {
   renderRcBanner(problems);
   for (const id of ['btn-save', 'name-save', 'load-go']) $(id).disabled = state.busy || !anyChecked || problems.length > 0;
   $('btn-save').title = !anyChecked ? 'Check the files to save first.' : problems.length ? 'Leave out the rate confirmation first.' : '';
-  $('btn-email').disabled = state.busy; // still opens, to reach Manage templates
+  $('btn-email').disabled = state.busy; // still opens, to reach My templates
   for (const id of ['keep-add-anyway', 'keep-ask-restart']) if ($(id)) $(id).disabled = state.busy;
   for (const box of document.querySelectorAll('#file-list .file-label > input[type="checkbox"]')) {
     const file = state.files[Number(box.closest('.file').dataset.id)];
@@ -2755,27 +2753,6 @@ function rcBlock() {
   return '';
 }
 
-/** The admin's "Use as rate con sample" in the preview. */
-async function onUseRateConSample() {
-  const file = state.files[state.previewIndex];
-  if (!file || file.kind !== 'PDF' || !isAdmin()) return;
-  const button = $('pv-rc-sample');
-  button.disabled = true;
-  try {
-    const sample = await rateConSample(file);
-    if (!sample.pages.some((page) => page.words || page.grid)) throw userError("nothing could be read from this file");
-    await saveTeamDraft({ rateCon: sample });
-    const readable = sample.pages.filter((page) => page.words.split(' ').filter(Boolean).length >= 10).length;
-    log(`Rate con check: sample set from ${file.name} (${plural(sample.pages.length, 'page')}, readable text on ${readable}), not published yet`);
-    button.textContent = `Saved as the sample (${plural(sample.pages.length, 'page')}${readable ? '' : ', pictures of pages, so it\'s matched by layout'}). Publish it (Settings → Team).`;
-    recheckRateCons();
-  } catch (error) {
-    button.textContent = `Couldn't use it: ${error.userMessage || error.message}`;
-  } finally {
-    button.disabled = false;
-  }
-}
-
 // --------------------------------------------------------------------------- list pictures
 
 /** A page with a coloured label (PDF, DOCX, TIF…), or a picture frame for photos. */
@@ -2914,9 +2891,6 @@ async function openPreview(id) {
   $('pv-name').title = file.name;
   $('pv-meta').textContent = metaLine(file);
   $('pv-pages').textContent = '';
-  const sampleButton = $('pv-rc-sample');
-  sampleButton.hidden = !(isAdmin() && file.kind === 'PDF' && file.bytes);
-  sampleButton.textContent = word('useAsRcSample');
   syncPreviewInclude();
   updatePreviewNav();
   $('pv-order-reset').hidden = true;
@@ -4222,7 +4196,7 @@ function renderEmailMenu() {
   }
   if (all.length) menu.append(el('div', 'menu-sep'));
   menu.append(menuItem(word('blankEmail'), word('blankEmailNote'), () => startEmail(null), !ready));
-  if (canMakeOwn()) menu.append(menuItem(word(all.length ? 'manageTemplates' : 'createTemplate'), '', openTemplates, false));
+  if (canMakeOwn()) menu.append(menuItem(word('manageTemplates'), '', openTemplates, false)); // your own; the team's are made in the admin console
   // After pinning, moving or unpinning, focus stays with that template (or, once it's tucked away
   // under Other templates, with the pin now in its place)
   if (focusedId) {
@@ -5225,9 +5199,14 @@ async function loadTeam() {
   log(`Team: ${what}${isAdmin() ? ' · you manage them' : ''}${team.draft && isAdmin() ? ' · unpublished changes' : ''}`);
 }
 
+/** The console opens on the published team, or on a new one (nothing published yet) when it knows who's setting it up. */
+function consoleOpens() {
+  return team.status === 'ok' || (team.status === 'nofile' && !!team.me);
+}
+
 /** The first person to set up a team manages it; after that, whoever team.json lists. */
 function isAdmin() {
-  if (CONSOLE) return team.status === 'ok'; // only someone with the team key gets this far
+  if (CONSOLE) return consoleOpens(); // only someone with the team key gets this far
   if (team.status === 'nofile') return true;
   return team.status === 'ok' && !!team.me && team.published.admins.includes(team.me);
 }
@@ -5274,7 +5253,7 @@ function showLocked() {
 let editing = null; // { scope: 'team' | 'mine', id }
 let deleteArmed = 0;
 
-let templatesOpener = null; // the button that opened Manage templates (Email or Settings), for focus after
+let templatesOpener = null; // the button that opened My templates (Email or Settings), for focus after
 
 function openTemplates() {
   closeEmailMenu(false);
@@ -5308,22 +5287,20 @@ function renderTemplateSheet() {
   $('tpl-pick').hidden = !CONSOLE || formOpen;
   $('con-tpl-tools').hidden = !CONSOLE;
   if (formOpen && !CONSOLE) return;
-  if (!formOpen) $('tpl-title').textContent = 'Email templates';
-  const admin = isAdmin();
-  const teamList = teamTemplates();
-  $('team-note').textContent = CONSOLE ? '' : admin ? 'You manage these' : 'Set by your team admin';
-  $('team-count').textContent = CONSOLE && teamList.length ? `(${teamList.length})` : '';
-  const query = CONSOLE ? consoleSearch.trim().toLowerCase() : '';
-  const shown = query ? teamList.filter((t) => [t.name, t.to, t.cc, t.accTo].some((v) => String(v || '').toLowerCase().includes(query))) : teamList;
-  fillTemplateList($('team-list'), byName(shown), admin ? 'team' : null);
-  $('team-empty').hidden = shown.length > 0;
-  $('team-empty').textContent = query
-    ? `No templates match "${consoleSearch.trim()}".`
-    : admin
-      ? 'Add the templates your reps should use, then publish them.'
-      : "Your team admin hasn't added any templates yet.";
-  $('team-admin').hidden = !admin;
-  if (admin) renderPublishBox();
+  // Outlook has each person's own templates; the team's are made in the admin console
+  if (!formOpen) $('tpl-title').textContent = CONSOLE ? 'Email templates' : 'My templates';
+  $('team-section').hidden = !CONSOLE;
+  if (CONSOLE) {
+    const teamList = teamTemplates();
+    $('team-note').textContent = '';
+    $('team-count').textContent = teamList.length ? `(${teamList.length})` : '';
+    const query = consoleSearch.trim().toLowerCase();
+    const shown = query ? teamList.filter((t) => [t.name, t.to, t.cc, t.accTo].some((v) => String(v || '').toLowerCase().includes(query))) : teamList;
+    fillTemplateList($('team-list'), byName(shown), 'team');
+    $('team-empty').hidden = shown.length > 0;
+    $('team-empty').textContent = query ? `No templates match "${consoleSearch.trim()}".` : 'Add the templates your reps should use, then publish them.';
+    renderPublishBox();
+  }
   $('mine-section').hidden = !canMakeOwn();
   fillTemplateList($('mine-list'), byName(state.myTemplates), 'mine');
   $('mine-empty').hidden = state.myTemplates.length > 0;
@@ -5339,9 +5316,7 @@ function renderRcBox(message) {
   const saved = sample && sample.saved ? new Date(sample.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
   $('rc-text').textContent = message || (sample
     ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}${sample.pages.some((page) => page.words) ? '' : '; pictures of pages, so it\'s matched by layout'}). Pages that look like it are flagged, as are pages that say "Rate Confirmation" or "Load Confirmation" and pages with the same barcode as a flagged one. They have to be left out before anyone emails or saves.`
-    : CONSOLE
-      ? 'Off. To turn it on, choose one of your rate confirmations (a PDF) as the sample. Its first 3 pages are kept.'
-      : `Off. To turn it on, open one of your rate confirmations from your inbox, preview it, and click ${word('useAsRcSample')} at the bottom of the preview.`);
+    : 'Off. To turn it on, choose one of your rate confirmations (a PDF) as the sample. Its first 3 pages are kept.');
 }
 
 async function onRcRemove() {
@@ -5359,33 +5334,26 @@ async function onRcRemove() {
 
 /** The admin's switch for the sent with restack line on every email Restack creates. Published with the templates. */
 async function onSentWithToggle(on) {
-  const id = CONSOLE ? 'con-sent-with' : 'team-sent-with';
-  markSwitch(id, on);
+  markSwitch('con-sent-with', on);
   try {
     await saveTeamDraft({ sentWith: on });
   } catch (error) {
-    markSwitch(id, !on);
+    markSwitch('con-sent-with', !on);
     teamNote(`Couldn't save it: ${error.message}`, 'error');
     return;
   }
   log(`Team: sent with restack line ${on ? 'on' : 'off'} (not published yet)`);
   renderPublishBox();
-  if (CONSOLE) {
-    teamNote(on ? 'Every email Restack creates gets the sent with restack line once you publish.' : 'Emails stop getting the sent with restack line once you publish.');
-  } else {
-    teamNote(on
-      ? "Your emails get the sent with restack line now. Your reps' get it once you publish."
-      : "Your emails don't get the sent with restack line now. Your reps' stop getting it once you publish.");
-  }
+  teamNote(on ? 'Every email Restack creates gets the sent with restack line once you publish.' : 'Emails stop getting the sent with restack line once you publish.');
 }
 
 /** The admin's switch for letting reps make their own templates. Published with the team templates. */
 async function onRepTemplatesToggle(on) {
-  markSwitch('team-rep-templates', on);
+  markSwitch('con-rep-templates', on);
   try {
     await saveTeamDraft({ repTemplates: on });
   } catch (error) {
-    markSwitch('team-rep-templates', !on);
+    markSwitch('con-rep-templates', !on);
     teamNote(`Couldn't save it: ${error.message}`, 'error');
     return;
   }
@@ -5418,20 +5386,9 @@ function fillTemplateList(list, templates, scope) {
   }
 }
 
-/** Whether there's something to publish: the Team group in Settings, and a banner in Manage templates. */
-function renderPublishBox(message) {
+/** After a team change: the admin console's header says whether there's something to publish. */
+function renderPublishBox() {
   renderTeamMenu();
-  const box = $('tpl-publish-box');
-  if (!box) return;
-  const pending = !!team.draft && !team.justPublished;
-  let text = '';
-  if (message) text = message;
-  else if (team.justPublished) text = PUBLISHED_TEXT;
-  else if (pending) text = "You have changes your team can't see yet. Publish, then upload team.json to GitHub.";
-  box.hidden = !text || !isAdmin();
-  box.classList.toggle('pending', pending && !message);
-  $('tpl-publish-text').textContent = text;
-  $('tpl-publish').hidden = !pending;
 }
 
 /** Opens a template in the editor (in the console, after asking about unsaved changes to another). */
@@ -5873,12 +5830,7 @@ async function saveTeamDraft(changes) {
   const kept = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
   const admins = Array.isArray(changes.admins) && changes.admins.length ? changes.admins : kept; // Team admins changes them
   const draft = { ...cleanTeam(base), ...changes, v: 1, updated: Date.now(), by: team.me, admins };
-  try {
-    await writeRoaming(DRAFT_KEY, draft);
-  } catch (error) {
-    if (!error.tooBig) throw error;
-    throw roomError('Outlook only keeps about 32 KB of unpublished team changes, and this goes over. The admin console has room for it: Settings → Team → Open admin console.');
-  }
+  await writeRoaming(DRAFT_KEY, draft); // (the console's are kept in the browser)
   team.draft = draft;
   team.justPublished = false;
   renderTeamMenu();
@@ -5998,7 +5950,7 @@ async function onPublish() {
   if (!source || !team.key) return;
   if (!team.me) {
     const why = "Couldn't read your email address from Outlook, so this can't be published.";
-    renderPublishBox(why);
+    renderPublishBox();
     teamNote(why, 'error');
     return;
   }
@@ -6029,44 +5981,12 @@ async function onPublish() {
   teamNote(PUBLISHED_TEXT, 'ok');
 }
 
-// ---- the Team screen: one of the admin's settings at a time (from Settings → Team)
+// ---- the team's settings, each in its card on the admin console's Team settings tab
 
-const TEAM_SCREENS = {
-  admins: { section: 'admins-section', title: 'Team admins', render: () => renderAdminsBox() },
-  rc: { section: 'rc-section', title: 'Rate confirmation check', render: () => renderRcBox() },
-  azure: { section: 'azure-section', title: 'Attach automatically', render: () => renderAzureBox() },
-  receipts: { section: 'receipts-section', title: 'Receipt file names', render: () => renderReceiptWords() },
-  usage: { section: 'usage-section', title: 'Usage counts', render: () => renderUsageBox() },
-};
-let teamShowing = null;
-
-function openTeamSheet(which) {
-  const screen = TEAM_SCREENS[which];
-  if (!screen || !isAdmin()) return;
-  closeSettings(false);
-  teamShowing = which;
-  for (const [key, other] of Object.entries(TEAM_SCREENS)) $(other.section).hidden = key !== which;
-  $('team-title').textContent = screen.title;
-  $('team-subtitle').textContent = '';
-  $('team-sheet').hidden = false;
-  screen.render();
-  $('team-back').focus();
-}
-
-function closeTeamSheet() {
-  if ($('team-sheet').hidden) return;
-  $('team-sheet').hidden = true;
-  teamShowing = null;
-  if (!$('read-view').hidden) renderList(); // receipt words may have changed which files start out tagged
-  $('btn-settings').focus();
-}
-
-/** The line under the Team screen's title (On, Off…), when that setting is the one showing. */
+/** A card's chip (On, Off…). */
 function teamSubtitle(which, text) {
-  if (teamShowing === which || CONSOLE) {
-    const node = CONSOLE ? $(`${which}-state`) : $('team-subtitle');
-    if (node) node.textContent = text;
-  }
+  const node = $(`${which}-state`);
+  if (node) node.textContent = text;
 }
 
 function setStatusIn(id, text, tone) {
@@ -6111,7 +6031,7 @@ async function onReceiptWordsSave(words) {
   applyReceiptNames();
 }
 
-// ---- team admins: who gets Settings → Team (published with the templates)
+// ---- team admins: who gets Settings → Admin console (published with the templates)
 
 /** The team's admins, as they'll be published: the admin's changes, else what's published, else you. */
 function teamAdmins() {
@@ -6317,22 +6237,15 @@ function consoleUrl() {
   const parts = [`k=${encodeURIComponent(team.key || '')}`];
   const admin = usageAdminKey();
   if (admin) parts.push(`u=${encodeURIComponent(admin)}`);
+  if (team.me) parts.push(`m=${encodeURIComponent(team.me)}`); // who's opening it: for a team's first publish
   return `${new URL('console.html', window.location.href).href}#${parts.join('&')}`; // the beta opens the beta's console
 }
 
-let consoleArmed = 0;
-
+/** Settings → Admin console (team admins): the team's templates and settings, in a browser. */
 async function openConsole() {
-  const pending = !!team.draft && !team.justPublished;
-  if (pending && Date.now() - consoleArmed > 8000) { // the console starts from what's published
-    consoleArmed = Date.now();
-    teamNote("You have changes here that aren't published. The console starts from what's published, so publish first to take them along. Click Open admin console again to open it anyway.", 'error');
-    return;
-  }
-  consoleArmed = 0;
   const url = consoleUrl();
   log('Team: admin console');
-  const opened = (how) => teamNote(`The admin console opened ${how}.${pending ? " It starts from what's published, so publish your changes here first if you want them there." : ''}`, pending ? 'error' : 'ok');
+  const opened = (how) => teamNote(`The admin console opened ${how}.`, 'ok');
   try {
     if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.openBrowserWindow === 'function') {
       Office.context.ui.openBrowserWindow(url);
@@ -6351,7 +6264,7 @@ async function openConsole() {
     await navigator.clipboard.writeText(url);
     teamNote("Outlook didn't open your browser, so the console's link is copied: paste it into your browser's address bar. It has your team key in it, so don't share it.", 'error');
   } catch (error) {
-    teamNote(`Outlook didn't open your browser. Open ${SITE_ROOT}console.html from Settings → Team on your computer's Outlook instead.`, 'error');
+    teamNote(`Outlook didn't open your browser. Open ${SITE_ROOT}console.html from Settings → Admin console on your computer's Outlook instead.`, 'error');
   }
 }
 
@@ -6695,10 +6608,11 @@ function usageFigures(files) {
 
 // --------------------------------------------------------------------------- the admin console
 // taskpane.html?console (console.html sends you here) in a browser window: the team's templates and
-// settings at full size, and the Usage tab. Settings → Team → Open admin console passes the team key
-// (and the usage admin key) after # in the address, so they never go to a server. They're kept in this
-// browser (thread-attachments.console.*), so a bookmark to the console works next time. The console
-// works from what's published in team.json: unpublished changes made in Outlook don't show here.
+// settings at full size, and the Usage tab. It's the only place they're changed. Settings → Admin console
+// in Outlook passes the team key (with the usage admin key and who's opening it) after # in the address,
+// so they never go to a server. They're kept in this browser (thread-attachments.console.*), so a bookmark
+// to the console works next time. The console works from what's published in team.json, plus its own
+// changes until they're published; with nothing published yet, it starts a new team.
 
 const CONSOLE_TABS = ['templates', 'team', 'usage'];
 let consoleTab = 'templates';
@@ -6706,7 +6620,7 @@ let consoleSearch = '';
 
 /** Where to go to publish, in messages: the panel's Settings, or the console's header. */
 function publishWhere() {
-  return CONSOLE ? 'Publish to team (top right)' : 'Publish (Settings → Team)';
+  return 'Publish to team (top right)';
 }
 
 function consoleNote(text, tone) {
@@ -6722,8 +6636,10 @@ function readConsoleHash() {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const key = hash.get('k');
   const admin = hash.get('u');
+  const me = String(hash.get('m') || '').trim().toLowerCase();
   if (key && /^[A-Za-z0-9_-]{22}$/.test(key)) writeSetting('teamKey', key);
   if (admin && admin.length >= 16) writeSetting('usageAdmin', JSON.stringify(admin)); // what readRoaming reads outside Outlook
+  if (/^[^\s@]+@[^\s@]+$/.test(me)) writeSetting('consoleMe', me); // who opened it from Outlook
   if (window.location.hash) {
     try {
       history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
@@ -6754,9 +6670,11 @@ async function startConsole() {
   wireConsole();
   consoleNote('Opening your team’s templates…');
   await loadTeam();
-  if (team.status === 'ok') team.me = team.published.admins[0] || '';
+  const me = String(readSetting('consoleMe') || '');
+  if (team.status === 'ok') team.me = team.published.admins.includes(me) ? me : team.published.admins[0] || '';
+  else if (team.status === 'nofile') team.me = me; // a new team: whoever opened the console from Outlook sets it up
   consoleNote('');
-  if (team.status !== 'ok') {
+  if (!consoleOpens()) {
     showConsoleLocked();
     return;
   }
@@ -6773,11 +6691,11 @@ function showConsoleLocked() {
   const card = el('div', 'con-locked-card');
   const [title, ...lines] = {
     nokey: ['Open the console from Outlook',
-      'In Restack, choose Settings (the gear at the bottom) → Team → Open admin console. That link carries your team key, and this browser keeps it so the console opens straight away next time.'],
+      'In Restack, choose Settings (the gear at the bottom) → Admin console. That link carries your team key, and this browser keeps it so the console opens straight away next time.'],
     wrongkey: ["This key doesn't open your team's templates",
-      'It may be from another team or an old install file. Remove it, then open the console again from Outlook: Settings → Team → Open admin console.'],
+      'It may be from another team or an old install file. Remove it, then open the console again from Outlook: Settings → Admin console.'],
     nofile: ['Nothing is published yet',
-      'Set up your team in Outlook first: open Restack, choose Settings → Manage templates, add a template and publish it. Then open the console again.'],
+      'To set up your team, open the console from Outlook: in Restack, choose Settings → Admin console. That link says who you are, so you become the team admin.'],
     error: ["Couldn't load your team's templates",
       `Check your internet connection and try again. (${team.error})`],
   }[team.status] || ['Something went wrong', team.error || ''];
@@ -6845,7 +6763,7 @@ function renderConsole() {
 
 /** The header: whether there are changes to publish, and the button. */
 function renderConsolePublish() {
-  if (!CONSOLE || team.status !== 'ok') return;
+  if (!CONSOLE || !consoleOpens()) return;
   const pending = !!team.draft && !team.justPublished;
   const box = $('con-publish-box');
   box.hidden = false;
@@ -6855,7 +6773,7 @@ function renderConsolePublish() {
     : '';
   $('con-publish-text').textContent = pending
     ? "Changes your team can't see yet"
-    : team.justPublished ? (githubReady() ? 'Published to GitHub' : 'team.json downloaded') : `Published${when ? ` ${when}` : ''}`;
+    : team.justPublished ? (githubReady() ? 'Published to GitHub' : 'team.json downloaded') : team.published ? `Published${when ? ` ${when}` : ''}` : 'Nothing published yet';
   $('con-publish').disabled = !pending;
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
@@ -6898,7 +6816,7 @@ function wireConsole() {
     team.draft = null;
     renderGithubBox();
     log('Admin console: removed what it kept in this browser');
-    setStatusIn('forget-status', 'Removed. To open the console again, use Settings → Team → Open admin console in Outlook.', 'ok');
+    setStatusIn('forget-status', 'Removed. To open the console again, use Settings → Admin console in Outlook.', 'ok');
   });
   for (const button of document.querySelectorAll('#con-usage .us-range')) button.addEventListener('click', () => pickUsageRange(button.dataset.range));
   for (const id of ['us-from', 'us-to']) $(id).addEventListener('change', () => pickUsageDates());
@@ -6921,7 +6839,7 @@ function wireConsole() {
   });
 }
 
-/** A rate confirmation PDF from the computer becomes the sample (the panel uses one previewed from an email). */
+/** A rate confirmation PDF from the computer becomes the sample. */
 async function onRcFile(input) {
   const chosen = input.files && input.files[0];
   input.value = '';
@@ -7654,10 +7572,7 @@ function wireReadUi() {
   wireHowto();
   $('tpl-delete').addEventListener('click', () => onTemplateDelete().catch(fail));
   $('tpl-duplicate').addEventListener('click', onTemplateDuplicate);
-  $('team-new').addEventListener('click', () => editTemplate('team', null));
   $('mine-new').addEventListener('click', () => editTemplate('mine', null));
-  $('tpl-publish').addEventListener('click', () => onPublish().catch(fail));
-  $('team-back').addEventListener('click', closeTeamSheet);
   $('rc-remove').addEventListener('click', () => onRcRemove().catch(fail));
   $('rw-save').addEventListener('click', () => onReceiptWordsSave($('rw-words').value.split(/[,;\n]+/)).catch(fail));
   $('rw-default').addEventListener('click', () => onReceiptWordsSave(DEFAULT_RECEIPT_WORDS).catch(fail));
@@ -7676,7 +7591,6 @@ function wireReadUi() {
   $('us-test').addEventListener('click', () => onUsageTest().catch(fail));
   $('rc-leave-out').addEventListener('click', onRcLeaveOut);
   $('rc-keep').addEventListener('click', onRcKeep);
-  $('pv-rc-sample').addEventListener('click', () => onUseRateConSample().catch(fail));
   $('az-gen').addEventListener('click', onAzureGenerate);
   $('az-copy').addEventListener('click', () => onAzureCopy().catch(fail));
   $('az-save').addEventListener('click', () => onAzureSave().catch(fail));
@@ -7697,7 +7611,6 @@ function wireReadUi() {
     if (!$('quiz').hidden) cancelQuiz();
     else if (!$('howto').hidden) closeHowto(true);
     else if (!$('preview').hidden) closePreview();
-    else if (!$('team-sheet').hidden) closeTeamSheet();
     else if (!$('templates').hidden) {
       if (editing) cancelEdit();
       else closeTemplates();
@@ -7727,9 +7640,9 @@ function registerHandlers() {
 
 // --------------------------------------------------------------------------- Settings
 //
-// The gear across from Test report opens Settings: Manage templates, Team (the team admin's own
-// settings, folded up), Appearance, Text size and View (each a row that drops down its choices), and
-// two switches. Each person's choices are saved in Outlook's roaming settings, so they follow them to
+// The gear across from Test report opens Settings: My templates, Admin console (team admins; the team's
+// templates and settings are made there), Appearance, Text size and View (each a row that drops down its
+// choices), and two switches. Each person's choices are saved in Outlook's roaming settings, so they follow them to
 // other computers. mode.js puts last time's light or dark and text size on the page before anything
 // shows, so the panel doesn't flash white in dark mode or jump in size.
 
@@ -7873,7 +7786,7 @@ function pickView(view) {
 
 // ---- the drop-down rows and the Team group
 
-const SETTINGS_LISTS = ['team-menu', 'appearance-list', 'size-list', 'view-list'];
+const SETTINGS_LISTS = ['appearance-list', 'size-list', 'view-list'];
 
 /** The row in Settings that opens a list. */
 function listRow(list) {
@@ -7932,13 +7845,9 @@ function markSwitch(id, on) {
 function openSettings() {
   const pop = $('settings-pop');
   const templates = $('set-templates');
-  templates.hidden = !(readUiWired && canMakeOwn());
-  if (!templates.hidden) {
-    templates.querySelector('.mi-name').textContent = word(teamTemplates().length || state.myTemplates.length ? 'manageTemplates' : 'createTemplate');
-  }
-  const admin = readUiWired && isAdmin();
+  templates.hidden = !(readUiWired && canMakeOwn()); // your own templates
+  const admin = readUiWired && isAdmin(); // the team's are made in the admin console
   $('set-team-group').hidden = !admin;
-  if (admin) renderTeamMenu();
   teamNote('');
   $('set-sep-look').hidden = templates.hidden && !admin;
   for (const id of ['set-size', 'set-view', 'set-sep-prefs', 'set-tag-receipts', 'set-keep-adding']) $(id).hidden = !readUiWired;
@@ -7950,7 +7859,7 @@ function openSettings() {
   showSettingsList(null, false); // compact each time: the choices drop down from their rows
   pop.hidden = false;
   $('btn-settings').setAttribute('aria-expanded', 'true');
-  const first = [templates, $('set-team'), $('set-appearance')].find((b) => b && !b.hidden && b.offsetParent !== null);
+  const first = [templates, $('team-console'), $('set-appearance')].find((b) => b && !b.hidden && b.offsetParent !== null);
   (first || $('set-appearance')).focus();
 }
 
@@ -7976,30 +7885,9 @@ function teamNote(text, tone) {
   note.className = `set-note${tone ? ` ${tone}` : ''}`;
 }
 
-/** The Team group's states: unpublished changes, and each setting at a glance. */
+/** The console's header: whether there are changes to publish. (Outlook's Settings has just the Admin console link.) */
 function renderTeamMenu() {
-  if (CONSOLE) {
-    renderConsolePublish();
-    return;
-  }
-  if (!$('set-team-group') || !isAdmin()) return;
-  const pending = !!team.draft && !team.justPublished;
-  const now = $('set-team-now');
-  now.textContent = pending ? 'Changes to publish' : '';
-  now.classList.toggle('pending', pending);
-  const state = $('team-publish-state');
-  state.textContent = pending ? 'Changes to publish' : (team.justPublished ? 'Downloaded' : 'Up to date');
-  state.classList.toggle('on', pending);
-  $('team-publish').disabled = !team.draft;
-  const settings = teamSettings();
-  markSwitch('team-rep-templates', settings && settings.repTemplates);
-  markSwitch('team-sent-with', settings && settings.sentWith);
-  const admins = $('team-admins-state');
-  if (admins) admins.textContent = String(teamAdmins().length);
-  $('team-rc-state').textContent = teamRateCon() ? 'On' : 'Off';
-  $('team-azure-state').textContent = teamAzure() ? 'On' : 'Off';
-  $('team-receipts-state').textContent = receiptWords().join(', ') || 'None';
-  $('team-usage-state').textContent = teamUsage() ? 'On' : 'Off';
+  if (CONSOLE) renderConsolePublish();
 }
 
 /** Arrow keys, Home and End move between a list's buttons. */
@@ -8036,10 +7924,7 @@ function wireSettings() {
   // Each row drops its list down (click, Enter, Space or the arrow keys); a pick folds it back up
   for (const list of lists) {
     const row = listRow(list);
-    row.addEventListener('click', () => {
-      showSettingsList(list, list.hidden, true);
-      if (list.id === 'team-menu') teamNote('');
-    });
+    row.addEventListener('click', () => showSettingsList(list, list.hidden, true));
     row.addEventListener('keydown', (event) => {
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
       event.preventDefault();
@@ -8061,21 +7946,7 @@ function wireSettings() {
   // The switches
   $('set-tag-receipts').addEventListener('click', () => setTagReceipts(!prefs.tagReceipts));
   $('set-keep-adding').addEventListener('click', () => setKeepAdding(!prefs.keepAdding));
-  // Team (the admin's)
-  $('team-publish').addEventListener('click', () => onPublish().catch((error) => teamNote(`Couldn't publish: ${error.message}`, 'error')));
-  $('team-share').addEventListener('click', () => onShareInstall().catch((error) => teamNote(error.message, 'error')));
-  $('team-share-beta').addEventListener('click', () => onShareBeta().catch((error) => teamNote(error.message, 'error')));
-  $('team-rep-templates').addEventListener('click', () => {
-    const on = $('team-rep-templates').getAttribute('aria-checked') !== 'true';
-    onRepTemplatesToggle(on).catch((error) => teamNote(error.message, 'error'));
-  });
-  $('team-sent-with')?.addEventListener('click', () => {
-    const on = $('team-sent-with').getAttribute('aria-checked') !== 'true';
-    onSentWithToggle(on).catch((error) => teamNote(error.message, 'error'));
-  });
-  for (const [id, which] of [['team-open-admins', 'admins'], ['team-open-rc', 'rc'], ['team-open-azure', 'azure'], ['team-open-receipts', 'receipts'], ['team-open-usage', 'usage']]) {
-    $(id)?.addEventListener('click', () => openTeamSheet(which));
-  }
+  // The admin console (team admins): the team's templates and settings are made there
   $('team-console').addEventListener('click', openConsole);
   box.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || pop.hidden) return;

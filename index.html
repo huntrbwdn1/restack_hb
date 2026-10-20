@@ -8,9 +8,9 @@
   <title>Restack for Outlook</title>
   <link rel="icon" href="icon-32.png">
   <style>
-    @font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-    @font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; }
-    @font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
     :root {
       color-scheme: light;
       --bg: #fff; --fg: #242424; --muted: #5e5e5e; --line: #e6e6e6;
@@ -27,17 +27,18 @@
       }
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font: 16px/1.55 "Archivo", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif; color: var(--fg); background: var(--bg); }
+    body { margin: 0; font: 16px/1.55 "Jost", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif; word-spacing: -.06em; color: var(--fg); background: var(--bg); }
     .mast { position: relative; background: var(--bg); border-bottom: 1px solid var(--line); }
-    .mast-in { max-width: 720px; margin: 0 auto; padding: 28px 20px 30px; display: flex; gap: 18px; align-items: center; }
+    .mast-in { max-width: 720px; margin: 0 auto; padding: 28px 20px 30px; }
     .mast::after { content: ""; position: absolute; left: 0; right: 96px; bottom: -1px; height: 8px;
       background: linear-gradient(90deg, var(--g1), var(--g2)); clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); }
     .mast::before { content: ""; position: absolute; right: 14px; bottom: -1px; width: 74px; height: 8px;
       background: linear-gradient(90deg, var(--g2) 0 34px, transparent 34px 44px, var(--g3) 44px 74px); transform: skewX(-45deg); transform-origin: 0 100%; }
-    .mast .icon { width: 64px; height: 64px; flex: none; }
-    .logo { display: block; height: 22px; width: auto; margin-bottom: 8px; }
+    /* the restack logo (the wordmark and the icon, one picture for light and dark), with "for Outlook" under it */
+    .logo { display: block; height: 40px; width: auto; margin-left: -3px; } /* (the picture's clear edge, so the "r" lines up with "for Outlook") */
     h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -.01em; }
-    .tag { display: inline-block; margin-top: 6px; padding: 1px 9px; border-radius: 10px; background: var(--soft); color: var(--soft-ink); font-size: 13px; font-weight: 600; }
+    h1 .for { display: block; margin-top: 8px; font-size: 22px; line-height: 1.2; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+    .tag { display: inline-block; margin-top: 12px; padding: 1px 9px; border-radius: 10px; background: var(--soft); color: var(--soft-ink); font-size: 13px; font-weight: 600; }
     main { max-width: 720px; margin: 0 auto; padding: 24px 20px 64px; }
     .lead { font-size: 18px; color: var(--muted); margin: 8px 0 28px; }
     h2 { font-size: 21px; font-weight: 700; margin: 38px 0 10px; }
@@ -53,21 +54,13 @@
     a { color: var(--accent); }
     a:hover { color: var(--accent-hover); }
     footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
-    @media (max-width: 520px) { .mast .icon { width: 48px; height: 48px; } h1 { font-size: 26px; } }
   </style>
 </head>
 <body>
   <header class="mast">
     <div class="mast-in">
-      <img class="icon" src="icon-128.png" alt="">
-      <div>
-        <picture>
-          <source srcset="brand/axle-logo-white.png" media="(prefers-color-scheme: dark)">
-          <img class="logo" src="brand/axle-logo.png" alt="Axle Logistics">
-        </picture>
-        <h1>Restack for Outlook</h1>
-        <span class="tag">Test build 0.16</span>
-      </div>
+      <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="for">for Outlook</span></h1>
+      <span class="tag">Test build 0.22</span>
     </div>
   </header>
   <main>
@@ -78,21 +71,21 @@
       <li>Upload the new files to this repository, next to the ones already here. Keep the <code>team.json</code> that's already here.</li>
       <li>That's all: everyone gets the new version the next time they open the panel. If it still shows the old one, close and reopen Outlook.</li>
     </ol>
-    <p>Restack used to be called Thread Attachments. It's the same add-in, so your team key and published templates carry over. The ribbon button keeps the old name and icon until the add-in is reinstalled, which is optional. To do it, first publish any template changes you haven't published yet: removing the add-in may also clear what's saved in it, like unpublished changes or a rep's own templates. Then get the install file from the add-in (<strong>Settings → Team → Share install file</strong>, which downloads <code>restack-team.xml</code>), remove the old add-in and install this one, as below.</p>
+    <p>Restack used to be called Thread Attachments. It's the same add-in, so your team key and published templates carry over. The ribbon button keeps the old name and icon until the add-in is reinstalled, which is optional. To do it, first publish any template changes you haven't published yet: removing the add-in may also clear what's saved in it, like unpublished changes or a rep's own templates. Then get the install file from the admin console (<strong>Team settings → Install files → Download restack-team.xml</strong>), remove the old add-in and install this one, as below.</p>
     <p class="note">Don't use the <strong>Create team install file</strong> button below to update. It makes a new team key, which can't open the templates you've already published.</p>
 
     <h2>Try a new version first: Restack Beta</h2>
     <p>Restack Beta is a second copy of the add-in, just for you, that runs whatever is in this repository's <code>beta</code> folder. It sits next to Restack in Outlook, so you can try a new version on real emails before your reps get it.</p>
     <ol>
       <li>Once: upload the <code>beta</code> folder (a full copy of Restack) to this repository, so it sits next to these files.</li>
-      <li>Once: in Restack, choose <strong>Settings → Team → Share beta install file</strong>, and install the <code>restack-beta.xml</code> it downloads the same way as Restack's (<a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a> → <strong>My add-ins → Add a custom add-in → Add from File</strong>). It shows up as <strong>Restack Beta</strong>, with a black β on its icon.</li>
+      <li>Once: in the admin console, choose <strong>Team settings → Install files → Download restack-beta.xml</strong>, and install the <code>restack-beta.xml</code> it downloads the same way as Restack's (<a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a> → <strong>My add-ins → Add a custom add-in → Add from File</strong>). It shows up as <strong>Restack Beta</strong>, with a black β on its icon.</li>
       <li>Each new version: upload its files into the <code>beta</code> folder first and try them in Restack Beta. When it's ready, upload the same files to the main folder.</li>
     </ol>
     <p class="muted">Restack Beta uses your published templates and team settings. Its own choices (Appearance, Text size, View, pinned templates) and any template changes you haven't published are kept apart from Restack's. Keep <code>restack-beta.xml</code> to yourself: it carries your team key.</p>
 
     <h2>Admin console</h2>
-    <p>For the team admin: <strong>Settings → Team → Open admin console</strong> opens a full-size page in your browser. <strong>Templates</strong> has the list and the editor side by side, with search and <strong>Make a copy</strong>. <strong>Team settings</strong> has everything under Settings → Team, and lets you set the rate con sample from a PDF on your computer. <strong>Usage</strong> shows what your team makes with Restack.</p>
-    <p class="muted">The console starts from what's published, so publish changes you've made in Outlook first. <strong>Publish to team</strong> downloads <code>team.json</code> for you to upload, as in Outlook; with a GitHub token under <strong>Team settings → Publishing</strong>, it goes straight to this repository instead. The console keeps your team key in that browser so a bookmark works next time; <strong>Team settings → This browser</strong> removes it.</p>
+    <p>For the team admin: the admin console is the only place the team's templates and settings are made. In Restack, <strong>Settings → Admin console</strong> opens it full size in your browser. <strong>Templates</strong> has the list and the editor side by side, with search, <strong>Make a copy</strong> and <strong>Add Customer</strong> for several templates at once. <strong>Team settings</strong> has publishing, install files, team admins, reps' own templates, the sent with restack line, the rate con sample (from a PDF on your computer), automatic attaching, receipt file names and usage counts. <strong>Usage</strong> shows what your team makes with Restack.</p>
+    <p class="muted">The console starts from what's published. <strong>Publish to team</strong> downloads <code>team.json</code> for you to upload; with a GitHub token under <strong>Team settings → Publishing</strong>, it goes straight to this repository instead. The console keeps your team key in that browser so a bookmark works next time; <strong>Team settings → This browser</strong> removes it.</p>
 
     <h2>Usage counts</h2>
     <p>With your own Restack Usage Azure function (a small Function App of its own; its folder has the setup steps), each rep's panel counts what it makes: emails created, PDFs saved, files combined, pages and rate cons caught. The admin console's <strong>Usage</strong> tab shows them by day, by rep and by template, for any dates, with a CSV download. Only counts are sent, never files, file names, load numbers or customer addresses.</p>
@@ -106,10 +99,10 @@
       </li>
       <li>In Outlook, remove any older copy of the add-in: open <a href="https://aka.ms/olksideload" target="_blank" rel="noopener">aka.ms/olksideload</a>, choose <strong>My add-ins</strong>, and under <strong>Custom Addins</strong> choose <strong>… → Remove</strong>.</li>
       <li>In the same window, choose <strong>Add a custom add-in → Add from File</strong>, pick <code>restack-team.xml</code>, and choose <strong>Install</strong>.</li>
-      <li>Open Restack in Outlook, choose <strong>Email ▾ → Create a template…</strong>, add your team templates, and click <strong>Publish to team</strong>. Upload the <code>team.json</code> it downloads to this repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
+      <li>Open Restack in Outlook and choose <strong>Settings</strong> (the gear at the bottom) <strong>→ Admin console</strong>. Add your team templates there and click <strong>Publish to team</strong>. Upload the <code>team.json</code> it downloads to this repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
       <li>Send the same <code>restack-team.xml</code> to your reps.</li>
     </ol>
-    <p class="note">Keep that file. Clicking the button again makes a new team key, which can't open templates you've already published. You can download it again any time from the add-in: <strong>Settings → Team → Share install file</strong>. Anyone who has the file can use the add-in and see the team templates, so share it only with your team.</p>
+    <p class="note">Keep that file. Clicking the button again makes a new team key, which can't open templates you've already published. You can download it again any time from the admin console: <strong>Team settings → Install files</strong>. Anyone who has the file can use the add-in and see the team templates, so share it only with your team.</p>
 
     <h2>Install (reps)</h2>
     <ol>
@@ -129,16 +122,16 @@
       <li>Choose <strong>Email ▾</strong> and pick a template (or <strong>Blank email</strong>). If the template has questions, answer them first; an answer can stop you with a message about what's missing. Type the load number, and tick <strong>Detention</strong>, <strong>Layover</strong>, <strong>Lumper</strong> or <strong>Other</strong> to add those details to the message. On a Multi-stop load, pick which stop each one was at. <strong>Create email</strong> names the PDF after the load and opens a new email with the recipients and message filled in. The subject is always the load number and POD(s), like <code>3645493 POD(s)</code>. If your team admin has set up automatic attaching, the PDF is already attached; otherwise click <strong>Attach PDF</strong> on the new email's ribbon. To keep a copy instead, choose <strong>Save PDF…</strong> and type a name.</li>
     </ol>
     <p class="muted">Every PDF stays under 10 MB. A bigger one is split, in page order, into <code>3645493-1</code>, <code>3645493-2</code> and so on, all attached to the same email (Save PDF does the same). Stop files and receipt files are kept whole; the panel says so if one of them is over 10 MB.</p>
-    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet. Only the team admin makes templates to start with. To let reps add their own too, the admin turns on <strong>Reps can make templates</strong> under <strong>Settings → Team</strong> and publishes. Each template can say <strong>No Lumper</strong> when there isn't one, put every stop in one file or each in its own, and send receipts as their own file. A template set to send <strong>Accessorials in a separate email</strong> opens two emails whenever Detention, Layover, Lumper or Other is ticked: the PODs as usual, and a request like <code>3645493 - Detention/Lumper Request</code> with the PODs and receipts attached, sent to the template's accessorial address (or the POD email's To, if that's left blank), with its own CC if the template has one. Tag receipts with <strong>Receipt</strong> on the file, or on its pages in the preview; otherwise they go after the PODs in the same file. A template can also have questions asked in a pop-up when it's picked. Each answer goes on to the next question, jumps ahead to a later one, continues to the email, or stops with a message. The template's <strong>Customer name</strong> fills in <code>{company}</code> in them.</p>
-    <p class="muted">Rate confirmation check: the team admin previews one of your rate confirmations (up to its first 3 pages) and clicks <strong>Use as rate con sample</strong> (or chooses the PDF in the admin console), then publishes. Pages that look like it are flagged: digital copies, and scans or faxes of it, compared by their words and by their layout. So are pages that say Rate Confirmation or Load Confirmation, and pages with the same barcode number as a flagged page. Flagged pages have to be left out, or marked as not a rate con, before anyone can email or save. Phone photos of a rate con usually aren't recognized.</p>
-    <p class="muted">Settings: the gear at the bottom of the panel, across from <strong>Test report</strong>, is there whatever email is selected, even one without attachments. It has <strong>Manage templates</strong> (for whoever can make templates), <strong>Team</strong> (for the team admin: publishing, install files and the team's settings), <strong>Appearance</strong> (<strong>Light</strong>, <strong>Dark</strong> or <strong>Match Outlook</strong>), <strong>Text size</strong> (Small, Medium or Large), <strong>View</strong> (Large, Medium or Small pictures, List, Details or Tiles, like File Explorer), and two switches: <strong>Tag receipts by file name</strong> (files with words like lumper or receipt in their name start out tagged Receipt; the admin sets the words) and <strong>Keep adding</strong>. Each person's choices are saved in their Outlook account.</p>
+    <p class="muted">PDFs, photos and fax scans (TIFF) go into the combined PDF. Word and Excel files are listed but can't be combined yet. The team admin makes the team templates in the admin console. To let reps add their own too (in Restack: <strong>Settings → My templates</strong>), the admin turns on <strong>Reps' own templates</strong> under <strong>Team settings</strong> and publishes. Each template can say <strong>No Lumper</strong> when there isn't one, put every stop in one file or each in its own, and send receipts as their own file. A template set to send <strong>Accessorials in a separate email</strong> opens two emails whenever Detention, Layover, Lumper or Other is ticked: the PODs as usual, and a request like <code>3645493 - Detention/Lumper Request</code> with the PODs and receipts attached, sent to the template's accessorial address (or the POD email's To, if that's left blank), with its own CC if the template has one. Tag receipts with <strong>Receipt</strong> on the file, or on its pages in the preview; otherwise they go after the PODs in the same file. A template can also have questions asked in a pop-up when it's picked. Each answer goes on to the next question, jumps ahead to a later one, continues to the email, or stops with a message. <code>{company}</code> in them fills in with the template's name.</p>
+    <p class="muted">Rate confirmation check: the team admin chooses one of your rate confirmations (a PDF; its first 3 pages are kept) in the admin console, then publishes. Pages that look like it are flagged: digital copies, and scans or faxes of it, compared by their words and by their layout. So are pages that say Rate Confirmation or Load Confirmation, and pages with the same barcode number as a flagged page. Flagged pages have to be left out, or marked as not a rate con, before anyone can email or save. Phone photos of a rate con usually aren't recognized.</p>
+    <p class="muted">Settings: the gear at the bottom of the panel, across from <strong>Test report</strong>, is there whatever email is selected, even one without attachments. It has <strong>My templates</strong> (each person's own, for whoever may make them), <strong>Admin console</strong> (for the team admin), <strong>Appearance</strong> (<strong>Light</strong>, <strong>Dark</strong> or <strong>Match Outlook</strong>), <strong>Text size</strong> (Small, Medium or Large), <strong>View</strong> (Large, Medium or Small pictures, List, Details or Tiles, like File Explorer), and two switches: <strong>Tag receipts by file name</strong> (files with words like lumper or receipt in their name start out tagged Receipt; the admin sets the words) and <strong>Keep adding</strong>. Each person's choices are saved in their Outlook account.</p>
     <p class="muted">Templates are listed A to Z. Click the pin next to a template in <strong>Email ▾</strong> to keep it at the top, and use the arrows next to your pinned ones to put them in the order you like. The rest are under <strong>Other templates</strong>. Pins are saved for each person.</p>
 
     <h2>Privacy</h2>
     <p>The add-in runs inside Outlook. Attachments are read and combined on your computer. If your team admin turns on automatic attaching, PDFs made with <strong>Email</strong> are uploaded to the admin's own Azure function so Outlook can download them into the new email; those links stop working after an hour and the files are then deleted. If your team admin turns on usage counts, your panel sends counts to the admin's own Azure function each time it saves a PDF or creates an email: your email address, when, how many files, pages and PDFs, the template's name and which accessorials. Never the files, file names, load numbers or customer addresses. Team templates and settings are stored on this site encrypted with your team's key, which only your install file contains. Personal templates are saved in each person's Outlook account.</p>
 
     <footer>
-      Built with pdf-lib, PDF.js and UTIF.js, set in Archivo. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a>.
+      Built with pdf-lib, PDF.js and UTIF.js, set in Jost. <a href="THIRD-PARTY-NOTICES.txt">Licenses</a>.
     </footer>
   </main>
 

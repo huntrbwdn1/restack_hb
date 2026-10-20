@@ -1,8 +1,10 @@
 /* Restack's colors. Light is the default; html[data-mode="dark"] (set from the light/dark button,
    or from Outlook with Match Outlook) swaps them for the dark ones further down. */
-@font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "Archivo"; src: url("fonts/archivo-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+/* Jost, the typeface of the restack wordmark. Drawn 5% larger, with its line height set to what the panel
+   was laid out for, so text takes the same room as before and sits the same way in buttons and rows. */
+@font-face { font-family: "Jost"; src: url("fonts/jost-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+@font-face { font-family: "Jost"; src: url("fonts/jost-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+@font-face { font-family: "Jost"; src: url("fonts/jost-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
 
 :root {
   color-scheme: light;
@@ -47,8 +49,9 @@
   --header-bg: #ffffff; --header-fg: var(--fg); --header-muted: var(--muted);
   /* the light/dark button in the footer */
   --pop-bg: #efefef; --pop-fg: #6b6b6b; --pop-on-bg: #ffffff; --pop-on-fg: #c2410c; --pop-closed: var(--muted);
-  --font-ui: "Archivo", "Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-ui: "Jost", "Segoe UI", "Segoe UI Web (West European)", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
   font-family: var(--font-ui);
+  word-spacing: -.06em; /* Jost's spaces are wide for a narrow panel */
 }
 
 html[data-mode="dark"] {
@@ -90,7 +93,7 @@ html[data-mode="dark"] {
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-size: 13px; line-height: 1.4; }
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea { font: inherit; color: inherit; word-spacing: inherit; }
 [hidden] { display: none !important; }
 
 #app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -276,6 +279,7 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tpl-row .tpl-sub { display: block; padding-left: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tpl-row .btn { height: 28px; padding: 0 10px; font-weight: 400; }
 .tpl-actions { padding: 12px 14px; }
+#mine-section .tpl-head { display: none; } /* Outlook's My templates: the sheet's own title names it */
 .tpl-form { display: grid; gap: 10px; padding: 12px 14px 16px; }
 .field { display: grid; gap: 4px; font-size: 12px; font-weight: 600; }
 .field > input, .field > textarea {
@@ -297,9 +301,6 @@ input[type="checkbox"]:disabled { cursor: default; }
 .tpl-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
 .tpl-empty { margin: 0; padding: 2px 14px 6px; font-size: 12px; color: var(--muted); }
 .tpl-actions { display: grid; gap: 10px; justify-items: start; }
-.publish-box { display: grid; gap: 6px; width: 100%; padding: 10px; border-radius: 6px; background: var(--surface-2); }
-.publish-box.pending { background: var(--warn-soft); }
-.publish-box .btn-row { width: 100%; }
 .menu-group { padding: 6px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
 .lock-card { display: grid; gap: 10px; padding: 20px 14px; }
 .lock-card p { margin: 0; }
@@ -395,8 +396,6 @@ input[type="checkbox"]:disabled { cursor: default; }
 .rc-banner .btn.primary:hover { background: #8e0b17; }
 .file-note.rc { font-style: normal; font-weight: 600; color: var(--danger); }
 .rc-badge { padding: 1px 7px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 11px; font-weight: 700; }
-.pv-admin { padding: 0 14px 8px; }
-.pv-admin:has(> [hidden]:only-child) { display: none; }
 .file-note.rc.out { color: var(--muted); font-weight: 400; }
 
 /* ---- the order files go into the PDF: a numbered handle to drag, and up / down arrows */
@@ -667,12 +666,10 @@ html[data-mode="dark"] .order-grip { border-color: #4a4a4a; }
 .cust-item input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .cust-item input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
 
-/* ---- the header: the Axle logo, the subject, and the orange stripe along the bottom */
+/* ---- the header: the restack logo, the subject, and the orange stripe along the bottom.
+   The logo is the wordmark and the icon in one picture (brand/restack-logo.png), the same in light and dark. */
 .brand-row { margin: 1px 0 10px; min-height: 22px; }
 .brand-row img { display: block; height: 22px; width: auto; }
-.brand-row .for-dark { display: none; }
-html[data-mode="dark"] .brand-row .for-light { display: none; }
-html[data-mode="dark"] .brand-row .for-dark { display: block; }
 .top::after {  /* a long bar... */
   content: ""; position: absolute; left: 0; right: 70px; bottom: 0; height: 6px;
   background: linear-gradient(90deg, var(--g1), var(--g2));
@@ -706,7 +703,7 @@ html[data-mode="dark"] .one-tip .info-btn { color: var(--g2); }
 html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip .info-btn[aria-expanded="true"] { background: rgba(255,255,255,.12); }
 
 /* ---- the footer: Test report, and across from it Settings, which opens above its gear button.
-   Settings is a short menu: Manage templates, Team (the admin's, folded up), Appearance, Text size and
+   Settings is a short menu: My templates, Admin console (team admins only), Appearance, Text size and
    View (each one row that drops down its choices), and two switches. */
 .foot-row { position: relative; flex: none; }
 .foot-settings { position: absolute; right: 8px; top: 1px; }
@@ -748,17 +745,15 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 .opt-val.on { color: var(--accent); font-weight: 600; }
 .opt-ext { margin-left: auto; color: var(--muted); }
 .size-a { display: block; font-weight: 700; line-height: 1; }
-#set-team-now.pending { color: var(--accent); font-weight: 600; }
-#set-team-now.pending::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--g3); vertical-align: 1px; }
 /* a switch: a grey track when off, Axle's orange when on */
 .switch { flex: none; position: relative; width: 30px; height: 18px; margin-left: auto; border-radius: 9px; background: var(--chip-line); transition: background-color .15s ease; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s ease; }
 [aria-checked="true"] > .switch { background: var(--btn-primary-bg); }
 [aria-checked="true"] > .switch::after { transform: translateX(12px); }
-.set-note { margin: 4px 12px 6px 22px; padding: 7px 9px; border-radius: 5px; background: var(--surface-2); font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
+.set-note { margin: 4px 12px 6px; padding: 7px 9px; border-radius: 5px; background: var(--surface-2); font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
 .set-note.error { background: var(--danger-soft); color: var(--danger-ink); }
 .set-note.ok { background: var(--accent-soft); color: var(--accent-soft-ink); }
-/* the Team screen: one of the admin's settings at a time */
+/* the team's settings, each in its card on the admin console's Team settings tab */
 .team-section { padding-top: 12px; }
 /* Team admins (0.20): the list, each with Remove, and the box to add one */
 .admin-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; }
@@ -804,11 +799,10 @@ html.is-console body { overflow-y: scroll; }
   background: linear-gradient(90deg, var(--g2) 0 34px, transparent 34px 44px, var(--g3) 44px 74px); transform: skewX(-45deg); transform-origin: 0 100%;
 }
 .con-top-in { display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; max-width: 1240px; margin: 0 auto; padding: 18px 32px 10px; }
+/* the restack logo (the panel header's picture, a little bigger), then the page's name */
 .con-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .con-brand img { display: block; height: 26px; width: auto; }
-html[data-mode="dark"] .con-brand .for-light, html:not([data-mode="dark"]) .con-brand .for-dark { display: none; }
-.con-title { padding-left: 14px; border-left: 1px solid var(--line); font-size: 20px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
-.con-title-sub { font-weight: 400; color: var(--header-muted); }
+.con-title { padding-left: 14px; border-left: 1px solid var(--line); font-size: 20px; font-weight: 400; letter-spacing: -.01em; white-space: nowrap; color: var(--header-muted); }
 .con-publish { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .con-publish-text { margin: 0; font-size: 13px; color: var(--header-muted); }
 .con-publish.pending .con-publish-text { color: var(--header-fg); font-weight: 600; }
@@ -847,7 +841,7 @@ html.is-console #tpl-list-view {
   border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
 }
 html.is-console #tpl-list-view .tpl-section { border-bottom: 0; }
-html.is-console #mine-section, html.is-console #team-admin { display: none !important; }
+html.is-console #mine-section { display: none !important; }
 html.is-console .tpl-head { padding: 14px 16px 8px; }
 html.is-console .tpl-head h2 { font-size: 15px; }
 .con-tpl-tools { display: flex; gap: 8px; padding: 0 16px 12px; border-bottom: 1px solid var(--line); }
@@ -947,6 +941,7 @@ html.is-console .cust-item input { height: 32px; font-size: 14px; }
 @media (max-width: 760px) {
   .con-top-in, .con-main, .con-foot { padding-left: 16px; padding-right: 16px; }
   .con-tabs { padding-left: 8px; padding-right: 8px; overflow-x: auto; }
+  .con-brand img { height: 22px; }
   .con-title { font-size: 17px; }
   html.is-console #templates .sheet-body { grid-template-columns: minmax(0, 1fr); }
   html.is-console #tpl-list-view { position: static; max-height: none; }
