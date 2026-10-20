@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.24.0';
+const VERSION = '0.24.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -6762,6 +6762,7 @@ async function onTemplateDelete() {
   if (CONSOLE) consoleNote(`Deleted. ${publishWhere()} to take it away from your reps too.`, 'ok');
 }
 
+const PUBLISHED_NOTE_MS = 5000; // "Published to owner/repository." shows this long after publishing to GitHub, then goes away on its own
 const PUBLISHED_TEXT = 'team.json downloaded. Upload it to your GitHub repository (Add file → Upload files → Commit changes). If it saved as "team (1).json", rename it to team.json first. Reps get the changes the next time they open the panel.';
 
 /** Encrypts the team templates and settings with the team key and downloads team.json to upload to GitHub. */
@@ -6791,7 +6792,7 @@ async function onPublish() {
     team.justPublished = true;
     log(`Team: published ${plural(payload.templates.length, 'template')} to GitHub (${where.repo}, ${where.branch})`);
     renderPublishBox();
-    consoleNote(`Published to ${where.repo}. GitHub updates your site within a minute or two, and reps get the changes the next time they open the panel.`, 'ok');
+    consoleNote(`Published to ${where.repo}.`, 'ok', PUBLISHED_NOTE_MS);
     return;
   }
   downloadText(text, TEAM_FILE, 'application/json');
@@ -7463,12 +7464,40 @@ function publishWhere() {
   return 'Publish to team (top right)';
 }
 
-function consoleNote(text, tone) {
+let consoleNoteTimer = 0;
+let consoleNoteFade = null;
+
+/** The note under the console's header. With hideAfter (in ms), it goes away on its own after that long,
+ *  unless another note has taken its place by then. */
+function consoleNote(text, tone, hideAfter = 0) {
   const note = $('con-note');
   if (!note) return;
+  clearTimeout(consoleNoteTimer);
+  if (consoleNoteFade) consoleNoteFade.cancel();
+  consoleNoteFade = null;
+  note.style.overflow = '';
   note.textContent = text || '';
   note.hidden = !text;
   note.className = `con-note${tone ? ` ${tone}` : ''}`;
+  if (text && hideAfter) consoleNoteTimer = setTimeout(() => fadeConsoleNote(note), hideAfter);
+}
+
+/** Fades the note out while the page closes up its space, then hides it (at once with reduced motion). */
+function fadeConsoleNote(note) {
+  if (reducedMotion() || typeof note.animate !== 'function') {
+    consoleNote('');
+    return;
+  }
+  const from = getComputedStyle(note);
+  note.style.overflow = 'hidden';
+  const fade = note.animate([
+    { opacity: 1, height: `${note.offsetHeight}px`, paddingTop: from.paddingTop, paddingBottom: from.paddingBottom, marginBottom: from.marginBottom },
+    { opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', marginBottom: '0px' },
+  ], { duration: 320, easing: 'ease-in', fill: 'forwards' });
+  consoleNoteFade = fade;
+  fade.onfinish = () => {
+    if (consoleNoteFade === fade) consoleNote(''); // hides it and takes the fade off in one go, so it doesn't flash back
+  };
 }
 
 /** Keeps the keys from the link (#k=…&u=…) in this browser, and takes them out of the address bar. */
