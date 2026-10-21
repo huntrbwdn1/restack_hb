@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.24.2';
+const VERSION = '0.25.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -20,6 +20,9 @@ const PENDING_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const MB = 1000 * 1000;                // sizes are in MB as people read them (not MiB)
 const SPLIT_MB = 10;                   // every PDF stays under this; bigger ones split into -1, -2…
 const SPLIT_LIMIT = SPLIT_MB * MB - 1;
+const EMAIL_MB = 35;                   // the email size limit to start (a team setting): most Microsoft 365 mailboxes take 35 or 36 MB
+const MIME_GROWTH = (4 / 3) * (78 / 76); // files travel in an email as text (base64, in lines of 76), about a third bigger
+const EMAIL_EXTRA = 200 * 1000;         // the message, the sent with restack picture and the email's headers, generously
 const AZURE_FUNCTION = 'PdfEmails';    // the function's name in the team admin's Function App
 const PDF_TYPES = [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }];
 const TEAM_FILE = 'team.json';
@@ -67,7 +70,8 @@ const RC = {                            // the rate confirmation check
   layoutMatch: 0.7,                     // layout likeness for scanned pages and photos (-1 to 1)
   boxSlack: 0.2,                        // a scan's printed area may differ this much (share of the page) from the sample's
   maxPages: 30,                         // pages checked per file
-  samplePages: 3,                       // pages kept from the sample rate confirmation
+  samplePages: 3,                       // pages kept from each sample rate confirmation
+  sampleFiles: 20,                      // rate confirmations the check can hold
   sampleWords: 250,                     // words kept per sample page
   gridW: 24,                            // a page's layout is ink density in a 24 x 32 grid
   gridH: 32,
@@ -2621,16 +2625,16 @@ function sampleGrid(base64) {
   return sampleGrids.get(base64);
 }
 
-/** Share of a sample page's words found on this page (the best sample page counts). */
+/** Share of a sample page's words found on this page: the best sample page counts. { score, at: that page } */
 function textLikeness(words, sample) {
-  let best = 0;
-  for (const page of sample.pages) {
+  let best = { score: 0, at: -1 };
+  sample.pages.forEach((page, at) => {
     const list = page.words ? page.words.split(' ') : [];
-    if (list.length < 10) continue;
+    if (list.length < 10) return;
     let hits = 0;
     for (const word of list) if (words.has(word)) hits += 1;
-    best = Math.max(best, hits / list.length);
-  }
+    if (hits / list.length > best.score) best = { score: hits / list.length, at };
+  });
   return best;
 }
 
@@ -2640,19 +2644,30 @@ function textLikeness(words, sample) {
  * its few lines would otherwise be stretched to fill the grid.
  */
 function layoutLikeness(layout, sample) {
-  if (!layout) return -1;
-  let best = -1;
-  for (const page of sample.pages) {
+  let best = { score: -1, at: -1 };
+  if (!layout) return best;
+  sample.pages.forEach((page, at) => {
     const box = page.box || [0, 0, 1, 1];
     const tall = Math.abs((layout.box[2] - layout.box[0]) - (box[2] - box[0]));
     const wide = Math.abs((layout.box[3] - layout.box[1]) - (box[3] - box[1]));
-    if (tall > RC.boxSlack || wide > RC.boxSlack) continue;
-    best = Math.max(best, likeness(layout.grid, sampleGrid(page.grid)));
-  }
+    if (tall > RC.boxSlack || wide > RC.boxSlack) return;
+    const score = likeness(layout.grid, sampleGrid(page.grid));
+    if (score > best.score) best = { score, at };
+  });
   return best;
 }
 
-/** Makes the team's sample from one of your rate confirmations (a PDF): its words and layout. */
+/** Which of the check's rate confirmations a sample page came from (its name), for the test report. */
+function rcFileName(sample, at) {
+  let from = 0;
+  for (const file of sample.files || []) {
+    if (at < from + file.pages) return file.name;
+    from += file.pages;
+  }
+  return sample.name || 'the sample';
+}
+
+/** Reads one of your rate confirmations (a PDF) for the check: its first pages' words and layout. */
 async function rateConSample(file) {
   const doc = await openPdf(file.bytes);
   try {
@@ -2670,18 +2685,61 @@ async function rateConSample(file) {
   }
 }
 
+function cleanRcPage(page) {
+  const grid = /^[A-Za-z0-9+/=]+$/.test(String((page && page.grid) || '')) && base64ToBytes(page.grid).length === RC.gridW * RC.gridH ? page.grid : '';
+  const box = page && Array.isArray(page.box) && page.box.length === 4 && page.box.every((v) => typeof v === 'number' && v >= 0 && v <= 1) ? page.box : [0, 0, 1, 1];
+  return {
+    words: String((page && page.words) || '').split(' ').filter((w) => /^[a-z]{4,}$/.test(w)).slice(0, RC.sampleWords).join(' '),
+    grid,
+    box: grid ? box : null,
+  };
+}
+
+/**
+ * The check's setting: every rate confirmation's pages in one list (pages), and which came from which
+ * file (files: { id, name, saved, pages: how many }). Before 0.25.1 it held one file, with its name and
+ * when it was set beside its pages; that reads as a list of one. The first file's name and date stay
+ * beside the pages too, so an older version still checks against the first file's pages.
+ */
 function cleanRateCon(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.pages)) return null;
-  const pages = value.pages.slice(0, RC.samplePages).map((page) => {
-    const grid = /^[A-Za-z0-9+/=]+$/.test(String((page && page.grid) || '')) && base64ToBytes(page.grid).length === RC.gridW * RC.gridH ? page.grid : '';
-    const box = page && Array.isArray(page.box) && page.box.length === 4 && page.box.every((v) => typeof v === 'number' && v >= 0 && v <= 1) ? page.box : [0, 0, 1, 1];
-    return {
-      words: String((page && page.words) || '').split(' ').filter((w) => /^[a-z]{4,}$/.test(w)).slice(0, RC.sampleWords).join(' '),
-      grid,
-      box: grid ? box : null,
-    };
-  }).filter((page) => page.words || page.grid);
-  return pages.length ? { v: 1, name: String(value.name || 'rate confirmation').slice(0, 120), saved: Number(value.saved) || 0, pages } : null;
+  const listed = Array.isArray(value.files) && value.files.length
+    ? value.files
+    : [{ id: 'rc1', name: value.name, saved: value.saved, pages: Math.min(value.pages.length, RC.samplePages) }];
+  const files = [];
+  let at = 0;
+  for (const entry of listed) {
+    const count = Math.max(0, Math.min(RC.samplePages, Math.floor(Number(entry && entry.pages) || 0)));
+    const pages = value.pages.slice(at, at + count).map(cleanRcPage).filter((page) => page.words || page.grid);
+    at += count;
+    if (!pages.length || files.length >= RC.sampleFiles) continue;
+    const id = String((entry && entry.id) || '').replace(/[^\w-]/g, '').slice(0, 40) || `rc${files.length + 1}`;
+    files.push({ id: files.some((f) => f.id === id) ? `${id}-${files.length + 1}` : id, name: String((entry && entry.name) || 'rate confirmation').slice(0, 120), saved: Number(entry && entry.saved) || 0, pages });
+  }
+  return rcSetting(files);
+}
+
+/** The setting from a list of files, each { id, name, saved, pages: [...] } (null when there are none). */
+function rcSetting(files) {
+  if (!files.length) return null;
+  return {
+    v: 2,
+    name: files[0].name,
+    saved: files[0].saved,
+    pages: files.flatMap((f) => f.pages),
+    files: files.map(({ id, name, saved, pages }) => ({ id, name, saved, pages: pages.length })),
+  };
+}
+
+/** The check's rate confirmations, each with its pages: [{ id, name, saved, pages: [...] }]. */
+function rcFiles(setting) {
+  if (!setting) return [];
+  let at = 0;
+  return setting.files.map((file) => {
+    const pages = setting.pages.slice(at, at + file.pages);
+    at += file.pages;
+    return { ...file, pages };
+  });
 }
 
 /** The numbers printed under barcodes on a page, like *AXLL-3668149* (the text between the asterisks). */
@@ -2701,9 +2759,10 @@ function barcodeNumbers(text) {
 async function checkFileForRateCon(file, sample, token) {
   const found = new Set();
   const scores = [];
-  const judge = (label, score, limit) => {
+  const judge = (label, best, limit) => { // (best: a likeness, { score, at }, or a plain score)
+    const score = typeof best === 'number' ? best : best.score;
     const hit = score >= limit;
-    scores.push(`${label} ${score.toFixed(2)}${hit ? ' ⚑' : ''}`);
+    scores.push(`${label} ${score.toFixed(2)}${hit ? ` ⚑${typeof best === 'number' ? '' : ` (like ${rcFileName(sample, best.at)})`}` : ''}`);
     return hit;
   };
   if (file.kind === 'PDF') {
@@ -2729,15 +2788,16 @@ async function checkFileForRateCon(file, sample, token) {
         } else {
           // Words and layout both count, whichever is closer: a sample made from pictures of pages has
           // no words to compare, and the words a scanner app reads off a page often come out garbled
-          const byText = words.size >= RC.minWords ? textLikeness(words, sample) : 0;
-          let byLayout = -1;
+          const byText = words.size >= RC.minWords ? textLikeness(words, sample) : { score: 0, at: -1 };
+          let byLayout = { score: -1, at: -1 };
           try {
             byLayout = layoutLikeness(await pageGrid(page), sample);
           } catch (error) {
             scores.push(`p${p} couldn't be drawn (${error.message})`); // its words still count
           }
-          hit = byText >= RC.textMatch || byLayout >= RC.layoutMatch;
-          scores.push(`p${p} text ${byText.toFixed(2)} layout ${byLayout.toFixed(2)}${hit ? ' ⚑' : ''}`);
+          hit = byText.score >= RC.textMatch || byLayout.score >= RC.layoutMatch;
+          const like = hit ? ` (like ${rcFileName(sample, byText.score >= RC.textMatch ? byText.at : byLayout.at)})` : '';
+          scores.push(`p${p} text ${byText.score.toFixed(2)} layout ${byLayout.score.toFixed(2)}${hit ? ` ⚑${like}` : ''}`);
         }
         page.cleanup();
         if (hit) found.add(p - 1);
@@ -3593,8 +3653,63 @@ function fitPage(w, h) {
   return [(w * 72) / dpi, (h * 72) / dpi];
 }
 
-/** Adds a PDF's pages (only `only`, 0-based, when given) to `out`. */
-async function addPdf(out, file, only) {
+/**
+ * Making an email's files smaller, only when they'd take it over the team's email size limit: scanned
+ * pages and photos are redrawn at about 150 dpi, then 120 if that isn't enough. A PDF page is redrawn
+ * only if its pictures take more than `heavy` bytes (scans do; typed pages don't, and stay as they are),
+ * and only if that makes it smaller.
+ */
+const SHRINK = [
+  null,
+  { dpi: 150, side: 1650, quality: 0.72, heavy: 300 * 1000 },
+  { dpi: 120, side: 1320, quality: 0.6, heavy: 120 * 1000 },
+];
+
+/** How many bytes of pictures a PDF page draws (its own, and those inside the forms it uses). */
+function pageImageBytes(page) {
+  const { PDFName, PDFDict, PDFStream } = PDFLib;
+  const seen = new Set();
+  const weigh = (resources, depth) => {
+    if (!(resources instanceof PDFDict) || depth > 3) return 0;
+    const xobjects = resources.lookupMaybe(PDFName.of('XObject'), PDFDict);
+    if (!xobjects) return 0;
+    let bytes = 0;
+    for (const [, value] of xobjects.entries()) {
+      const stream = xobjects.context.lookup(value);
+      if (!(stream instanceof PDFStream) || seen.has(stream)) continue;
+      seen.add(stream);
+      const subtype = stream.dict.get(PDFName.of('Subtype'));
+      if (subtype === PDFName.of('Image')) bytes += stream.getContentsSize();
+      else if (subtype === PDFName.of('Form')) bytes += weigh(stream.dict.lookupMaybe(PDFName.of('Resources'), PDFDict), depth + 1);
+    }
+    return bytes;
+  };
+  try {
+    return weigh(page.node.Resources(), 0);
+  } catch (error) {
+    return 0;
+  }
+}
+
+/** Draws page `number` (1-based) of a PDF.js document as a JPEG at about `dpi`, with its size in points. */
+async function renderPage(doc, number, dpi, quality) {
+  const page = await doc.getPage(number);
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(dpi / 72, MAX_IMAGE_SIDE / Math.max(base.width, base.height));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  try {
+    await page.render({ canvas, viewport }).promise;
+  } finally {
+    page.cleanup();
+  }
+  return { jpg: await canvasToBytes(canvas, 'image/jpeg', quality), width: base.width, height: base.height };
+}
+
+/** Adds a PDF's pages (only `only`, 0-based, when given) to `out`; with `shrink`, its scanned pages smaller. */
+async function addPdf(out, file, only, shrink = 0) {
   let source = null;
   try {
     source = await PDFLib.PDFDocument.load(file.bytes, { ignoreEncryption: true, updateMetadata: false });
@@ -3602,9 +3717,13 @@ async function addPdf(out, file, only) {
     source = null; // let PDF.js have a go below; it's more forgiving
   }
   if (source && !source.isEncrypted) {
+    const wanted = only ? only.filter((i) => i < source.getPageCount()) : source.getPageIndices();
+    if (shrink) {
+      const how = await addPdfSmaller(out, file, source, wanted, SHRINK[shrink]);
+      if (how) return how;
+    }
     let pages = null;
     try {
-      const wanted = only ? only.filter((i) => i < source.getPageCount()) : source.getPageIndices();
       pages = await out.copyPages(source, wanted);
     } catch (error) {
       pages = null; // the file's structure is broken; PDF.js below may still read it
@@ -3614,28 +3733,62 @@ async function addPdf(out, file, only) {
       return 'copied';
     }
   }
-  await addPdfAsImages(out, file, only);
+  await addPdfAsImages(out, file, only, SHRINK[shrink]);
   return source && source.isEncrypted ? 'locked PDF, added as page images' : 'repaired, added as page images';
 }
 
-/** For locked (owner-password) or slightly broken PDFs: render each page and add it as an image. */
-async function addPdfAsImages(out, file, only) {
+/**
+ * Shrinking: redraws a PDF's heavy pages (scans) smaller and copies the rest as they are, in their order.
+ * Null when no page is heavy, or the file can't be drawn (it's then copied as it is).
+ */
+async function addPdfSmaller(out, file, source, wanted, level) {
+  const weights = wanted.map((i) => pageImageBytes(source.getPage(i)));
+  if (!weights.some((bytes) => bytes > level.heavy)) return null;
+  const plan = []; // for each page: { copy: index } or the redrawn picture
+  let doc = null;
+  try {
+    doc = await openPdf(file.bytes);
+    for (let k = 0; k < wanted.length; k++) {
+      if (weights[k] <= level.heavy) {
+        plan.push({ copy: wanted[k] });
+        continue;
+      }
+      const drawn = await renderPage(doc, wanted[k] + 1, level.dpi, level.quality);
+      plan.push(drawn.jpg.length < weights[k] ? drawn : { copy: wanted[k] });
+    }
+  } catch (error) {
+    return null;
+  } finally {
+    if (doc) closePdf(doc);
+  }
+  let copied = [];
+  try {
+    const copies = plan.filter((p) => 'copy' in p).map((p) => p.copy);
+    if (copies.length) copied = await out.copyPages(source, copies);
+  } catch (error) {
+    return null;
+  }
+  let next = 0;
+  let redrawn = 0;
+  for (const p of plan) {
+    if ('copy' in p) {
+      out.addPage(copied[next++]);
+      continue;
+    }
+    const image = await out.embedJpg(p.jpg);
+    out.addPage([p.width, p.height]).drawImage(image, { x: 0, y: 0, width: p.width, height: p.height });
+    redrawn += 1;
+  }
+  return redrawn ? `${plural(redrawn, 'scanned page')} made smaller (${level.dpi} dpi)` : 'copied';
+}
+
+/** For locked (owner-password) or slightly broken PDFs: render each page and add it as an image (smaller when shrinking). */
+async function addPdfAsImages(out, file, only, level = null) {
   const doc = await openPdf(file.bytes);
   const rendered = [];
   try {
     const numbers = only ? only.map((i) => i + 1).filter((p) => p <= doc.numPages) : Array.from({ length: doc.numPages }, (_, i) => i + 1);
-    for (const p of numbers) {
-      const page = await doc.getPage(p);
-      const base = page.getViewport({ scale: 1 });
-      const scale = Math.min(LOCKED_PDF_DPI / 72, MAX_IMAGE_SIDE / Math.max(base.width, base.height));
-      const viewport = page.getViewport({ scale });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      await page.render({ canvas, viewport }).promise;
-      page.cleanup();
-      rendered.push({ jpg: await canvasToBytes(canvas, 'image/jpeg', 0.9), width: base.width, height: base.height });
-    }
+    for (const p of numbers) rendered.push(await renderPage(doc, p, level ? level.dpi : LOCKED_PDF_DPI, level ? level.quality : 0.9));
   } catch (error) {
     throw userError("couldn't be read - the file may be damaged");
   } finally {
@@ -3649,14 +3802,16 @@ async function addPdfAsImages(out, file, only) {
   }
 }
 
-async function addImage(out, file) {
-  const canvas = rasterize(await decodeImage(file), PHOTO_MAX_SIDE); // the whole photo, scaled (never cropped)
-  const image = await out.embedJpg(await canvasToBytes(canvas, 'image/jpeg', 0.9));
+async function addImage(out, file, shrink = 0) {
+  const level = SHRINK[shrink];
+  const canvas = rasterize(await decodeImage(file), level ? Math.min(PHOTO_MAX_SIDE, level.side) : PHOTO_MAX_SIDE); // the whole photo, scaled (never cropped)
+  const image = await out.embedJpg(await canvasToBytes(canvas, 'image/jpeg', level ? level.quality : 0.9));
   const [w, h] = fitPage(canvas.width, canvas.height);
   out.addPage([w, h]).drawImage(image, { x: 0, y: 0, width: w, height: h });
 }
 
-async function addTiff(out, file) {
+async function addTiff(out, file, shrink = 0) {
+  const level = SHRINK[shrink];
   const pages = decodeTiffPages(file.bytes);
   if (!pages.length) throw userError('has no pages');
   file.tiffPages = pages.length;
@@ -3666,11 +3821,11 @@ async function addTiff(out, file) {
     let trustDpi = page.xres >= 50 && page.yres >= 50 && page.w / page.xres <= 17 && page.h / page.yres <= 17;
     let image;
     if (page.bilevel) {
-      image = await out.embedPng(await canvasToBytes(canvas, 'image/png')); // crisp black and white
+      image = await out.embedPng(await canvasToBytes(canvas, 'image/png')); // crisp black and white (and small already)
     } else {
       if (Math.max(page.w, page.h) > MAX_IMAGE_SIDE) trustDpi = false;
-      canvas = rasterize(canvas, MAX_IMAGE_SIDE);
-      image = await out.embedJpg(await canvasToBytes(canvas, 'image/jpeg', 0.9));
+      canvas = rasterize(canvas, level ? Math.min(MAX_IMAGE_SIDE, level.side) : MAX_IMAGE_SIDE);
+      image = await out.embedJpg(await canvasToBytes(canvas, 'image/jpeg', level ? level.quality : 0.9));
     }
     const [w, h] = trustDpi ? [(page.w / page.xres) * 72, (page.h / page.yres) * 72] : fitPage(canvas.width, canvas.height);
     out.addPage([w, h]).drawImage(image, { x: 0, y: 0, width: w, height: h });
@@ -3679,28 +3834,30 @@ async function addTiff(out, file) {
 
 /**
  * Builds one PDF from [{ file, only }] in that order (only: the 0-based pages of a PDF to use,
- * or null for its picked pages). Cached until the selection changes.
+ * or null for its picked pages), its scanned pages and photos smaller with `shrink` (1 or 2).
+ * Cached until the selection changes.
  */
-async function buildPdf(entries, label) {
+async function buildPdf(entries, label, shrink = 0) {
   const turns = (file) => (file.rotations ? [...file.rotations].map(([i, d]) => `${i}r${d}`).join('.') : '');
-  const key = entries.map(({ file, only }) => `${file.fp || file.id}:${(only || includedPages(file) || ['all']).join('.')}:${turns(file)}:${file.pageOrder ? file.pageOrder.join('.') : ''}`).join(',');
+  const key = entries.map(({ file, only }) => `${file.fp || file.id}:${(only || includedPages(file) || ['all']).join('.')}:${turns(file)}:${file.pageOrder ? file.pageOrder.join('.') : ''}`).join(',')
+    + (shrink ? `|smaller${shrink}` : '');
   if (state.built.has(key)) return state.built.get(key);
   const out = await PDFLib.PDFDocument.create();
   const skipped = [];
   for (let i = 0; i < entries.length; i++) {
     const { file } = entries[i];
     const only = entries[i].only || includedPages(file);
-    setStatus(`${label ? `${label}: ` : ''}Adding ${i + 1} of ${entries.length}: ${file.name}`);
+    setStatus(`${label ? `${label}: ` : ''}${shrink ? 'Making the scans smaller' : 'Adding'} ${i + 1} of ${entries.length}: ${file.name}`);
     const before = out.getPageCount();
     try {
       if (file.kind === 'PDF') {
         if (only && !only.length) continue;
-        const how = await addPdf(out, file, only);
+        const how = await addPdf(out, file, only, shrink);
         if (how !== 'copied') log(`${file.name}: ${how}`);
       } else if (file.kind === 'Image') {
-        await addImage(out, file);
+        await addImage(out, file, shrink);
       } else if (file.kind === 'TIFF') {
-        await addTiff(out, file);
+        await addTiff(out, file, shrink);
       }
       applyTurns(out, file, before, only);
     } catch (error) {
@@ -3769,20 +3926,27 @@ function saveLayout() {
  * The files to email or save. `layout` says whether stops get files of their own (base-1.pdf,
  * base-2.pdf… per stop, whatever their size) and whether the files tagged Lumper and Other do (one
  * each, named stems.lum and stems.oth, with -1, -2… per stop). A single POD PDF over 10 MB is split
- * into -1, -2… instead. Returns { files, skipped, pages } or null (after saying why) when nothing could be built.
+ * into -1, -2… instead (over layout.partLimit, when an email can take less). layout.shrink (1 or 2)
+ * makes the scanned pages and photos smaller; layout.whole leaves every PDF whole, to see how big they
+ * are. Returns { files, skipped, pages, partLimit } or null (after saying why) when nothing could be built.
  */
 async function makeFiles(base, layout = saveLayout(), stems = {}) {
   const files = [];
   const skipped = [];
+  const partLimit = layout.partLimit || SPLIT_LIMIT;
   for (const group of fileGroups(layout.splitStops, layout.splitAcc, layout.noAcc)) {
     const label = [group.acc ? word(ACC_WORD[group.acc]) : '', group.stop ? word('stop', { n: group.stop }) : ''].filter(Boolean).join(', ');
-    const result = await buildPdf(group.entries, label);
+    const result = await buildPdf(group.entries, label, layout.shrink || 0);
     skipped.push(...result.skipped);
     if (!result.pages) continue;
     const stem = `${group.acc ? stems[group.acc] || `${base} ${word(ACC_WORD[group.acc])}` : base}${group.stop ? `-${group.stop}` : ''}`;
+    if (layout.whole) { // (only to see how big they are: not split, and nothing in the test report)
+      files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, acc: group.acc, over: false });
+      continue;
+    }
     logOrder(`${stem}.pdf`, group.entries);
     if (!group.stop) { // over 10 MB: split, into 3645493-1, -2… (or 3645493 Lumper-1, -2…)
-      for (const part of await splitIntoFiles(result.bytes, stem)) files.push({ ...part, pages: part.pages || result.pages, acc: group.acc });
+      for (const part of await splitIntoFiles(result.bytes, stem, partLimit)) files.push({ ...part, pages: part.pages || result.pages, acc: group.acc });
     } else {
       files.push({ name: `${stem}.pdf`, bytes: result.bytes, pages: result.pages, stop: group.stop, acc: group.acc, over: false });
     }
@@ -3791,9 +3955,9 @@ async function makeFiles(base, layout = saveLayout(), stems = {}) {
     setStatus(`None of the checked files could go into a PDF.${leftOutText({ skipped })}`, 'error');
     return null;
   }
-  for (const file of files) if (file.stop) file.over = file.bytes.length > SPLIT_LIMIT; // stop files aren't split by size
-  if (layout.splitStops || files.some((f) => f.acc)) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
-  return { files, skipped, pages: files.reduce((sum, f) => sum + (f.pages || 0), 0) };
+  for (const file of files) if (file.stop) file.over = file.bytes.length > partLimit; // stop files aren't split by size
+  if (!layout.whole && (layout.splitStops || files.some((f) => f.acc))) log(`Files: ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
+  return { files, skipped, pages: files.reduce((sum, f) => sum + (f.pages || 0), 0), partLimit };
 }
 
 // --------------------------------------------------------------------------- save, new email
@@ -3933,10 +4097,10 @@ async function pickSaveLocation(name) {
  * Whether Save PDF will most likely make one file (under 10 MB), judging by the checked files' sizes,
  * so Windows' Save As window can be used. Fax scans grow when they become PDF pages, so they count extra.
  */
-function likelyOneFile() {
+function likelyOneFile(limit = SPLIT_LIMIT) {
   let bytes = 0;
   for (const file of checkedFiles()) bytes += (file.size || 0) * (file.kind === 'TIFF' ? 8 : 1);
-  return bytes < SPLIT_MB * 0.8 * MB;
+  return bytes < limit * 0.8;
 }
 
 /** Builds the PDF and writes it: into the file picked in Save As, or as a download (split if over 10 MB). */
@@ -4053,7 +4217,8 @@ function plannedFiles(base, layout, stems = {}) {
   if (!groups.length) return { names: [`${base}${layout.splitStops ? '-1' : ''}.pdf`], note: layout.splitStops ? '…' : '' };
   const names = groups.map((g) => `${g.acc ? stems[g.acc] : base}${g.stop ? `-${g.stop}` : ''}.pdf`);
   let note = '';
-  if (groups.some((g) => !g.stop) && !likelyOneFile()) note += ` (${names.length > 1 ? 'each ' : ''}split into -1, -2… if it's over ${SPLIT_MB} MB)`;
+  const part = layout.partLimit || SPLIT_LIMIT;
+  if (groups.some((g) => !g.stop) && !likelyOneFile(part)) note += ` (${names.length > 1 ? 'each ' : ''}split into -1, -2… if it's over ${limitText(part)})`;
   return { names, note };
 }
 
@@ -4609,7 +4774,7 @@ function updateLoadHint() {
   const load = $('load-number').value.trim();
   const acc = readAccessorials();
   const separate = separateAccessorials(t, acc);
-  const layout = layoutOf(t);
+  const layout = { ...layoutOf(t), partLimit: emailPartLimit() };
   const base = emailFileBase(t, load || '…');
   const stems = accessorialStems(load || '…', acc, base);
   const { names, note } = plannedFiles(base, separate ? { ...layout, noAcc: true } : layout, stems);
@@ -5425,27 +5590,37 @@ async function createEmail(template, load, acc) {
   const layout = layoutOf(template);
   const stems = accessorialStems(load, acc, base);
   const separate = separateAccessorials(template, acc);
-  const result = await withBusy(() => makeFiles(base, layout, stems));
-  if (!result) return;
+  const mix = accMix();
+  const partLimit = emailPartLimit();
 
   // The emails to open, each with its files: the usual one, or with the accessorials in a separate
-  // email, the PODs in one and the request (with the PODs and the accessorial files) in the other
-  const emails = [];
-  const mix = accMix();
-  if (!separate) {
-    emails.push({ form: emailFields(template, load, acc), files: result.files });
-  } else {
-    let podFiles = result.files.filter((f) => !f.acc);
-    if (mix.tagged && mix.pods && !layout.splitAcc) {
-      // The tagged files are in with the PODs (no file of their own): the POD email gets a file made without them
-      const pods = await withBusy(() => makeFiles(base, { ...layout, noAcc: true }, stems));
-      if (!pods) return;
-      podFiles = pods.files;
+  // email, the PODs in one and the request (with the PODs and the accessorial files) in the other.
+  // shrink: 0 as they came; 1 or 2 with the scanned pages and photos smaller, to fit the email size limit
+  // (whole: each PDF in one piece, only to see how big the emails would be).
+  const assemble = async (shrink, whole) => {
+    const result = await makeFiles(base, { ...layout, shrink, partLimit, whole }, stems);
+    if (!result) return null;
+    const list = [];
+    if (!separate) {
+      list.push({ form: emailFields(template, load, acc), files: result.files });
+    } else {
+      let podFiles = result.files.filter((f) => !f.acc);
+      if (mix.tagged && mix.pods && !layout.splitAcc) {
+        // The tagged files are in with the PODs (no file of their own): the POD email gets a file made without them
+        const pods = await makeFiles(base, { ...layout, noAcc: true, shrink, partLimit, whole }, stems);
+        if (!pods) return null;
+        podFiles = pods.files;
+      }
+      // Only accessorial files checked (a lumper request on its own): just the request, no empty POD email
+      if (mix.pods) list.push({ form: emailFields(template, load, acc, false), files: podFiles });
+      list.push({ form: accessorialFields(template, load, acc), files: result.files });
     }
-    // Only accessorial files checked (a lumper request on its own): just the request, no empty POD email
-    if (mix.pods) emails.push({ form: emailFields(template, load, acc, false), files: podFiles });
-    emails.push({ form: accessorialFields(template, load, acc), files: result.files });
-  }
+    return { result, emails: list, shrink };
+  };
+  const built = await withBusy(() => fitEmails(assemble));
+  if (!built) return;
+  const { result, emails } = built;
+  const parted = emails.some((e) => e.part); // over the size limit even with the scans smaller: in several emails
   const namesOf = (files) => files.map((f) => f.name).join(', ');
   // The request's file has the same name as the POD email's when the accessorial files go in it, so say so
   const both = separate && !layout.splitAcc && mix.tagged ? ' (PODs and accessorials)' : '';
@@ -5491,16 +5666,17 @@ async function createEmail(template, load, acc) {
 
   let secondProblem = '';
   for (let i = 0; i < emails.length; i++) {
-    if (i) await new Promise((resolve) => setTimeout(resolve, 800)); // a moment between the two, so Outlook opens both
+    if (i) await new Promise((resolve) => setTimeout(resolve, 800)); // a moment between them, so Outlook opens each one
     try {
       await openEmail(emails[i]);
     } catch (error) {
-      log(`New email: couldn't open ${i ? 'the accessorial email' : 'one'} (${error.message})`);
+      log(`New email: couldn't open ${i ? (emails[i].part ? `"${emails[i].form.subject}"` : 'the accessorial email') : 'one'} (${error.message})`);
       if (!i) {
         setStatus(`Couldn't open a new email: ${error.message}`, 'error');
         return;
       }
-      secondProblem = error.message;
+      emails[i].failed = true;
+      secondProblem = secondProblem || error.message;
     }
   }
 
@@ -5511,7 +5687,7 @@ async function createEmail(template, load, acc) {
     ...usageFigures(allFiles),
     template: template ? template.name : '',
     templateId: template ? template.id : '',
-    emails: emails.length - (secondProblem ? 1 : 0),
+    emails: emails.filter((e) => !e.failed).length,
     accessorials: accessorialTypes(acc).join('/'),
     separate,
     azure: !!links,
@@ -5519,12 +5695,35 @@ async function createEmail(template, load, acc) {
   const summary = accessorialSummary(acc);
   const noLumper = acc && !acc.lum.on && template && template.noLumper ? `No ${word('lumper')}` : '';
   for (const e of emails) {
-    log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''}${e.plain ? '; sent with restack line' : ''})`);
+    if (e.failed) continue;
+    log(`New email: opened "${e.form.subject}" (${template ? `template "${template.name}"` : 'blank'}; ${namesOf(e.files) || 'no files'}${toOf(e.form) ? `; to ${toOf(e.form)}` : ''}${links ? '; attached through Azure' : ''}${e.plain ? '; sent with restack line' : ''}; ${mbText(emailBytes(e.files))})`);
   }
   if (summary || noLumper) log(`New email: ${[summary, noLumper].filter(Boolean).join(', ')}${separate ? ' (accessorials in their own email)' : ''}`);
-  const tail = `${oversizeNote(allFiles)}${leftOutText(result)}`;
+  // The email size limit: what was done to stay under it
+  const limitMb = emailLimitMb();
+  let sizeNote = '';
+  if (parted) sizeNote = ` Even with the scanned pages and photos smaller, it was over the ${limitMb} MB email size limit, so it's in ${emails.length} emails.`;
+  else if (built.shrink) sizeNote = ` To keep ${emails.length > 1 ? 'each email' : 'the email'} under ${limitMb} MB, the scanned pages and photos are smaller (${emails.length > 1 ? 'the bigger one' : 'it'} would have been ${Math.round(built.before / MB)} MB).`;
+  const still = emails.filter((e) => !fitsInEmail(e.files));
+  if (still.length) sizeNote += ` The email with ${still.map((e) => namesOf(e.files)).join(' and the one with ')} is still over ${limitMb} MB, so it may not go through.`;
+  const tail = `${sizeNote}${oversizeNote(allFiles, result.partLimit)}${leftOutText(result)}`;
   const why = azureProblem ? ` (Couldn't attach automatically: ${azureProblem}.)` : '';
   const tone = azureProblem || secondProblem ? 'error' : 'ok';
+  const describe = (e) => `${e.form.subject}${toOf(e.form) ? ` to ${toOf(e.form)}` : ''}`;
+
+  if (parted) {
+    // Several emails (over the size limit): each with its files
+    const opened = emails.filter((e) => !e.failed);
+    const missed = emails.filter((e) => e.failed);
+    let text = links
+      ? `Opened ${plural(opened.length, 'email')}: ${opened.map((e) => `${describe(e)} with ${namesOf(e.files)} attached`).join('; ')}.`
+      : `Opened ${plural(opened.length, 'email')}: ${opened.map(describe).join('; ')}. Click ${word('attachPdf')} on each one's ribbon: ${opened.map((e) => `${e.form.subject} gets ${namesOf(e.files)}`).join('; ')}.${why}`;
+    if (missed.length) text += ` Couldn't open ${missed.map((e) => e.form.subject).join(', ')}: ${secondProblem}.`;
+    const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
+    setStatus(`${text}${extras ? ` In the ${separate ? 'request' : 'message'}: ${extras}.` : ''}${tail}`, tone);
+    showReopenAll(emails.slice(1).map((e) => ({ form: e.form, label: e.part && !separate ? e.part : e.form.subject, failed: !!e.failed })));
+    return;
+  }
 
   if (emails.length === 1) {
     const [only] = emails;
@@ -5539,7 +5738,6 @@ async function createEmail(template, load, acc) {
   }
 
   const [pod, request] = emails;
-  const describe = (e) => `${e.form.subject}${toOf(e.form) ? ` to ${toOf(e.form)}` : ''}`;
   const extra = ` In the request: ${summary}.${noLumper ? ` The POD email says ${noLumper}.` : ''}${tail}`;
   let text;
   if (secondProblem) {
@@ -5595,6 +5793,24 @@ async function openNewEmail(form) {
   } else {
     mailbox.displayNewMessageForm(form);
   }
+}
+
+/** Under the status, when the files went in several emails: a button for each after the first, in case Outlook didn't show it. */
+function showReopenAll(list) {
+  const box = $('parts');
+  box.textContent = '';
+  box.append(el('span', 'muted', list.some((e) => e.failed) ? 'Try opening again:' : "Didn't see them all? Open again:"));
+  for (const { form, label } of list) {
+    const button = el('button', 'link-btn', label);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      openNewEmail(form)
+        .then(() => log(`New email: opened "${form.subject}" again`))
+        .catch((error) => setStatus(`Couldn't open ${form.subject}: ${error.message}`, 'error'));
+    });
+    box.append(button);
+  }
+  box.hidden = false;
 }
 
 /** Under the status: a button for the accessorial email, in case Outlook didn't show it. */
@@ -5677,21 +5893,108 @@ async function splitPdfBySize(bytes, limit) {
   return parts;
 }
 
-/** The files to send or save: base.pdf, or base-1.pdf, base-2.pdf… when it's over 10 MB. */
-async function splitIntoFiles(bytes, base) {
-  if (bytes.length <= SPLIT_LIMIT) return [{ name: `${base}.pdf`, bytes, pages: null, over: false }];
-  const parts = await splitPdfBySize(bytes, SPLIT_LIMIT);
+/** A size limit in MB the way people say it: 10 MB, 3.5 MB. */
+function limitText(limit) {
+  return `${Math.round(((limit + 1) / MB) * 10) / 10} MB`;
+}
+
+/** The files to send or save: base.pdf, or base-1.pdf, base-2.pdf… when it's over 10 MB (or `limit`). */
+async function splitIntoFiles(bytes, base, limit = SPLIT_LIMIT) {
+  if (bytes.length <= limit) return [{ name: `${base}.pdf`, bytes, pages: null, over: false }];
+  const parts = await splitPdfBySize(bytes, limit);
   if (parts.length === 1) return [{ name: `${base}.pdf`, bytes: parts[0].bytes, pages: parts[0].pages, over: parts[0].over }];
   const files = parts.map((part, i) => ({ name: `${base}-${i + 1}.pdf`, bytes: part.bytes, pages: part.pages, over: part.over }));
-  log(`Split (over ${SPLIT_MB} MB): ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
+  log(`Split (over ${limitText(limit)}): ${files.map((f) => `${f.name} ${mbText(f.bytes.length)} (${plural(f.pages, 'page')})`).join(', ')}`);
   return files;
 }
 
-function oversizeNote(files) {
+function oversizeNote(files, limit = SPLIT_LIMIT) {
   const over = files.filter((f) => f.over);
   if (!over.length) return '';
   const why = over[0].stop ? ' (stop files aren\'t split by size)' : ', because a single page is that big';
-  return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over ${SPLIT_MB} MB${why}.`;
+  return ` ${over.map((f) => `${f.name} is ${mbText(f.bytes.length)}`).join('; ')}: over ${limitText(limit)}${why}.`;
+}
+
+// ---- the email size limit (a team setting): Create email keeps every email under it
+
+function cleanEmailLimit(value) {
+  const mb = Math.round(Number(value));
+  return value !== null && value !== '' && Number.isFinite(mb) && mb >= 5 && mb <= 150 ? mb : null;
+}
+
+/** The largest email Restack creates, in MB: the team's setting, or 35. */
+function emailLimitMb() {
+  const settings = teamSettings();
+  return (settings && cleanEmailLimit(settings.emailLimit)) || EMAIL_MB;
+}
+
+/** How big an email with these files will be, as mail servers count it (files go as text, a third bigger). */
+function emailBytes(files) {
+  return Math.ceil(files.reduce((sum, f) => sum + f.bytes.length, 0) * MIME_GROWTH) + EMAIL_EXTRA;
+}
+
+/** How many bytes of files fit in one email under the limit. */
+function emailRoom() {
+  return Math.floor((emailLimitMb() * MB - EMAIL_EXTRA) / MIME_GROWTH);
+}
+
+/** The size a PDF is split at for an email: 10 MB, or less when the email size limit is under about 14 MB. */
+function emailPartLimit() {
+  return Math.min(SPLIT_LIMIT, emailRoom());
+}
+
+function fitsInEmail(files) {
+  return emailBytes(files) <= emailLimitMb() * MB;
+}
+
+/**
+ * Builds Create email's emails (assemble(shrink, whole) makes them, with their files) and keeps each one
+ * under the email size limit: as they came when they fit; otherwise with the scanned pages and photos
+ * smaller (then smaller still); and when even that isn't enough, an email that's over goes out as
+ * several (1 of 2, 2 of 2), with as many of its files in each as fit. Each size is first tried with its
+ * PDFs whole (splitting doesn't make them smaller), so only the one that's kept is split.
+ */
+async function fitEmails(assemble) {
+  const allFit = (built) => built.emails.every((e) => fitsInEmail(e.files));
+  let built = null;
+  let before = 0;
+  for (const shrink of [0, 1, 2]) {
+    if (shrink < 2) {
+      const whole = await assemble(shrink, true);
+      if (!whole) return null;
+      if (!shrink) before = Math.max(...whole.emails.map((e) => emailBytes(e.files)));
+      if (!allFit(whole)) continue;
+    }
+    built = await assemble(shrink, false);
+    if (!built) return null;
+    if (allFit(built)) break;
+  }
+  if (!built.shrink) return built;
+  built.before = before;
+  log(`Email size: ${mbText(before)}, over the ${emailLimitMb()} MB limit, so the scanned pages and photos were made smaller (${SHRINK[built.shrink].dpi} dpi): ${built.emails.map((e) => mbText(emailBytes(e.files))).join(', ')}`);
+  if (!allFit(built)) {
+    built.emails = built.emails.flatMap((e) => (fitsInEmail(e.files) ? [e] : splitEmail(e)));
+    log(`Email size: still over at the smallest, so it goes as ${plural(built.emails.length, 'email')}: ${built.emails.map((e) => `"${e.form.subject}" ${mbText(emailBytes(e.files))}`).join(', ')}`);
+  }
+  return built;
+}
+
+/** An email that's over the limit, as several: its files in order, as many in each as fit, "(1 of 2)" on each subject. */
+function splitEmail(email) {
+  const room = emailRoom();
+  const groups = [];
+  for (const file of email.files) {
+    const last = groups[groups.length - 1];
+    if (last && last.reduce((sum, f) => sum + f.bytes.length, 0) + file.bytes.length <= room) last.push(file);
+    else groups.push([file]);
+  }
+  if (groups.length < 2) return [email];
+  return groups.map((files, i) => ({
+    ...email,
+    form: { ...email.form, subject: `${email.form.subject} (${i + 1} of ${groups.length})`.slice(0, 255) },
+    files,
+    part: `${i + 1} of ${groups.length}`,
+  }));
 }
 
 // ---- Azure (the team admin's function app)
@@ -5964,6 +6267,7 @@ function cleanTeam(data) {
     receiptWords: cleanReceiptWords(data && data.receiptWords), // file names that start out tagged Lumper (null: lumper, receipt)
     usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
     sentWith: !!(data && data.sentWith),         // the sent with restack line on every email (off to start)
+    emailLimit: cleanEmailLimit(data && data.emailLimit), // the largest email Create email makes, in MB (null: 35)
   };
 }
 
@@ -6121,29 +6425,59 @@ function renderTemplateSheet() {
   $('mine-empty').hidden = state.myTemplates.length > 0;
 }
 
-/** The rate confirmation check's status, for the team admin. */
+/** The rate confirmation check, for the team admin: its rate confirmations, each with Remove, and Add. */
 function renderRcBox(message) {
   const sample = teamRateCon();
-  teamSubtitle('rc', sample ? 'On' : 'Off');
-  $('rc-remove').hidden = !sample;
+  const files = rcFiles(sample);
+  teamSubtitle('rc', files.length ? plural(files.length, 'file') : 'Off');
   $('rc-choose').hidden = !CONSOLE;
-  $('rc-choose').textContent = sample ? 'Use a different PDF…' : 'Choose a rate con PDF…';
-  const saved = sample && sample.saved ? new Date(sample.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-  $('rc-text').textContent = message || (sample
-    ? `Checking against ${sample.name} (${plural(sample.pages.length, 'page')}${saved ? `, set ${saved}` : ''}${sample.pages.some((page) => page.words) ? '' : '; pictures of pages, so it\'s matched by layout'}). Pages that look like it are flagged, as are pages that say "Rate Confirmation" or "Load Confirmation" and pages with the same barcode as a flagged one. They have to be left out before anyone emails or saves.`
-    : 'Off. To turn it on, choose one of your rate confirmations (a PDF) as the sample. Its first 3 pages are kept.');
+  $('rc-choose').disabled = files.length >= RC.sampleFiles;
+  $('rc-text').textContent = message || (files.length
+    ? `Checking against ${files.length > 1 ? `these ${files.length} rate confirmations` : 'this rate confirmation'}. Pages that look like ${files.length > 1 ? 'any of them' : 'it'} are flagged, as are pages that say "Rate Confirmation" or "Load Confirmation" and pages with the same barcode as a flagged one. They have to be left out before anyone emails or saves.`
+    : 'Off. To turn it on, add one of your rate confirmations (a PDF). Its first 3 pages are kept.');
+  const list = $('rc-list');
+  list.textContent = '';
+  for (const file of files) {
+    const row = el('li', 'rc-row');
+    const about = el('span', 'rc-file');
+    const added = file.saved ? `, added ${new Date(file.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : '';
+    const pictures = file.pages.some((page) => page.words) ? '' : ', pictures of pages (matched by layout)';
+    about.append(el('span', 'rc-name', file.name), el('span', 'rc-meta', `${plural(file.pages.length, 'page')}${pictures}${added}`));
+    row.append(about);
+    if (CONSOLE) {
+      const remove = el('button', 'link-btn', 'Remove');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${file.name}`);
+      remove.addEventListener('click', () => onRcRemoveFile(file.id).catch(fail));
+      row.append(remove);
+    }
+    list.append(row);
+  }
+  list.hidden = !files.length;
+  $('rc-more').hidden = !CONSOLE || !files.length;
+  $('rc-more').textContent = files.length >= RC.sampleFiles
+    ? `The check holds up to ${RC.sampleFiles} rate confirmations. Remove one to add another.`
+    : 'If one gets through, add it here: a PDF of just its pages (in Restack, pick them in the preview and Save PDF). The first 3 pages of each file are kept.';
 }
 
-async function onRcRemove() {
+/** Takes one rate confirmation out of the check (the last one turns the check off). */
+async function onRcRemoveFile(id) {
+  const files = rcFiles(teamRateCon());
+  const gone = files.find((f) => f.id === id);
+  if (!gone) return;
+  const left = files.filter((f) => f.id !== id);
   try {
-    await saveTeamDraft({ rateCon: null });
+    await saveTeamDraft({ rateCon: rcSetting(left) });
   } catch (error) {
     renderRcBox(`Couldn't remove it: ${error.message}`);
     return;
   }
-  log('Rate con check: sample removed (not published yet)');
+  log(`Rate con check: removed ${gone.name}${left.length ? `, ${plural(left.length, 'file')} left` : ', so the check is off'} (not published yet)`);
   renderPublishBox();
-  renderRcBox(`Removed. ${publishWhere()} to turn the check off for your team.`);
+  renderRcBox();
+  consoleNote(left.length
+    ? `Removed ${gone.name} from the rate con check. ${publishWhere()} to share it with your reps.`
+    : `Removed ${gone.name}, the last one, so the rate con check is off. ${publishWhere()} to turn it off for your reps.`, 'ok');
   recheckRateCons();
 }
 
@@ -6850,6 +7184,33 @@ async function onReceiptWordsSave(words) {
   renderPublishBox();
   renderReceiptWords(list.length ? `Saved. ${publishWhere()} to share them with your reps.` : 'Saved with no words, so nothing is tagged by its name. Publish to share it.', 'ok');
   applyReceiptNames();
+}
+
+// ---- the email size limit (Files page): Create email keeps every email under it
+
+function renderEmailLimit(message, tone) {
+  if (!CONSOLE || !$('size-mb')) return;
+  const mb = emailLimitMb();
+  $('size-mb').value = String(mb);
+  teamSubtitle('size', `${mb} MB`);
+  setStatusIn('size-status', message || '', tone);
+}
+
+async function onEmailLimitSave(value) {
+  const mb = cleanEmailLimit(value);
+  if (!mb) {
+    setStatusIn('size-status', 'Type a size from 5 to 150 MB.', 'error');
+    return;
+  }
+  try {
+    await saveTeamDraft({ emailLimit: mb === EMAIL_MB ? null : mb });
+  } catch (error) {
+    setStatusIn('size-status', `Couldn't save it: ${error.message}`, 'error');
+    return;
+  }
+  log(`Email size limit: ${mb} MB (not published yet)`);
+  renderPublishBox();
+  renderEmailLimit(`Saved. ${publishWhere()} so your reps' emails stay under ${mb} MB.`, 'ok');
 }
 
 // ---- team admins: who gets Settings → Admin console (published with the templates)
@@ -7624,53 +7985,62 @@ function showConsoleTab(tab, focus = true) {
   if (tab === 'usage') loadUsageReport().catch(fail);
 }
 
-// ---- Team settings: a list of them on the left, with how each is set, that goes to its card
+// ---- Team settings: four pages (Tokens/Keys, Files, Toggles, Admin), one showing at a time, and a list
+// of them on the left, each setting with how it's set, that shows its page and goes to it
+
+let settingsPage = ''; // the page showing
 
 /**
- * Builds the list (and the drop-down for narrow windows) from the cards and their group headings,
- * once. Each item shows its card's chip (On, Off, 1 admin…), kept in step as the cards change.
+ * Builds the list (and the drop-down for narrow windows) from the pages and their cards, once, and
+ * shows the page you were on last. Each item shows its card's chip (On, Off, 1 admin…), kept in step
+ * as the cards change.
  */
 function buildSettingsNav() {
   const list = $('set-nav-list');
   const jump = $('set-jump');
   if (!list || list.childElementCount) return;
-  let group = null;
-  let optgroup = null;
-  for (const node of document.querySelectorAll('#con-team .con-cards > .con-group, #con-team .con-cards > .con-card')) {
-    if (node.classList.contains('con-group')) {
-      group = el('div', 'set-nav-group');
-      group.append(el('h3', 'set-nav-head', node.textContent));
-      list.append(group);
-      optgroup = document.createElement('optgroup');
-      optgroup.label = node.textContent;
-      jump.append(optgroup);
-      continue;
+  for (const page of document.querySelectorAll('#con-team .set-page')) {
+    const title = page.querySelector('.set-page-title').textContent;
+    const group = el('div', 'set-nav-group');
+    group.dataset.page = page.id;
+    const head = el('h3', 'set-nav-head');
+    const open = el('button', 'set-nav-page', title);
+    open.type = 'button';
+    open.addEventListener('click', () => showSettingsPage(page.id, true));
+    head.append(open);
+    group.append(head);
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = title;
+    for (const card of page.querySelectorAll('.con-card')) {
+      const name = card.querySelector('.con-card-head h3').textContent;
+      const item = el('button', 'set-nav-item');
+      item.type = 'button';
+      item.dataset.card = card.id;
+      item.append(el('span', 'set-nav-name', name), el('span', 'con-chip'));
+      item.addEventListener('click', () => goToSetting(card.id));
+      group.append(item);
+      optgroup.append(new Option(name, card.id));
     }
-    const name = node.querySelector('.con-card-head h2').textContent;
-    const item = el('button', 'set-nav-item');
-    item.type = 'button';
-    item.dataset.card = node.id;
-    item.append(el('span', 'set-nav-name', name), el('span', 'con-chip'));
-    item.addEventListener('click', () => goToSetting(node.id));
-    (group || list).append(item);
-    (optgroup || jump).append(new Option(name, node.id));
+    list.append(group);
+    jump.append(optgroup);
   }
   jump.addEventListener('change', () => goToSetting(jump.value));
   syncSettingsNav();
   // Each item's chip follows its card's, and the switches' On and Off, whenever they change
   new MutationObserver(() => syncSettingsNav()).observe($('con-team'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-checked'] });
-  // The one in view is marked in the list, as you scroll
+  // On the page showing, the setting in view is marked in the list as you scroll
   if ('IntersectionObserver' in window) {
     const seen = new Map();
     const watch = new IntersectionObserver((entries) => {
       for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
-      if (Date.now() < settingPicked) return; // (going to a setting picked in the list: it stays marked, even near the bottom)
-      const cards = [...document.querySelectorAll('#con-team .con-card')];
-      const top = cards.find((card) => (seen.get(card.id) || 0) > 0);
+      if (Date.now() < settingPicked || !$(settingsPage)) return; // (going to a setting picked in the list: it stays marked, even near the bottom)
+      const top = [...$(settingsPage).querySelectorAll('.con-card')].find((card) => (seen.get(card.id) || 0) > 0);
       if (top) markSetting(top.id);
     }, { rootMargin: '0px 0px -55% 0px', threshold: [0, 0.01] });
     for (const card of document.querySelectorAll('#con-team .con-card')) watch.observe(card);
   }
+  const last = readSetting('teamPage');
+  showSettingsPage(last && $(last) && $(last).classList.contains('set-page') ? last : 'set-page-keys');
 }
 
 /** Copies each card's chip into its item in the list (the switches' cards say On or Off). */
@@ -7690,6 +8060,29 @@ function syncSettingsNav() {
   }
 }
 
+/**
+ * Shows one page of Team settings (only that one) and marks it in the list, with its first setting.
+ * Opened from the list (`go`): at its top, with the focus on its title.
+ */
+function showSettingsPage(id, go = false) {
+  const page = $(id);
+  if (!page || !page.classList.contains('set-page')) return;
+  settingsPage = id;
+  writeSetting('teamPage', id);
+  for (const node of document.querySelectorAll('#con-team .set-page')) node.hidden = node !== page;
+  for (const group of document.querySelectorAll('#set-nav-list .set-nav-group')) {
+    const open = group.querySelector('.set-nav-page');
+    if (group.dataset.page === id) open.setAttribute('aria-current', 'page');
+    else open.removeAttribute('aria-current');
+  }
+  const first = page.querySelector('.con-card');
+  if (first) markSetting(first.id);
+  if (!go) return;
+  settingPicked = Date.now() + 600;
+  if (page.getBoundingClientRect().top < 0) page.scrollIntoView({ block: 'start' });
+  page.querySelector('.set-page-title').focus({ preventScroll: true });
+}
+
 /** Marks a setting in the list (and the drop-down) as the one you're at. */
 function markSetting(id) {
   for (const item of document.querySelectorAll('#set-nav-list .set-nav-item')) {
@@ -7701,18 +8094,25 @@ function markSetting(id) {
 
 let settingPicked = 0; // until when the setting picked in the list stays marked while the page scrolls to it
 
-/** Goes to a setting's card: scrolls it to the top, gives it a moment's highlight, and puts the focus in it. */
+/**
+ * Goes to a setting: shows its page, brings its card into view (the page's title too, for the first
+ * one), gives it a moment's highlight, and puts the focus on its heading.
+ */
 function goToSetting(id) {
   const card = $(id);
   if (!card) return;
+  const page = card.closest('.set-page');
+  const switching = !!page && page.id !== settingsPage;
+  if (page) showSettingsPage(page.id);
   markSetting(id);
   settingPicked = Date.now() + 1500;
-  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  card.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
+  const smooth = !switching && !reducedMotion();
+  const first = page && page.querySelector('.con-card') === card;
+  (first ? page : card).scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' });
   card.classList.remove('flash');
   void card.offsetWidth; // restart the highlight
   card.classList.add('flash');
-  const heading = card.querySelector('.con-card-head h2');
+  const heading = card.querySelector('.con-card-head h3');
   heading.tabIndex = -1;
   heading.focus({ preventScroll: true });
 }
@@ -7727,6 +8127,7 @@ function renderConsole() {
   renderReceiptWords();
   renderUsageBox();
   renderGithubBox();
+  renderEmailLimit();
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
 }
@@ -7771,7 +8172,14 @@ function wireConsole() {
   $('con-rep-templates').addEventListener('click', (event) => onRepTemplatesToggle(event.currentTarget.getAttribute('aria-checked') !== 'true').catch(fail));
   $('con-sent-with')?.addEventListener('click', (event) => onSentWithToggle(event.currentTarget.getAttribute('aria-checked') !== 'true').catch(fail));
   $('rc-choose').addEventListener('click', () => $('rc-file').click());
-  $('rc-file').addEventListener('change', (event) => onRcFile(event.target).catch(fail));
+  $('rc-file').addEventListener('change', (event) => onRcFiles(event.target).catch(fail));
+  $('size-save').addEventListener('click', () => onEmailLimitSave($('size-mb').value).catch(fail));
+  $('size-default').addEventListener('click', () => onEmailLimitSave(EMAIL_MB).catch(fail));
+  $('size-mb').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    onEmailLimitSave($('size-mb').value).catch(fail);
+  });
   $('gh-save').addEventListener('click', onGithubSave);
   $('gh-test').addEventListener('click', () => onGithubTest().catch(fail));
   $('gh-forget').addEventListener('click', onGithubForget);
@@ -7810,26 +8218,50 @@ function wireConsole() {
 }
 
 /** A rate confirmation PDF from the computer becomes the sample. */
-async function onRcFile(input) {
-  const chosen = input.files && input.files[0];
+/** Adds the PDFs picked to the check, after the ones it has (one already in it, or past the limit, isn't added). */
+async function onRcFiles(input) {
+  const chosen = [...(input.files || [])];
   input.value = '';
-  if (!chosen) return;
+  if (!chosen.length) return;
   const button = $('rc-choose');
   button.disabled = true;
-  renderRcBox(`Reading ${chosen.name}…`);
+  const files = rcFiles(teamRateCon());
+  const added = [];
+  const problems = [];
   try {
-    const file = { name: chosen.name, kind: 'PDF', bytes: new Uint8Array(await chosen.arrayBuffer()) };
-    const sample = await rateConSample(file);
-    if (!sample.pages.some((page) => page.words || page.grid)) throw userError('nothing could be read from this file');
-    await saveTeamDraft({ rateCon: sample });
-    log(`Rate con check: sample set from ${chosen.name} (${plural(sample.pages.length, 'page')}), not published yet`);
-    renderConsolePublish();
-    renderRcBox();
-    consoleNote(`${chosen.name} is the sample now. ${publishWhere()} to turn the check on for your reps.`, 'ok');
-  } catch (error) {
-    renderRcBox(`Couldn't use ${chosen.name}: ${error.userMessage || error.message}.`);
+    for (const pick of chosen) {
+      if (files.length >= RC.sampleFiles) {
+        problems.push(`${pick.name} (the check holds up to ${RC.sampleFiles})`);
+        continue;
+      }
+      renderRcBox(`Reading ${pick.name}…`);
+      try {
+        const sample = await rateConSample({ name: pick.name, kind: 'PDF', bytes: new Uint8Array(await pick.arrayBuffer()) });
+        if (!sample.pages.some((page) => page.words || page.grid)) throw userError('nothing could be read from it');
+        const same = JSON.stringify(sample.pages);
+        const twin = files.find((f) => JSON.stringify(f.pages) === same);
+        if (twin) throw userError(`it's already in the check${twin.name === pick.name ? '' : ` as ${twin.name}`}`);
+        files.push({ id: newId(), name: sample.name, saved: sample.saved, pages: sample.pages });
+        added.push(sample);
+      } catch (error) {
+        problems.push(`${pick.name} (${error.userMessage || error.message})`);
+      }
+    }
+    if (added.length) {
+      try {
+        await saveTeamDraft({ rateCon: rcSetting(files) });
+      } catch (error) {
+        renderRcBox(`Couldn't add ${added.length > 1 ? 'them' : added[0].name}: ${error.message}`);
+        return;
+      }
+      log(`Rate con check: added ${added.map((f) => `${f.name} (${plural(f.pages.length, 'page')})`).join(', ')}; ${plural(files.length, 'file')} in all (not published yet)`);
+      renderConsolePublish();
+      recheckRateCons();
+    }
+    renderRcBox(problems.length ? `Couldn't add ${problems.join('; ')}.` : '');
+    if (added.length) consoleNote(`Added ${added.map((f) => f.name).join(', ')} to the rate con check. ${publishWhere()} to share ${added.length > 1 ? 'them' : 'it'} with your reps.`, 'ok');
   } finally {
-    button.disabled = false;
+    button.disabled = rcFiles(teamRateCon()).length >= RC.sampleFiles;
   }
 }
 
@@ -8056,8 +8488,8 @@ function usageEmpty(text, button) {
     const go = el('button', 'btn', button);
     go.type = 'button';
     go.addEventListener('click', () => {
-      showConsoleTab('team');
-      $('con-card-usage').scrollIntoView({ block: 'start' });
+      showConsoleTab('team', false);
+      goToSetting('con-card-usage');
       $('us-url').focus();
     });
     box.append(go);
@@ -8544,7 +8976,6 @@ function wireReadUi() {
   $('tpl-delete').addEventListener('click', () => onTemplateDelete().catch(fail));
   $('tpl-duplicate').addEventListener('click', onTemplateDuplicate);
   $('mine-new').addEventListener('click', () => editTemplate('mine', null));
-  $('rc-remove').addEventListener('click', () => onRcRemove().catch(fail));
   $('rw-save').addEventListener('click', () => onReceiptWordsSave($('rw-words').value.split(/[,;\n]+/)).catch(fail));
   $('rw-default').addEventListener('click', () => onReceiptWordsSave(DEFAULT_RECEIPT_WORDS).catch(fail));
   $('admin-form')?.addEventListener('submit', (event) => onAdminAdd(event).catch(fail));

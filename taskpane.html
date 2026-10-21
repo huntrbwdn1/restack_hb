@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.24.2">
+  <meta name="restack-version" content="0.25.1">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.24.2"></script>
+  <script src="mode.js?v=0.25.1"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.24.2">
-  <script type="module" src="taskpane.js?v=0.24.2"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.25.1">
+  <script type="module" src="taskpane.js?v=0.25.1"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -482,11 +482,12 @@
       <section id="rc-section" class="team-section" hidden>
         <div class="azure-form">
           <p id="rc-text" class="hint"></p>
+          <ul id="rc-list" class="rc-list" aria-label="Rate confirmations the check uses" hidden></ul>
           <div class="btn-row rc-buttons">
-            <button id="rc-choose" class="btn" type="button" hidden>Choose a rate con PDF…</button>
-            <button id="rc-remove" class="btn" type="button" hidden>Remove the sample</button>
+            <button id="rc-choose" class="btn" type="button" hidden>Add a rate con PDF…</button>
           </div>
-          <input id="rc-file" type="file" accept="application/pdf,.pdf" hidden>
+          <p id="rc-more" class="hint" hidden></p>
+          <input id="rc-file" type="file" accept="application/pdf,.pdf" multiple hidden>
         </div>
       </section>
       <section id="azure-section" class="team-section" hidden>
@@ -596,92 +597,117 @@
       <section id="con-templates" class="con-panel" role="tabpanel" aria-labelledby="con-tab-templates" hidden></section>
 
       <section id="con-team" class="con-panel" role="tabpanel" aria-labelledby="con-tab-team" hidden>
-        <!-- The settings in four groups, with a list of them on the left (a drop-down on a narrow window)
-             that goes to each one and shows how it's set -->
+        <!-- The settings on four pages (Tokens/Keys, Files, Toggles, Admin), one showing at a time: the list
+             on the left (a drop-down on a narrow window) shows each page when one of its settings is picked,
+             and how each setting is set -->
         <div class="con-settings">
           <nav id="set-nav" class="set-nav" aria-label="Team settings">
             <label class="set-jump"><span>Go to</span><select id="set-jump"></select></label>
             <div id="set-nav-list" class="set-nav-list"></div>
           </nav>
           <div class="con-cards">
-            <h2 class="con-group">Publishing and access</h2>
-            <article class="con-card" id="con-card-publishing">
-              <header class="con-card-head"><h2>Publishing</h2><span id="github-state" class="con-chip"></span></header>
-              <div class="con-card-body azure-form">
-                <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
-                <label class="field">
-                  <span>Repository</span>
-                  <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
-                </label>
-                <label class="field">
-                  <span>GitHub token <span class="muted">(optional)</span></span>
-                  <input id="gh-token" type="text" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
-                  <small class="hint">A fine-grained personal access token for this one repository, with <b>Contents: Read and write</b>. Make one on GitHub under Settings → Developer settings → Personal access tokens → Fine-grained tokens.</small>
-                </label>
-                <label class="check-row tpl-check"><input id="gh-remember" type="checkbox"><span>Remember it in this browser (otherwise it's forgotten when you close this tab)</span></label>
-                <p id="gh-status" class="hint" role="status"></p>
-                <div class="btn-row">
-                  <button id="gh-save" class="btn primary" type="button">Save</button>
-                  <button id="gh-test" class="btn" type="button">Test</button>
-                  <button id="gh-forget" class="btn" type="button">Remove the token</button>
+            <section id="set-page-keys" class="set-page" aria-labelledby="set-page-keys-title" hidden>
+              <h2 id="set-page-keys-title" class="set-page-title" tabindex="-1">Tokens/Keys</h2>
+              <article class="con-card" id="con-card-publishing">
+                <header class="con-card-head"><h3>Publishing</h3><span id="github-state" class="con-chip"></span></header>
+                <div class="con-card-body azure-form">
+                  <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
+                  <label class="field">
+                    <span>Repository</span>
+                    <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
+                  </label>
+                  <label class="field">
+                    <span>GitHub token <span class="muted">(optional)</span></span>
+                    <input id="gh-token" type="text" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+                    <small class="hint">A fine-grained personal access token for this one repository, with <b>Contents: Read and write</b>. Make one on GitHub under Settings → Developer settings → Personal access tokens → Fine-grained tokens.</small>
+                  </label>
+                  <label class="check-row tpl-check"><input id="gh-remember" type="checkbox"><span>Remember it in this browser (otherwise it's forgotten when you close this tab)</span></label>
+                  <p id="gh-status" class="hint" role="status"></p>
+                  <div class="btn-row">
+                    <button id="gh-save" class="btn primary" type="button">Save</button>
+                    <button id="gh-test" class="btn" type="button">Test</button>
+                    <button id="gh-forget" class="btn" type="button">Remove the token</button>
+                  </div>
                 </div>
-              </div>
-            </article>
-            <article class="con-card" id="con-card-install">
-              <header class="con-card-head"><h2>Install files</h2></header>
-              <div class="con-card-body azure-form">
-                <p class="hint"><b>restack-team.xml</b> is what reps install. <b>restack-beta.xml</b> is Restack Beta, for you: it runs whatever is in your repository's <b>beta</b> folder, next to Restack, so you can try a new version before reps get it. Both carry your team key, so keep them within your team.</p>
-                <div class="btn-row">
-                  <button id="con-share" class="btn" type="button">Download restack-team.xml</button>
-                  <button id="con-share-beta" class="btn" type="button">Download restack-beta.xml</button>
+              </article>
+              <article class="con-card" data-section="azure-section" id="con-card-azure">
+                <header class="con-card-head"><h3>Attach automatically</h3><span id="azure-state" class="con-chip"></span></header>
+                <div class="con-card-body"></div>
+              </article>
+              <article class="con-card" data-section="usage-section" id="con-card-usage">
+                <header class="con-card-head"><h3>Usage counts</h3><span id="usage-state" class="con-chip"></span></header>
+                <div class="con-card-body"></div>
+              </article>
+              <article class="con-card" id="con-card-browser">
+                <header class="con-card-head"><h3>This browser</h3></header>
+                <div class="con-card-body azure-form">
+                  <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
+                  <p id="forget-status" class="hint" role="status"></p>
+                  <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
                 </div>
-              </div>
-            </article>
-            <article class="con-card" data-section="admins-section" id="con-card-admins">
-              <header class="con-card-head"><h2>Team admins</h2><span id="admins-state" class="con-chip"></span></header>
-              <div class="con-card-body"></div>
-            </article>
-            <article class="con-card" id="con-card-browser">
-              <header class="con-card-head"><h2>This browser</h2></header>
-              <div class="con-card-body azure-form">
-                <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
-                <p id="forget-status" class="hint" role="status"></p>
-                <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
-              </div>
-            </article>
-            <h2 class="con-group">Reps' panels and emails</h2>
-            <article class="con-card" id="con-card-reps">
-              <header class="con-card-head"><h2>Reps' own templates</h2><span id="reps-state" class="con-chip"></span></header>
-              <div class="con-card-body azure-form">
-                <button id="con-rep-templates" class="con-switch" type="button" role="switch" aria-checked="false"><span>Reps can make their own templates</span><span class="switch" aria-hidden="true"></span></button>
-                <p class="hint">Off: reps use only the team templates. Their own templates stay in their Outlook either way.</p>
-              </div>
-            </article>
-            <article class="con-card" id="con-card-sent-with">
-              <header class="con-card-head"><h2>Sent with restack</h2><span id="sent-with-state" class="con-chip"></span></header>
-              <div class="con-card-body azure-form">
-                <button id="con-sent-with" class="con-switch" type="button" role="switch" aria-checked="false"><span>Add this line to every email Restack creates</span><span class="switch" aria-hidden="true"></span></button>
-                <img class="sent-with-sample" src="sent-with-restack.png" width="136" height="23" alt="sent with restack">
-                <p class="hint">It goes under the message, above the rep's own Outlook signature, in the POD email and the accessorial email. It's a small picture inside the email, so it looks the same in every mail app.</p>
-              </div>
-            </article>
-            <article class="con-card" data-section="receipts-section" id="con-card-receipts">
-              <header class="con-card-head"><h2>Accessorial file names</h2><span id="receipts-state" class="con-chip"></span></header>
-              <div class="con-card-body"></div>
-            </article>
-            <article class="con-card" data-section="rc-section" id="con-card-rc">
-              <header class="con-card-head"><h2>Rate confirmation check</h2><span id="rc-state" class="con-chip"></span></header>
-              <div class="con-card-body"></div>
-            </article>
-            <h2 class="con-group">Azure functions</h2>
-            <article class="con-card" data-section="azure-section" id="con-card-azure">
-              <header class="con-card-head"><h2>Attach automatically</h2><span id="azure-state" class="con-chip"></span></header>
-              <div class="con-card-body"></div>
-            </article>
-            <article class="con-card" data-section="usage-section" id="con-card-usage">
-              <header class="con-card-head"><h2>Usage counts</h2><span id="usage-state" class="con-chip"></span></header>
-              <div class="con-card-body"></div>
-            </article>
+              </article>
+            </section>
+            <section id="set-page-files" class="set-page" aria-labelledby="set-page-files-title" hidden>
+              <h2 id="set-page-files-title" class="set-page-title" tabindex="-1">Files</h2>
+              <article class="con-card" id="con-card-install">
+                <header class="con-card-head"><h3>Install files</h3></header>
+                <div class="con-card-body azure-form">
+                  <p class="hint"><b>restack-team.xml</b> is what reps install. <b>restack-beta.xml</b> is Restack Beta, for you: it runs whatever is in your repository's <b>beta</b> folder, next to Restack, so you can try a new version before reps get it. Both carry your team key, so keep them within your team.</p>
+                  <div class="btn-row">
+                    <button id="con-share" class="btn" type="button">Download restack-team.xml</button>
+                    <button id="con-share-beta" class="btn" type="button">Download restack-beta.xml</button>
+                  </div>
+                </div>
+              </article>
+              <article class="con-card" data-section="rc-section" id="con-card-rc">
+                <header class="con-card-head"><h3>Rate confirmation check</h3><span id="rc-state" class="con-chip"></span></header>
+                <div class="con-card-body"></div>
+              </article>
+              <article class="con-card" data-section="receipts-section" id="con-card-receipts">
+                <header class="con-card-head"><h3>Accessorial file names</h3><span id="receipts-state" class="con-chip"></span></header>
+                <div class="con-card-body"></div>
+              </article>
+              <article class="con-card" id="con-card-size">
+                <header class="con-card-head"><h3>Email size limit</h3><span id="size-state" class="con-chip"></span></header>
+                <div class="con-card-body azure-form">
+                  <p class="hint">Create email keeps every email under this size, the way mail servers count it. When a load's files would make an email bigger, Restack makes its scanned pages and photos smaller (typed pages stay as they are), and if that still isn't enough, it opens it as two emails or more. Most Microsoft 365 mailboxes take emails up to 35 or 36 MB.</p>
+                  <label class="field size-field">
+                    <span>Largest email, in MB</span>
+                    <input id="size-mb" type="number" min="5" max="150" step="1" inputmode="numeric">
+                  </label>
+                  <p id="size-status" class="hint" role="status"></p>
+                  <div class="btn-row">
+                    <button id="size-save" class="btn primary" type="button">Save</button>
+                    <button id="size-default" class="btn" type="button">Use 35 MB</button>
+                  </div>
+                </div>
+              </article>
+            </section>
+            <section id="set-page-toggles" class="set-page" aria-labelledby="set-page-toggles-title" hidden>
+              <h2 id="set-page-toggles-title" class="set-page-title" tabindex="-1">Toggles</h2>
+              <article class="con-card" id="con-card-reps">
+                <header class="con-card-head"><h3>Reps' own templates</h3><span id="reps-state" class="con-chip"></span></header>
+                <div class="con-card-body azure-form">
+                  <button id="con-rep-templates" class="con-switch" type="button" role="switch" aria-checked="false"><span>Reps can make their own templates</span><span class="switch" aria-hidden="true"></span></button>
+                  <p class="hint">Off: reps use only the team templates. Their own templates stay in their Outlook either way.</p>
+                </div>
+              </article>
+              <article class="con-card" id="con-card-sent-with">
+                <header class="con-card-head"><h3>Sent with restack</h3><span id="sent-with-state" class="con-chip"></span></header>
+                <div class="con-card-body azure-form">
+                  <button id="con-sent-with" class="con-switch" type="button" role="switch" aria-checked="false"><span>Add this line to every email Restack creates</span><span class="switch" aria-hidden="true"></span></button>
+                  <img class="sent-with-sample" src="sent-with-restack.png" width="136" height="23" alt="sent with restack">
+                  <p class="hint">It goes under the message, above the rep's own Outlook signature, in the POD email and the accessorial email. It's a small picture inside the email, so it looks the same in every mail app.</p>
+                </div>
+              </article>
+            </section>
+            <section id="set-page-admin" class="set-page" aria-labelledby="set-page-admin-title" hidden>
+              <h2 id="set-page-admin-title" class="set-page-title" tabindex="-1">Admin</h2>
+              <article class="con-card" data-section="admins-section" id="con-card-admins">
+                <header class="con-card-head"><h3>Team admins</h3><span id="admins-state" class="con-chip"></span></header>
+                <div class="con-card-body"></div>
+              </article>
+            </section>
           </div>
         </div>
       </section>

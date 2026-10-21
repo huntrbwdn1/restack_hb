@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.24</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.25</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -289,12 +289,13 @@
       <figure><img src="wiki/multi-stop.png" width="300" height="389" alt="Multi-stop on, with a stop picker on each file" loading="lazy"><figcaption>With Multi-stop on, each file has its stop.</figcaption></figure>
 
       <h3 id="rate-con">Rate confirmation check</h3>
-      <p>If your team admin has set a sample rate confirmation, pages that look like it are flagged in the list, and a warning shows above the buttons. They have to come out before you can email or save:</p>
+      <p>If your team admin has added some of your rate confirmations to the check, pages that look like any of them are flagged in the list, and a warning shows above the buttons. They have to come out before you can email or save:</p>
       <ul>
         <li><strong>Leave it out</strong> (or <strong>Leave them out</strong>, for more than one) unticks those pages, or the file.</li>
         <li><strong>Not a rate con</strong> clears the warning for this thread.</li>
       </ul>
       <p>Digital copies, scans and faxes of a rate con are caught, compared by their words and their layout. So are pages that say Rate Confirmation or Load Confirmation, and pages with the same barcode number as a flagged page. Phone photos of a rate con usually aren't recognized. The check reads the first 30 pages of a PDF and the first 10 of a fax. While it's still checking, Email and Save PDF wait: try again in a moment.</p>
+      <p>If a rate con gets through, tell your team admin: they can add it to the check (<a href="#team-settings">Team settings → Files</a>), and from then on ones like it are caught too.</p>
       <figure><img src="wiki/rate-con.png" width="300" height="196" alt="The rate confirmation warning above the Email button" loading="lazy"><figcaption>A flagged page has to come out before you email or save.</figcaption></figure>
 
       <!-- ===================================================== Emailing -->
@@ -370,6 +371,7 @@
         <li><strong>Multi-stop:</strong> one PDF per stop, <code>3645493-1</code>, <code>3645493-2</code>…, unless the template puts every stop in one file.</li>
         <li><strong>Accessorials in their own file:</strong> <code>3645493 Lumper</code>, and Other's named for its type, like <code>3645493 Scale Ticket</code>. On a Multi-stop load, one for each stop.</li>
         <li><strong>Every PDF stays under 10 MB.</strong> A bigger one is split, in page order, into <code>3645493-1</code>, <code>3645493-2</code> and so on, all attached to the same email. A Lumper or Other file is split the same way, like <code>3645493 Lumper-1</code>. Stop files are kept whole, and so is a single page over 10 MB; the panel says so when that happens.</li>
+        <li id="email-size"><strong>Every email stays under your team's email size limit</strong> (35 MB to start). Files travel in an email as text, about a third bigger, so a 35 MB email holds about 25 MB of PDFs. When a load's files would make it bigger, Restack makes the scanned pages and photos smaller: it redraws them at about 150 dpi, still easy to read, and typed pages stay as they are. The status line says so. If that still isn't enough, Create email opens two emails or more, like <code>3645493 POD(s) (1 of 2)</code> and <code>(2 of 2)</code>, with as many of the files in each as fit. Emails under the limit, and Save PDF, don't change.</li>
       </ul>
 
       <h3 id="save">Save PDF</h3>
@@ -456,27 +458,30 @@
       <figure class="wide"><img src="wiki/console-templates.png" width="760" height="487" alt="The admin console's Templates tab, editing a template" loading="lazy"><figcaption>The Templates tab.</figcaption></figure>
 
       <h3 id="team-settings">Team settings tab</h3>
-      <p>The list on the left goes to each setting and shows how it's set (on a narrow window, it's a <strong>Go to</strong> drop-down). Changes reach your reps once you publish.</p>
-      <figure class="wide"><img src="wiki/console-team.png" width="760" height="487" alt="The admin console's Team settings tab" loading="lazy"><figcaption>The Team settings tab.</figcaption></figure>
-      <h4>Publishing and access</h4>
+      <p>Team settings are on four pages: <strong>Tokens/Keys</strong>, <strong>Files</strong>, <strong>Toggles</strong> and <strong>Admin</strong>. The list on the left has every setting and shows how it's set; click one and its page opens, or click a page's name for the whole page. On a narrow window, the list is a <strong>Go to</strong> drop-down. The console opens on the page you were on last. Changes reach your reps once you publish.</p>
+      <figure class="wide"><img src="wiki/console-team.png" width="760" height="487" alt="The admin console's Team settings tab, on its Files page" loading="lazy"><figcaption>The Team settings tab, on its Files page.</figcaption></figure>
+      <h4>Tokens/Keys</h4>
       <dl class="terms">
         <dt>Publishing</dt><dd>Your repository (<code>owner/repository</code>) and, optionally, a GitHub token: a fine-grained personal access token for that one repository, with <strong>Contents: Read and write</strong>. Make one on GitHub under <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>. Tick <strong>Remember it in this browser</strong> to keep it after the tab closes. <strong>Test</strong> checks it; <strong>Remove the token</strong> forgets it.</dd>
-        <dt>Install files</dt><dd><strong>Download restack-team.xml</strong>, what your reps install, and <strong>restack-beta.xml</strong>, <a href="#beta">Restack Beta</a> for you. Both carry your team key, so keep them within your team.</dd>
-        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. To publish, an admin also needs upload access to your GitHub repository.</dd>
+        <dt>Attach automatically</dt><dd>Needs your own PDF Emails Azure Function App (its folder has the setup steps). Enter its address (its Default domain, from the Function App's Overview page) and an upload key (<strong>Generate</strong>, then <strong>Copy</strong> it into the Function App's <code>THREAD_ATTACHMENTS_UPLOAD_KEY</code> setting). Then <strong>Test connection</strong>, <strong>Save</strong>, and publish. Create email then opens with the PDF already attached, for everyone.</dd>
+        <dt>Usage counts</dt><dd>Needs your own Restack Usage Azure Function App (its folder has the setup steps). Enter its address, a counting key (its <code>RESTACK_USAGE_KEY</code> setting; it's published with your templates, so reps' panels can send counts) and an admin key (<code>RESTACK_USAGE_ADMIN_KEY</code>; it stays in this browser and isn't published). Then the Usage tab shows everyone's numbers.</dd>
         <dt>This browser</dt><dd><strong>Remove them from this browser</strong>: your team key, usage admin key, any remembered GitHub token, and changes you haven't published (it asks first). Do this on a shared computer.</dd>
       </dl>
-      <h4>Reps' panels and emails</h4>
+      <h4>Files</h4>
+      <dl class="terms">
+        <dt>Install files</dt><dd><strong>Download restack-team.xml</strong>, what your reps install, and <strong>restack-beta.xml</strong>, <a href="#beta">Restack Beta</a> for you. Both carry your team key, so keep them within your team.</dd>
+        <dt>Rate confirmation check</dt><dd>The rate confirmations the <a href="#rate-con">check</a> compares pages with. <strong>Add a rate con PDF…</strong> adds one (or several at once) to the ones it has; the first 3 pages of each are kept, up to 20 files. If one gets through, add it: a PDF of just its pages (in Restack, pick them in the preview and Save PDF). <strong>Remove</strong> takes one out; removing the last one turns the check off. Then publish.</dd>
+        <dt>Accessorial file names</dt><dd>The words for <a href="#tags">Tag accessorials by file name</a>, separated by commas (<code>lumper, receipt</code> to start). Capital letters don't matter, and a word can be part of a longer name. A <em>Delivery Receipt</em> is a POD, so that "receipt" doesn't count.</dd>
+        <dt>Email size limit</dt><dd>The biggest email Create email makes, the way mail servers count it: 35 MB to start, which most Microsoft 365 mailboxes take. Type another size (5 to 150 MB) and <strong>Save</strong>, or <strong>Use 35 MB</strong>, then publish. <a href="#email-size">What Restack does</a> when a load's files would go over it.</dd>
+      </dl>
+      <h4>Toggles</h4>
       <dl class="terms">
         <dt>Reps' own templates</dt><dd>On: reps can make their own templates (Settings → My templates). Off: they use only the team's; their own stay in their Outlook either way.</dd>
         <dt>Sent with restack</dt><dd>On: every email Restack creates, the accessorial email too, ends with a small "sent with restack" line under the message, above the rep's own Outlook signature.</dd>
-        <dt>Accessorial file names</dt><dd>The words for <a href="#tags">Tag accessorials by file name</a>, separated by commas (<code>lumper, receipt</code> to start). Capital letters don't matter, and a word can be part of a longer name. A <em>Delivery Receipt</em> is a POD, so that "receipt" doesn't count.</dd>
-        <dt>Rate confirmation check</dt><dd><strong>Choose a rate con PDF…</strong> from your computer to turn on the <a href="#rate-con">check</a>; its first 3 pages are kept as the sample. <strong>Remove the sample</strong> turns it off.</dd>
       </dl>
-      <h4>Azure functions</h4>
-      <p>These need your own Azure Function Apps; each one's folder has its setup steps.</p>
+      <h4>Admin</h4>
       <dl class="terms">
-        <dt>Attach automatically</dt><dd>Your PDF Emails function's address (its Default domain, from the Function App's Overview page) and an upload key (<strong>Generate</strong>, then <strong>Copy</strong> it into the Function App's <code>THREAD_ATTACHMENTS_UPLOAD_KEY</code> setting). Then <strong>Test connection</strong>, <strong>Save</strong>, and publish. Create email then opens with the PDF already attached, for everyone.</dd>
-        <dt>Usage counts</dt><dd>Your Restack Usage function's address, a counting key (its <code>RESTACK_USAGE_KEY</code> setting; it's published with your templates, so reps' panels can send counts) and an admin key (<code>RESTACK_USAGE_ADMIN_KEY</code>; it stays in this browser and isn't published). Then the Usage tab shows everyone's numbers.</dd>
+        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. To publish, an admin also needs upload access to your GitHub repository.</dd>
       </dl>
 
       <h3 id="usage">Usage tab</h3>
@@ -548,6 +553,8 @@
         <dd>Choose <strong>Not a rate con</strong> (<a href="#rate-con">more</a>).</dd>
         <dt>Create email asks for an accessorial</dt>
         <dd>The template is Accessorial Only, or a file is tagged Lumper or Other: add that accessorial, or change the file's tag (<a href="#accessorials">more</a>).</dd>
+        <dt>An email bounced because it was too big</dt>
+        <dd>The customer's mailbox takes less than your team's <a href="#email-size">email size limit</a>; the bounce says the most it takes. Ask your team admin to set the limit to that or lower (Team settings → Files → Email size limit) and publish, then create the email again.</dd>
         <dt>Attach PDF can't find the PDF</dt>
         <dd>Create the email from Restack first. The PDF waits for up to 2 hours, and only the latest one waits.</dd>
         <dt>I can't find My templates</dt>
