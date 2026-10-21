@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.25.1';
+const VERSION = '0.25.2';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
@@ -7120,7 +7120,7 @@ async function onPublish() {
       where = await publishToGithub(text);
     } catch (error) {
       renderConsolePublish();
-      consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Publishing has the token.)`, 'error');
+      consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Tokens/Keys → Publishing has the token.)`, 'error');
       return;
     }
     team.justPublished = true;
@@ -7985,84 +7985,45 @@ function showConsoleTab(tab, focus = true) {
   if (tab === 'usage') loadUsageReport().catch(fail);
 }
 
-// ---- Team settings: four pages (Tokens/Keys, Files, Toggles, Admin), one showing at a time, and a list
-// of them on the left, each setting with how it's set, that shows its page and goes to it
+// ---- Team settings: four pages (Tokens/Keys, Files, Toggles, Admins), one showing at a time, picked by
+// name from the list on the left (a Go to drop-down on a narrow window)
 
 let settingsPage = ''; // the page showing
 
-/**
- * Builds the list (and the drop-down for narrow windows) from the pages and their cards, once, and
- * shows the page you were on last. Each item shows its card's chip (On, Off, 1 admin…), kept in step
- * as the cards change.
- */
+/** Builds the list of pages (and the drop-down for narrow windows), once, and shows the page you were on last. */
 function buildSettingsNav() {
   const list = $('set-nav-list');
   const jump = $('set-jump');
   if (!list || list.childElementCount) return;
   for (const page of document.querySelectorAll('#con-team .set-page')) {
     const title = page.querySelector('.set-page-title').textContent;
-    const group = el('div', 'set-nav-group');
-    group.dataset.page = page.id;
-    const head = el('h3', 'set-nav-head');
-    const open = el('button', 'set-nav-page', title);
+    const open = el('button', 'set-nav-item', title);
     open.type = 'button';
+    open.dataset.page = page.id;
     open.addEventListener('click', () => showSettingsPage(page.id, true));
-    head.append(open);
-    group.append(head);
-    const optgroup = document.createElement('optgroup');
-    optgroup.label = title;
-    for (const card of page.querySelectorAll('.con-card')) {
-      const name = card.querySelector('.con-card-head h3').textContent;
-      const item = el('button', 'set-nav-item');
-      item.type = 'button';
-      item.dataset.card = card.id;
-      item.append(el('span', 'set-nav-name', name), el('span', 'con-chip'));
-      item.addEventListener('click', () => goToSetting(card.id));
-      group.append(item);
-      optgroup.append(new Option(name, card.id));
-    }
-    list.append(group);
-    jump.append(optgroup);
+    list.append(open);
+    jump.append(new Option(title, page.id));
   }
-  jump.addEventListener('change', () => goToSetting(jump.value));
-  syncSettingsNav();
-  // Each item's chip follows its card's, and the switches' On and Off, whenever they change
-  new MutationObserver(() => syncSettingsNav()).observe($('con-team'), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-checked'] });
-  // On the page showing, the setting in view is marked in the list as you scroll
-  if ('IntersectionObserver' in window) {
-    const seen = new Map();
-    const watch = new IntersectionObserver((entries) => {
-      for (const entry of entries) seen.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
-      if (Date.now() < settingPicked || !$(settingsPage)) return; // (going to a setting picked in the list: it stays marked, even near the bottom)
-      const top = [...$(settingsPage).querySelectorAll('.con-card')].find((card) => (seen.get(card.id) || 0) > 0);
-      if (top) markSetting(top.id);
-    }, { rootMargin: '0px 0px -55% 0px', threshold: [0, 0.01] });
-    for (const card of document.querySelectorAll('#con-team .con-card')) watch.observe(card);
-  }
+  jump.addEventListener('change', () => showSettingsPage(jump.value, true));
+  // The switches' cards say On or Off, whenever they change
+  syncSwitchChips();
+  new MutationObserver(() => syncSwitchChips()).observe($('con-team'), { subtree: true, attributes: true, attributeFilter: ['aria-checked'] });
   const last = readSetting('teamPage');
   showSettingsPage(last && $(last) && $(last).classList.contains('set-page') ? last : 'set-page-keys');
 }
 
-/** Copies each card's chip into its item in the list (the switches' cards say On or Off). */
-function syncSettingsNav() {
-  const on = (id) => $(id) && $(id).getAttribute('aria-checked') === 'true';
-  const chip = (id, text) => {
-    const node = $(id);
+/** The switches' cards (Reps' own templates, Sent with restack) say On or Off. */
+function syncSwitchChips() {
+  for (const [chip, toggle] of [['reps-state', 'con-rep-templates'], ['sent-with-state', 'con-sent-with']]) {
+    const node = $(chip);
+    const text = $(toggle) && $(toggle).getAttribute('aria-checked') === 'true' ? 'On' : 'Off';
     if (node && node.textContent !== text) node.textContent = text;
-  };
-  chip('reps-state', on('con-rep-templates') ? 'On' : 'Off');
-  chip('sent-with-state', on('con-sent-with') ? 'On' : 'Off');
-  for (const item of document.querySelectorAll('#set-nav-list .set-nav-item')) {
-    const source = $(item.dataset.card).querySelector('.con-card-head .con-chip');
-    const target = item.querySelector('.con-chip');
-    const text = source ? source.textContent : '';
-    if (target.textContent !== text) target.textContent = text;
   }
 }
 
 /**
- * Shows one page of Team settings (only that one) and marks it in the list, with its first setting.
- * Opened from the list (`go`): at its top, with the focus on its title.
+ * Shows one page of Team settings (only that one) and marks it in the list. Picked in the list (`go`),
+ * it starts at its top, straight away, with the focus on its title.
  */
 function showSettingsPage(id, go = false) {
   const page = $(id);
@@ -8070,51 +8031,20 @@ function showSettingsPage(id, go = false) {
   settingsPage = id;
   writeSetting('teamPage', id);
   for (const node of document.querySelectorAll('#con-team .set-page')) node.hidden = node !== page;
-  for (const group of document.querySelectorAll('#set-nav-list .set-nav-group')) {
-    const open = group.querySelector('.set-nav-page');
-    if (group.dataset.page === id) open.setAttribute('aria-current', 'page');
-    else open.removeAttribute('aria-current');
-  }
-  const first = page.querySelector('.con-card');
-  if (first) markSetting(first.id);
-  if (!go) return;
-  settingPicked = Date.now() + 600;
-  if (page.getBoundingClientRect().top < 0) page.scrollIntoView({ block: 'start' });
-  page.querySelector('.set-page-title').focus({ preventScroll: true });
-}
-
-/** Marks a setting in the list (and the drop-down) as the one you're at. */
-function markSetting(id) {
   for (const item of document.querySelectorAll('#set-nav-list .set-nav-item')) {
-    if (item.dataset.card === id) item.setAttribute('aria-current', 'true');
+    if (item.dataset.page === id) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
   }
   if ($('set-jump').value !== id) $('set-jump').value = id;
+  if (!go) return;
+  if (page.getBoundingClientRect().top < 0) page.scrollIntoView({ block: 'start', behavior: 'instant' });
+  page.querySelector('.set-page-title').focus({ preventScroll: true });
 }
 
-let settingPicked = 0; // until when the setting picked in the list stays marked while the page scrolls to it
-
-/**
- * Goes to a setting: shows its page, brings its card into view (the page's title too, for the first
- * one), gives it a moment's highlight, and puts the focus on its heading.
- */
+/** Shows the page a setting is on (for the Usage tab's set-up button). */
 function goToSetting(id) {
-  const card = $(id);
-  if (!card) return;
-  const page = card.closest('.set-page');
-  const switching = !!page && page.id !== settingsPage;
-  if (page) showSettingsPage(page.id);
-  markSetting(id);
-  settingPicked = Date.now() + 1500;
-  const smooth = !switching && !reducedMotion();
-  const first = page && page.querySelector('.con-card') === card;
-  (first ? page : card).scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' });
-  card.classList.remove('flash');
-  void card.offsetWidth; // restart the highlight
-  card.classList.add('flash');
-  const heading = card.querySelector('.con-card-head h3');
-  heading.tabIndex = -1;
-  heading.focus({ preventScroll: true });
+  const page = $(id) && $(id).closest('.set-page');
+  if (page) showSettingsPage(page.id, true);
 }
 
 function renderConsole() {
@@ -8509,12 +8439,12 @@ async function loadUsageReport(force = false) {
   const adminKey = usageAdminKey();
   if (!usage) {
     $('us-line').textContent = '';
-    usageEmpty("Usage counts aren't on yet. Set up your Restack Usage function under Team settings → Usage counts, then publish, and each rep's panel starts counting.", 'Set up usage counts');
+    usageEmpty("Usage counts aren't on yet. Set up your Restack Usage function under Team settings → Tokens/Keys → Usage counts, then publish, and each rep's panel starts counting.", 'Set up usage counts');
     return;
   }
   if (!adminKey) {
     $('us-line').textContent = '';
-    usageEmpty('Add your admin key under Team settings → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
+    usageEmpty('Add your admin key under Team settings → Tokens/Keys → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
     return;
   }
   let from = $('us-from').value;

@@ -968,24 +968,17 @@ html.is-console .cust-item input { height: 32px; font-size: 14px; }
   html.is-console .cust-item .icon-btn { grid-column: 3; }
 }
 
-/* Team settings: a list of them on the left (as Templates has its list), and on the right one page of them at a time
-   (Tokens/Keys, Files, Toggles, Admin), each setting in its card */
+/* Team settings: the names of its four pages on the left (Tokens/Keys, Files, Toggles, Admins), and on the right
+   the page picked, each setting in its card */
 .con-settings { display: grid; grid-template-columns: minmax(230px, 280px) minmax(0, 1fr); gap: 24px; align-items: start; }
 .set-nav { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 6px 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.set-nav-head { margin: 0; }
-/* each page's name: shows the page (the one showing in the text's own color) */
-.set-nav-page { display: block; width: 100%; padding: 10px 16px 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
-.set-nav-page:hover, .set-nav-page[aria-current="page"] { color: var(--fg); }
-.set-nav-page:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.set-nav-group + .set-nav-group { margin-top: 4px; }
 .set-nav-item {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 36px; padding: 6px 12px 6px 16px;
   border: 0; background: none; color: var(--fg); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
 }
 .set-nav-item:hover { background: var(--hover); }
-.set-nav-item[aria-current="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--g2); }
+.set-nav-item[aria-current="page"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--g2); font-weight: 600; }
 .set-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.set-nav-item .con-chip { flex: none; }
 .set-jump { display: none; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .set-jump select { flex: 1; min-width: 0; height: 36px; padding: 0 8px; border: 1px solid var(--field-line); border-radius: 5px; background: var(--surface); color: var(--fg); font: inherit; font-size: 14px; }
 .con-cards { max-width: 820px; min-width: 0; }
@@ -994,9 +987,6 @@ html.is-console .cust-item input { height: 32px; font-size: 14px; }
 .set-page-title:focus { outline: none; }
 .con-card { scroll-margin-top: 16px; }
 .size-field input { max-width: 140px; }
-.con-card.flash { animation: card-flash 1.4s ease-out; }
-@keyframes card-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--g2); } 100% { box-shadow: 0 0 0 2px transparent; } }
-@media (prefers-reduced-motion: reduce) { .con-card.flash { animation: none; } }
 @media (max-width: 900px) {
   .con-settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .set-nav { position: static; max-height: none; padding: 0; border: 0; background: none; overflow: visible; }

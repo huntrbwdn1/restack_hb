@@ -449,7 +449,7 @@
       <p>Your reps don't see changes until you publish. The top right of the console says when there are changes they can't see yet.</p>
       <ul>
         <li><strong>Publish to team</strong> downloads <code>team.json</code>. Upload it to your GitHub repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
-        <li>With a GitHub token under <strong>Team settings → Publishing</strong>, it goes straight to GitHub instead.</li>
+        <li>With a GitHub token under <strong>Team settings → Tokens/Keys → Publishing</strong>, it goes straight to GitHub instead.</li>
         <li>Unpublished changes stay in the browser they were made in, so publish soon after editing.</li>
       </ul>
 
@@ -458,7 +458,7 @@
       <figure class="wide"><img src="wiki/console-templates.png" width="760" height="487" alt="The admin console's Templates tab, editing a template" loading="lazy"><figcaption>The Templates tab.</figcaption></figure>
 
       <h3 id="team-settings">Team settings tab</h3>
-      <p>Team settings are on four pages: <strong>Tokens/Keys</strong>, <strong>Files</strong>, <strong>Toggles</strong> and <strong>Admin</strong>. The list on the left has every setting and shows how it's set; click one and its page opens, or click a page's name for the whole page. On a narrow window, the list is a <strong>Go to</strong> drop-down. The console opens on the page you were on last. Changes reach your reps once you publish.</p>
+      <p>Team settings are on four pages: <strong>Tokens/Keys</strong>, <strong>Files</strong>, <strong>Toggles</strong> and <strong>Admins</strong>. Click one in the list on the left to show it (on a narrow window, pick it from <strong>Go to</strong>). Each setting's card says how it's set. The console opens on the page you were on last. Changes reach your reps once you publish.</p>
       <figure class="wide"><img src="wiki/console-team.png" width="760" height="487" alt="The admin console's Team settings tab, on its Files page" loading="lazy"><figcaption>The Team settings tab, on its Files page.</figcaption></figure>
       <h4>Tokens/Keys</h4>
       <dl class="terms">
@@ -479,7 +479,7 @@
         <dt>Reps' own templates</dt><dd>On: reps can make their own templates (Settings → My templates). Off: they use only the team's; their own stay in their Outlook either way.</dd>
         <dt>Sent with restack</dt><dd>On: every email Restack creates, the accessorial email too, ends with a small "sent with restack" line under the message, above the rep's own Outlook signature.</dd>
       </dl>
-      <h4>Admin</h4>
+      <h4>Admins</h4>
       <dl class="terms">
         <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. To publish, an admin also needs upload access to your GitHub repository.</dd>
       </dl>
@@ -505,7 +505,7 @@
         <li>In Restack, choose <strong>Settings → Admin console</strong>. Add your templates there and choose <strong>Publish to team</strong>.</li>
         <li>Send the same <code>restack-team.xml</code> to your reps.</li>
       </ol>
-      <div class="note"><p>Keep that file. Choosing <strong>Create team install file</strong> again makes a new team key, which can't open the templates you've already published. You can download it again any time from <strong>Team settings → Install files</strong>.</p></div>
+      <div class="note"><p>Keep that file. Choosing <strong>Create team install file</strong> again makes a new team key, which can't open the templates you've already published. You can download it again any time from <strong>Team settings → Files → Install files</strong>.</p></div>
 
       <h3 id="update">Update Restack</h3>
       <ol>
@@ -517,7 +517,7 @@
       <p>A second copy of the add-in, just for you, that runs whatever is in your repository's <code>beta</code> folder. It sits next to Restack in Outlook, so you can try a new version on real emails before your reps get it.</p>
       <ol>
         <li>Once: upload the <code>beta</code> folder (a full copy of Restack) to your repository.</li>
-        <li>Once: in the admin console, choose <strong>Team settings → Install files → Download restack-beta.xml</strong> and install it the same way. It shows up as <strong>Restack Beta</strong>, with a black β on its icon.</li>
+        <li>Once: in the admin console, choose <strong>Team settings → Files → Install files → Download restack-beta.xml</strong> and install it the same way. It shows up as <strong>Restack Beta</strong>, with a black β on its icon.</li>
         <li>Each new version: upload it into the <code>beta</code> folder first and try it. When it's ready, upload the same files to the main folder.</li>
       </ol>
       <p>Restack Beta uses your published templates and team settings. Its own choices (Appearance, Text size, View, the two switches, pinned templates), your own templates and any unpublished changes are kept apart from Restack's. Keep <code>restack-beta.xml</code> to yourself: it carries your team key.</p>
