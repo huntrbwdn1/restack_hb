@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.25</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.26</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -246,7 +246,7 @@
         <dt>What goes into the PDF</dt>
         <dd>PDFs (fax-style and JPEG 2000 scans too), photos and multi-page fax scans (TIFF). Word and Excel files, iPhone photos (.heic), attached emails and cloud links are listed but can't be combined yet. Photos go in at most 2000 pixels on their long side: the whole photo, smaller, never cropped.</dd>
         <dt>Logos and icons</dt>
-        <dd>Small pictures from email signatures are hidden. <strong>Show logos &amp; icons</strong> under the list shows them.</dd>
+        <dd>Small pictures in email signatures, like logos and social media icons, are hidden. A picture pasted into the message itself, like a screenshot of a receipt, stays in the list even when it's small. A small picture from a mail app that doesn't mark its signature is hidden too, since Restack can't tell where it is. <strong>Show logos &amp; icons</strong> under the list shows the hidden ones.</dd>
         <dt>Views</dt>
         <dd><strong>Settings → View</strong> shows the list as Large, Medium or Small pictures, a List, Details (with columns) or Tiles, like File Explorer.</dd>
       </dl>
@@ -450,7 +450,9 @@
       <ul>
         <li><strong>Publish to team</strong> downloads <code>team.json</code>. Upload it to your GitHub repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
         <li>With a GitHub token under <strong>Team settings → Tokens/Keys → Publishing</strong>, it goes straight to GitHub instead.</li>
-        <li>Unpublished changes stay in the browser they were made in, so publish soon after editing.</li>
+        <li>Unpublished changes stay in the browser they were made in. <strong>Publish to team</strong> adds them to what's already published, so changes another admin published in the meantime stay. If you both changed the same template or setting, it asks which to keep.</li>
+        <li>Opening the console brings in what other admins have published since your changes began, and yours stay waiting to publish.</li>
+        <li>It checks what's published on GitHub itself (the site can be a minute or two behind), so the latest is what your changes go on top of. If another admin's publish replaces yours with a version made from an older copy, the console brings your changes back to publish again.</li>
       </ul>
 
       <h3 id="console-templates">Templates tab</h3>
@@ -481,7 +483,7 @@
       </dl>
       <h4>Admins</h4>
       <dl class="terms">
-        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. To publish, an admin also needs upload access to your GitHub repository.</dd>
+        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. Someone you add gets the team's templates and settings once you publish, and their team key comes with the <code>restack-team.xml</code> they installed. Of their own, they need upload access to your GitHub repository to publish (and their own GitHub token, if Publish to team should go straight there), and the usage admin key to see the Usage tab: they type it once under <strong>Tokens/Keys → Usage counts</strong>, so send it to them privately.</dd>
       </dl>
 
       <h3 id="usage">Usage tab</h3>
@@ -539,6 +541,8 @@
       <dl class="terms">
         <dt>Only one email's files show up</dt>
         <dd>Select every email in the thread (<a href="#open">how</a>), or use <a href="#keep-adding">Keep adding</a>.</dd>
+        <dt>A picture from the email isn't in the list</dt>
+        <dd>Restack took it for a logo (<a href="#check">which pictures it hides</a>). Tick <strong>Show logos &amp; icons</strong> under the list, then tick the picture. The test report says where Restack found each picture in the email.</dd>
         <dt>"This copy of Restack isn't set up for a team."</dt>
         <dd>It was installed some other way than from your team's install file. Remove it, and install the <code>restack-team.xml</code> your team admin sent (<a href="#install">how</a>).</dd>
         <dt>"This install file doesn't match your team."</dt>

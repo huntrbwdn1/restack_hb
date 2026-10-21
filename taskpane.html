@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.25.2">
+  <meta name="restack-version" content="0.26">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.25.2"></script>
+  <script src="mode.js?v=0.26"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.25.2">
-  <script type="module" src="taskpane.js?v=0.25.2"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.26">
+  <script type="module" src="taskpane.js?v=0.26"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -476,7 +476,14 @@
             </label>
           </form>
           <p id="admin-status" class="hint" role="status"></p>
-          <p class="hint">Changes take effect once you publish. To publish what they change, someone you add also needs upload access to your GitHub repository. Each admin's unpublished changes stay in the browser they made them in, so publish soon after editing.</p>
+          <div class="admin-needs">
+            <p class="hint"><strong>Someone you add</strong> gets the team's templates and settings once you publish, and their team key comes with the restack-team.xml they installed. Of their own, they need:</p>
+            <ul class="hint admin-needs-list">
+              <li><strong>Upload access to your GitHub repository</strong>, to publish. With their own GitHub token under Tokens/Keys → Publishing, Publish to team goes straight there.</li>
+              <li><strong>The usage admin key</strong>, to see the Usage tab. They type it once under Tokens/Keys → Usage counts; send it to them privately.</li>
+            </ul>
+            <p class="hint">Each admin's unpublished changes stay in the browser they made them in. Publish to team adds them to what's already published, so one admin's changes don't undo another's.</p>
+          </div>
         </div>
       </section>
       <section id="rc-section" class="team-section" hidden>
@@ -750,6 +757,19 @@
       </section>
     </div>
     <footer id="con-foot" class="con-foot"></footer>
+
+    <!-- Publish to team, when another admin published changes to the same things since yours began: which to keep (0.26) -->
+    <dialog id="merge-dialog" class="merge-dialog" aria-labelledby="merge-title" aria-describedby="merge-text">
+      <form class="merge-form" method="dialog">
+        <h2 id="merge-title">You both changed these</h2>
+        <p id="merge-text" class="hint"></p>
+        <ul id="merge-list" class="merge-list"></ul>
+        <div class="btn-row">
+          <button id="merge-publish" class="btn primary" type="submit" value="publish" disabled>Publish</button>
+          <button id="merge-cancel" class="btn" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
   </div>
 
   <!-- How to select every email in a thread (the one-email tip's info icon) -->

@@ -6,10 +6,12 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.25.2';
+const VERSION = '0.26';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
-const LOGO_MAX_SIDE = 400;            // images in the email body this small (in pixels) are logos/icons
-const LOGO_THIN_SIDE = 120;           // ...and so are thin banners
+const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
+const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
+const ICON_SIDE = 100;                // a picture this small is an icon (or an emoji) wherever it is...
+const LINE_SIDE = 24;                 // ...and one this thin is a dividing line
 const MAX_IMAGE_SIDE = 2400;          // fax scans and locked PDF pages are drawn at most this big
 const PHOTO_MAX_SIDE = 2000;          // photos are scaled to this (long side) before going into a PDF: the whole photo, smaller
 const LOCKED_PDF_DPI = 200;           // locked PDFs are copied in as page images at this quality
@@ -256,6 +258,10 @@ const team = {
   status: 'unknown',   // nokey | nofile | ok | wrongkey | error
   published: null,     // the decrypted team.json
   draft: null,         // the admin's edits that aren't published yet
+  draftBase: null,     // what they started from (0.26): the published version, and each template's and setting's fingerprint
+  merged: null,        // opening the console added another admin's newer changes to them: { by, updated, conflicts }
+  sent: null,          // what this browser last published, until the site has it (0.26): { base, parent, team }
+  replaced: null,      // a version not built on your last publish replaced it, so your changes are back: { by, updated }
   me: '',              // this Outlook account's email address
   error: '',
   justPublished: false,
@@ -1033,6 +1039,7 @@ async function loadThreadNow(token) {
   renderList();
   const dupes = files.reduce((sum, f) => sum + f.copies - 1, 0);
   log(`Found ${plural(files.length, 'file')}${dupes ? `, ${plural(dupes, 'duplicate')} merged` : ''}${read.failed ? `, ${read.failed} unreadable` : ''}`);
+  logLogos(files);
   logScans(files);
   fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
   checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
@@ -1040,6 +1047,12 @@ async function loadThreadNow(token) {
 
 function byDate(a, b) {
   return (a.date ? a.date.getTime() : 0) - (b.date ? b.date.getTime() : 0);
+}
+
+/** The test report says which pictures are hidden as logos & icons, and how big they are. */
+function logLogos(files) {
+  const logos = files.filter((file) => file.smallLogo);
+  if (logos.length) log(`Hidden as logos & icons: ${logos.map((file) => `"${file.name}"${file.dims ? ` (${file.dims[0]} × ${file.dims[1]})` : ''}`).join(', ')}`);
 }
 
 function logScans(files) {
@@ -1169,8 +1182,10 @@ async function addFromSelection(token, force = false) {
   keepFlash(`Reading ${fresh.length > 1 ? `${fresh.length} emails` : 'the email'}…`);
   const read = await readEmails(fresh, token);
   if (!read) return; // a newer click took over: these stay waiting, and it adds them too
-  const added = await mergeInto(read.found, token);
-  if (added === null) return;
+  const merged = await mergeInto(read.found, token);
+  if (merged === null) return;
+  const { added, shown } = merged;
+  const appeared = [...added, ...shown]; // new files, and pictures that now show (the email they were pasted into)
   for (const pick of fresh) {
     if (!pick.itemId) continue;
     state.seen.add(pick.itemId);
@@ -1185,9 +1200,11 @@ async function addFromSelection(token, force = false) {
   applyReceiptNames(false);
   renderSummary();
   renderKeepBar();
-  const from = added.length && added[0].from ? ` from ${added[0].from}` : '';
-  keepFlash(added.length ? `Added ${plural(added.length, 'file')}${from}.` : `Nothing new in ${read.messages > 1 ? 'those emails' : 'that email'}.`);
-  log(`Keep adding: ${plural(read.messages, 'email')}, ${plural(added.length, 'new file')}`);
+  const showing = appeared.filter((file) => state.showLogos || !file.smallLogo); // (not counting logos it hides)
+  const source = read.found.find((file) => showing.some((one) => one.fp === file.fp));
+  const from = source && source.from ? ` from ${source.from}` : '';
+  keepFlash(showing.length ? `Added ${plural(showing.length, 'file')}${from}.` : `Nothing new in ${read.messages > 1 ? 'those emails' : 'that email'}.`);
+  log(`Keep adding: ${plural(read.messages, 'email')}, ${plural(added.length, 'new file')}${shown.length ? `, ${plural(shown.length, 'picture')} no longer hidden as a logo` : ''}`);
   if (!state.files.length) {
     showMessage(`No attachments in ${state.messages === 1 ? 'this email' : `these ${state.messages} emails`}.`);
     return;
@@ -1195,39 +1212,47 @@ async function addFromSelection(token, force = false) {
   showView('read-view');
   renderList();
   updateSelectionUi();
-  for (const file of added) flashRow(file);
+  for (const file of appeared) flashRow(file);
+  logLogos(added);
   logScans(added);
   fillThumbs(token).catch((error) => log(`Pictures: stopped (${error.message})`));
   checkRateCons(token).catch((error) => log(`Rate con check: stopped (${error.message})`));
 }
 
 /**
- * Adds newly read files to the list. A copy of a file that's already there just counts as a copy;
- * the rest go in by date, oldest first (or at the end, once you've put the list in your own order).
- * Returns the files added, or null when a newer load took over.
+ * Adds newly read files to the list. A copy of a file that's already there just counts as a copy
+ * (and shows a picture that was hidden as a logo, if this is the email it was pasted into); the rest
+ * go in by date, oldest first (or at the end, once you've put the list in your own order).
+ * Returns { added, shown } (shown: pictures already in the list that now show), or null when a newer
+ * load took over, with nothing changed, so the emails can be added again.
  */
 async function mergeInto(found, token) {
-  const byKey = new Map();
   for (const file of state.files) {
     if (!file.fp) file.fp = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
-    byKey.set(file.fp, file);
   }
   found.sort(byDate);
+  for (const file of found) file.fp = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
+  if (token !== state.loadToken) return null;
+  const byKey = new Map(state.files.map((file) => [file.fp, file]));
   const added = [];
+  const shown = [];
   for (const file of found) {
-    file.fp = file.bytes ? await fingerprint(file.bytes) : `${file.kind}:${file.name}`;
     const first = byKey.get(file.fp);
     if (first) {
-      first.copies += 1;
-      first.inline = first.inline && file.inline; // a real attachment anywhere wins
+      addCopy(first, file);
+      if (added.includes(first)) {
+        first.smallLogo = looksLikeLogo(first);
+      } else if (first.smallLogo && !looksLikeLogo(first)) { // a file that's showing stays showing
+        first.smallLogo = false;
+        shown.push(first);
+      }
       continue;
     }
     byKey.set(file.fp, file);
     file.smallLogo = looksLikeLogo(file);
     added.push(file);
   }
-  if (token !== state.loadToken) return null;
-  if (!added.length) return added;
+  if (!added.length) return { added, shown };
   const before = new Map(state.files.map((file) => [file, file.id]));
   const previewed = state.files[state.previewIndex];
   const all = [...state.files, ...added].sort(byDate);
@@ -1238,7 +1263,7 @@ async function mergeInto(found, token) {
   state.files = all;
   state.previewIndex = previewed ? all.indexOf(previewed) : -1;
   state.built.clear();
-  return added;
+  return { added, shown };
 }
 
 /** The Keep adding bar under the header, while it's on. */
@@ -1825,17 +1850,266 @@ function onMultiStopToggle(on) {
 
 /**
  * Signature logos and icons: small pictures in the email body. Judged by pixel size, so a
- * photo of a mostly white page (which can be a very small file) still counts as a photo.
+ * photo of a mostly white page (which can be a very small file) still counts as a photo. A picture
+ * pasted into the message itself (not its signature), like a screenshot of a receipt, stays in the
+ * list whatever its size, unless it's icon-sized (0.25.3).
  */
 function looksLikeLogo(file) {
   if (!file.inline || (file.kind !== 'Image' && file.kind !== 'TIFF')) return false;
   if (String(file.name).toLowerCase() === SENT_WITH.file) return true; // Restack's own sent with restack line
-  const dims = file.kind === 'Image' && file.bytes ? imageSize(file.bytes) : null;
-  if (dims) {
-    file.dims = dims;
-    return Math.max(dims[0], dims[1]) <= LOGO_MAX_SIDE || Math.min(dims[0], dims[1]) <= LOGO_THIN_SIDE;
-  }
+  const dims = file.dims || (file.kind === 'Image' && file.bytes ? imageSize(file.bytes) : null);
+  if (dims) file.dims = dims;
+  if (dims && (Math.max(dims[0], dims[1]) <= ICON_SIDE || Math.min(dims[0], dims[1]) <= LINE_SIDE)) return true;
+  // Pasted into one email's message (other copies only quote it): a picture someone sent. The same
+  // picture in the message of several emails is more like a logo a mail server adds to every email.
+  if (file.place === 'message' && (file.pasted || 0) < 2) return false;
+  if (dims) return Math.max(dims[0], dims[1]) <= LOGO_MAX_SIDE || Math.min(dims[0], dims[1]) <= LOGO_THIN_SIDE;
   return file.size < SMALL_INLINE_BYTES;
+}
+
+/**
+ * Where a picture is, from two copies of it: in a signature anywhere, it's a logo; otherwise pasted
+ * into a message anywhere (not just quoted from one), it's a picture someone sent.
+ */
+function bothPlaces(a, b) {
+  if (a === 'signature' || b === 'signature') return 'signature';
+  if (a === 'message' || b === 'message') return 'message';
+  return '';
+}
+
+/** A copy of a file that's already in the list: where it is, and in how many emails' messages. */
+function addCopy(first, file) {
+  first.copies += 1;
+  first.inline = first.inline && file.inline; // a real attachment anywhere wins
+  first.place = bothPlaces(first.place, file.place);
+  first.pasted = (first.pasted || 0) + (file.pasted || 0);
+}
+
+// ---- Where each picture in an email's body sits (0.25.3, #51): in the sender's signature, pasted
+// into the message itself, or in the quoted part (an earlier email). Outlook, new Outlook, Gmail,
+// iPhone and Thunderbird mark the signature in the email's HTML; new Outlook adds x_ to the names.
+
+/** Where the quoted part (earlier emails) starts: everything from one of these on. */
+const QUOTE_BREAKS = '[id$="appendonsend" i], [id$="divRplyFwdMsg" i], [id*="mail-editor-reference-message-container" i]';
+/**
+ * Quoted parts that are blocks of their own (Gmail, Yahoo, iPhone, Thunderbird). A plain blockquote
+ * is only indented text (Gmail's Indent more), so it has to look like a quote.
+ */
+const QUOTE_BLOCKS = 'blockquote[type="cite" i], blockquote[class*="quote" i], blockquote[style*="border-left" i], [class*="gmail_quote" i], [class*="yahoo_quoted" i], [id*="yahoo_quoted" i]';
+
+/** Outlook's line above a reply's From: block, in any language: classic Outlook's grey (or blue) rule, new Outlook's <hr>. */
+function outlookSeparator(node) {
+  if (node.tagName === 'HR') return node.getAttribute('tabindex') === '-1';
+  const style = String(node.getAttribute('style') || '').toLowerCase().replace(/\s+/g, '');
+  return style.includes('border-top') && /#e1e1e1|#b5c4df|rgb\(225,225,225\)|rgb\(181,196,223\)/.test(style);
+}
+/** Signatures as blocks: new Outlook's Signature, Gmail's gmail_signature, iPhone's AppleMailSignature, moz-signature… */
+const SIGNATURE_BLOCKS = '[id*="signature" i], [class*="signature" i]';
+/** Signatures marked where they start: classic Outlook's _MailAutoSig bookmark, the iPhone's line break. */
+const SIGNATURE_STARTS = 'a[name$="_MailAutoSig" i], a[id$="_MailAutoSig" i], br[id*="signature" i]';
+
+/** The cid (lower case, without "cid:") an <img> in the body shows, or ''. */
+function imgCid(img) {
+  for (const name of ['src', 'originalsrc', 'data-src']) {
+    const value = String(img.getAttribute(name) || '').trim();
+    if (/^cid:/i.test(value)) {
+      try {
+        return decodeURIComponent(value.slice(4)).toLowerCase();
+      } catch (error) {
+        return value.slice(4).toLowerCase();
+      }
+    }
+  }
+  return '';
+}
+
+/** Whether an <img> in the body shows one of the email's own attachments (rather than a picture on a website). */
+function showsAttachment(img) {
+  if (imgCid(img)) return true;
+  if (/attachmentbycid/i.test(img.getAttribute('data-imagetype') || '')) return true;
+  return /attachments(-\w+)?\.office\.net|getfileattachment|getattachment/i.test(img.getAttribute('src') || '');
+}
+
+/**
+ * The attachment id an <img> names, if it does: new Outlook and Outlook on the web put it in the
+ * picture's address (until November 2025; since then the address is cid:, matched by contentId).
+ */
+function imgAttachmentId(img) {
+  const custom = img.getAttribute('data-custom');
+  if (custom) return custom;
+  const src = String(img.getAttribute('src') || '');
+  if (!/^https?:/i.test(src)) return '';
+  try {
+    return new URL(src).searchParams.get('id') || '';
+  } catch (error) {
+    return '';
+  }
+}
+
+/** A number from an <img>'s width or height (pixels), or 0. */
+function imgSide(img, name) {
+  const value = parseFloat(img.getAttribute(name) || '');
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+}
+
+/**
+ * The email's own pictures in its HTML, in order: [{ cid, id, alt, w, h, place }], place being
+ * 'signature', 'message', 'quoted' or 'unsure' (a mail app that doesn't mark its signature).
+ */
+function bodyPictures(html) {
+  if (!html || typeof DOMParser === 'undefined') return [];
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  if (!doc.body) return [];
+  const all = [...doc.body.querySelectorAll('*')];
+  const order = new Map(all.map((node, i) => [node, i]));
+  const at = (node) => (order.has(node) ? order.get(node) : -1);
+  const breaks = [...doc.body.querySelectorAll(`${QUOTE_BREAKS}, ${QUOTE_BLOCKS}`)].map(at);
+  for (const node of doc.body.querySelectorAll('hr, div[style], p[style]')) if (outlookSeparator(node)) breaks.push(at(node));
+  // A reply's header, however it's laid out (one line, or a line each): From: … Sent: (or Date:) … Subject:,
+  // within one block of under 2000 characters. The quoted part starts at its From:
+  const header = new Map(); // block → whether it's a header (each block's text read once)
+  const isHeader = (node) => {
+    if (!header.has(node)) {
+      const words = node.textContent;
+      header.set(node, words.length < 2000 ? (/(Sent|Date):/.test(words) && /Subject:/.test(words)) : null);
+    }
+    return header.get(node);
+  };
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    if (!/^\s*From:/.test(text.nodeValue) || !text.parentElement) continue;
+    for (let node = text.parentElement; node && node !== doc.body; node = node.parentElement) {
+      const yes = isHeader(node);
+      if (yes === null) break; // too big to be a header
+      if (yes) {
+        breaks.push(at(text.parentElement));
+        break;
+      }
+    }
+  }
+  const firstBreak = Math.min(Infinity, ...breaks.filter((i) => i >= 0));
+  const nextBreak = (i) => Math.min(Infinity, ...breaks.filter((b) => b > i));
+  const starts = [...doc.body.querySelectorAll(SIGNATURE_STARTS)].map(at).filter((i) => i >= 0);
+  const blocks = [...doc.body.querySelectorAll(SIGNATURE_BLOCKS)].filter((node) => node.tagName !== 'BR' && node.tagName !== 'A');
+  const quoted = (node, i) => i > firstBreak || !!node.closest(QUOTE_BLOCKS);
+  // Whether the new message marks its signature (so a picture outside it was pasted in), or came from Gmail,
+  // which never puts signature pictures in the email as attachments
+  const marked = starts.some((i) => i < firstBreak) || blocks.some((node) => !quoted(node, at(node)));
+  const gmail = [...doc.body.querySelectorAll('[class*="gmail_" i]')].some((node) => !quoted(node, at(node)));
+  const found = [];
+  const byKey = new Map();
+  for (const img of doc.body.querySelectorAll('img')) {
+    if (!showsAttachment(img)) continue;
+    const i = at(img);
+    const cid = imgCid(img);
+    let place;
+    if (blocks.some((node) => node.contains(img))) place = 'signature';
+    else if (starts.some((s) => i > s && i < nextBreak(s))) place = 'signature';
+    else if (quoted(img, i)) place = /^ii_/.test(cid) ? 'quoted-message' : 'quoted'; // Gmail's ii_: pasted into the quoted email
+    else place = marked || gmail || /^ii_/.test(cid) ? 'message' : 'unsure';
+    const picture = {
+      cid,
+      id: imgAttachmentId(img),
+      alt: String(img.getAttribute('alt') || '').trim(),
+      w: imgSide(img, 'width'),
+      h: imgSide(img, 'height'),
+      size: imgSide(img, 'size'), // new Outlook: the attachment's size in bytes
+      place,
+    };
+    const key = cid || picture.id || String(img.getAttribute('src') || '');
+    const seen = key && byKey.get(key);
+    if (seen) { // the same picture twice: in a signature anywhere wins, then in the message
+      const rank = { signature: 4, message: 3, 'quoted-message': 2, quoted: 1, unsure: 0 };
+      if (rank[place] > rank[seen.place]) seen.place = place;
+      continue;
+    }
+    if (key) byKey.set(key, picture);
+    found.push(picture);
+  }
+  return found;
+}
+
+/** Office attachment ids, compared loosely (new Outlook's pages can write them URL-safe, without the = at the end). */
+function sameAttachmentId(a, b) {
+  const plain = (id) => {
+    let text = String(id || '');
+    try {
+      text = decodeURIComponent(text);
+    } catch (error) { /* as it is */ }
+    return text.replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, ''); // (a + read from an address is a space)
+  };
+  return !!a && !!b && plain(a) === plain(b);
+}
+
+const PLACE_WORDS = {
+  signature: 'in the signature',
+  message: 'pasted into the message',
+  'quoted-message': 'pasted into an earlier email (quoted)',
+  quoted: 'quoted from an earlier email',
+  unsure: "can't tell (the email doesn't mark its signature)",
+};
+
+/**
+ * Pairs an email's pictures ([{ file, att }]) with where they are in its HTML (bodyPictures), and
+ * notes each one's place on its file: 'signature', 'message' or '' (quoted, or can't tell).
+ * Returns what it found, for the test report.
+ */
+function placePictures(pairs, pictures) {
+  const matched = new Map();
+  const places = new Set(pictures.map((picture) => picture.place));
+  if (pictures.length >= pairs.length && places.size === 1) {
+    for (const pair of pairs) matched.set(pair, pictures[0].place); // all in one place, the usual case
+  } else {
+    const left = pictures.slice();
+    // Pairs up by something only one picture on each side has
+    const matchBy = (pairKey, fits) => {
+      const free = pairs.filter((pair) => !matched.has(pair));
+      for (const pair of free) {
+        const key = pairKey(pair);
+        if (!key || free.filter((other) => pairKey(other) === key).length !== 1) continue;
+        const hits = left.filter((picture) => fits(picture, key));
+        if (hits.length !== 1) continue;
+        matched.set(pair, hits[0].place);
+        left.splice(left.indexOf(hits[0]), 1);
+      }
+    };
+    matchBy((pair) => String(pair.att.contentId || '').trim().replace(/^<|>$/g, '').toLowerCase(), (picture, cid) => picture.cid === cid); // new Outlook: the content id
+    matchBy((pair) => pair.att.id, (picture, id) => !!picture.id && sameAttachmentId(picture.id, id)); // new Outlook before November 2025: the attachment's id
+    matchBy((pair) => String(pair.att.size || ''), (picture, size) => !!picture.size && String(picture.size) === size); // new Outlook: its size in bytes
+    matchBy((pair) => String(pair.file.name).toLowerCase(), (picture, name) => picture.cid === name || picture.cid.startsWith(`${name}@`)); // classic Outlook: cid:image001.png@…
+    matchBy((pair) => pair.file.name, (picture, name) => picture.alt === name); // Gmail: alt="image.png"
+    matchBy((pair) => (pair.file.dims ? pair.file.dims.join('x') : ''), (picture, size) => !!picture.w && `${picture.w}x${picture.h}` === size);
+    // The rest, in order, only when they're all in one place (so the order can't put a logo in the message)
+    const rest = pairs.filter((pair) => !matched.has(pair));
+    if (rest.length && rest.length === left.length && new Set(left.map((picture) => picture.place)).size === 1) {
+      rest.forEach((pair) => matched.set(pair, left[0].place));
+    }
+  }
+  return pairs.map((pair) => {
+    const place = matched.get(pair);
+    pair.file.place = place === 'signature' ? 'signature' : place === 'message' || place === 'quoted-message' ? 'message' : '';
+    pair.file.pasted = place === 'message' ? 1 : 0; // (in the message of more than one email, it's more like a logo; see looksLikeLogo)
+    return `"${pair.file.name}" ${place ? PLACE_WORDS[place] : 'not found in the email'}`;
+  });
+}
+
+/** Reads an email's HTML to see where its pictures are (see placePictures). */
+async function findPicturePlaces(item, pairs, label) {
+  let html = '';
+  try {
+    html = await call((done) => item.body.getAsync(Office.CoercionType ? Office.CoercionType.Html : 'html', done));
+  } catch (error) {
+    log(`${label}: couldn't read the email to see where its pictures are (${error.message})`);
+    return;
+  }
+  let pictures = [];
+  try {
+    pictures = bodyPictures(String(html || ''));
+  } catch (error) {
+    log(`${label}: couldn't read the email's HTML (${error.message})`);
+    return;
+  }
+  log(`${label}: ${placePictures(pairs, pictures).join('; ')}`);
 }
 
 /** [width, height] from a PNG, GIF, JPEG, BMP or WebP header, or null. */
@@ -1891,6 +2165,7 @@ async function readAttachments(item, found, token, label) {
   const list = attachments || [];
   const inBody = list.filter((att) => att.isInline).length;
   log(`${label || 'Email'}: Outlook listed ${plural(list.length, 'attachment')}${inBody ? ` (${inBody} in the body)` : ''}`);
+  const pictures = []; // pictures in the body: [{ file, att }], to see where each one is
   for (const att of list) {
     if (token !== state.loadToken) return failed;
     const file = {
@@ -1924,10 +2199,17 @@ async function readAttachments(item, found, token, label) {
       }
       if (file.bytes) file.size = file.bytes.length;
       found.push(file);
+      if (file.inline && (file.kind === 'Image' || file.kind === 'TIFF')) {
+        if (file.kind === 'Image' && file.bytes) file.dims = imageSize(file.bytes);
+        pictures.push({ file, att });
+      }
     } catch (error) {
       failed += 1;
       log(`Couldn't read "${file.name}": ${error.message}`);
     }
+  }
+  if (pictures.length && token === state.loadToken && item.body && typeof item.body.getAsync === 'function') {
+    await findPicturePlaces(item, pictures, label || 'Email');
   }
   return failed;
 }
@@ -1954,8 +2236,7 @@ async function mergeDuplicates(found) {
       byKey.set(key, file);
       unique.push(file);
     } else {
-      first.copies += 1;
-      first.inline = first.inline && file.inline; // a real attachment anywhere wins
+      addCopy(first, file);
     }
   }
   return unique;
@@ -6268,6 +6549,7 @@ function cleanTeam(data) {
     usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
     sentWith: !!(data && data.sentWith),         // the sent with restack line on every email (off to start)
     emailLimit: cleanEmailLimit(data && data.emailLimit), // the largest email Create email makes, in MB (null: 35)
+    history: cleanHistory(data && data.history),  // this version's time, then the versions it was built on (0.26)
   };
 }
 
@@ -6304,10 +6586,61 @@ async function loadTeam() {
   }
   const draft = readRoaming(DRAFT_KEY);
   team.draft = draft && Array.isArray(draft.templates) ? cleanTeam(draft) : null;
-  if (team.draft && team.published && team.published.updated >= team.draft.updated) {
-    team.draft = null; // already published
-    writeRoaming(DRAFT_KEY, null).catch(() => {});
+  team.draftBase = team.draft ? cleanBase(draft.base) : null;
+  team.sent = cleanSent(readRoaming(SENT_KEY));
+  team.merged = null;
+  team.replaced = null;
+  let changed = false;
+  if (team.draft && !team.draftBase) { // from before 0.26: no note of what it started from
+    if (team.published && team.published.updated >= team.draft.updated) {
+      team.draft = null; // already published
+      writeRoaming(DRAFT_KEY, null).catch(() => {});
+    } else {
+      team.draftBase = draftBase(team.published);
+    }
   }
+  const sent = team.sent;
+  if (sent && !team.published && team.status === 'nofile' && sent.team) team.published = sent.team; // (a new team: the site hasn't got it yet)
+  if (sent && team.published) {
+    if (builtOn(team.published, sent.base)) {
+      // The site has your last publish (or a newer version built on it): your changes since count from it
+      if (team.draft) team.draftBase = sent.base;
+      if (team.published.updated !== sent.base.updated) team.sent = null; // (someone built on it, so it can't be lost now)
+      else if (!sent.team) sent.team = team.published; // (a downloaded file that's up now: it's live)
+      changed = true;
+    } else if (isSameOrEarlier(team.published, sent.base)) {
+      // The site hasn't caught up with it yet: show it, if it went straight to GitHub (a downloaded file may not be up yet)
+      if (sent.team) team.published = sent.team;
+    } else {
+      // A version that wasn't built on it replaced it: what you published goes back on top of that
+      if (sent.team) {
+        if (!team.draft) team.draft = sent.team;
+        team.draftBase = sent.parent;
+        team.replaced = { by: team.published.by, updated: team.published.updated };
+      }
+      team.sent = null;
+      changed = true;
+    }
+  }
+  if (team.draft && team.published && team.draftBase && !isSameOrEarlier(team.published, team.draftBase)) {
+    // Published since these changes began (by another admin, or by you): yours go on top of it
+    const result = rebaseTeam(team.draft, team.draftBase, team.published);
+    if (!result.conflicts.length && !teamDiffers(result.team, team.published)) {
+      team.draft = null; // nothing of yours left that isn't published
+      team.draftBase = null;
+      team.replaced = null;
+    } else {
+      team.draft = result.team;
+      team.draftBase = result.base;
+      if (!team.replaced) team.merged = { by: team.published.by, updated: team.published.updated, conflicts: result.conflicts.length };
+    }
+    changed = true;
+  } else if (team.draft && team.published && team.draftBase && team.published.updated === team.draftBase.updated && !teamDiffers(team.draft, team.published)) {
+    team.draft = null; // the same as what's published (say, the file you downloaded is up now)
+    team.draftBase = null;
+    changed = true;
+  }
+  if (changed) storeDraft();
   const what = {
     nokey: 'no team key in this install',
     nofile: 'no team templates published yet',
@@ -6978,14 +7311,399 @@ function upsert(list, item) {
 
 /** Saves the admin's unpublished team changes: { templates }, { azure }, { rateCon } and so on. The rest stays as it is. */
 async function saveTeamDraft(changes) {
+  if (!team.draft) team.draftBase = draftBase(team.published); // what these changes start from (0.26)
   const base = team.draft || team.published || cleanTeam({});
   const kept = base.admins && base.admins.length ? base.admins : [team.me].filter(Boolean);
   const admins = Array.isArray(changes.admins) && changes.admins.length ? changes.admins : kept; // Team admins changes them
   const draft = { ...cleanTeam(base), ...changes, v: 1, updated: Date.now(), by: team.me, admins };
-  await writeRoaming(DRAFT_KEY, draft); // (the console's are kept in the browser)
+  await writeRoaming(DRAFT_KEY, { ...draft, base: team.draftBase }); // (the console's are kept in the browser)
   team.draft = draft;
   team.justPublished = false;
   renderTeamMenu();
+}
+
+// ---- Two admins at once (0.26, #53). Unpublished changes are a whole copy of the team's templates and
+// settings, kept in the browser they were made in, with what they started from (their base): a published
+// version, and a fingerprint of each template and setting. Each team.json lists the versions it was built
+// on (its history), so a console can tell an older copy of the site from a newer one, and its own last
+// publish (sent) from someone else's. Publish to team, and opening the console, add your changes to
+// whatever's been published since instead of replacing it; when you and another admin both changed the
+// same template or setting, Publish to team asks which to keep.
+
+const SENT_KEY = 'teamSent';  // what this browser last published, until the site has it
+const HISTORY_MAX = 30;       // versions a team.json remembers it was built on
+
+/** The settings taken one by one (templates go by their id; admins and rate cons by who's added and taken off). */
+const MERGED_SETTINGS = ['azure', 'repTemplates', 'receiptWords', 'usage', 'sentWith', 'emailLimit'];
+
+/** JSON with its keys in order, so the same template or setting always reads the same. */
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+/** A short fingerprint of a template or setting ('' for none): FNV-1a of its JSON, and its length. */
+function itemPrint(value) {
+  if (value === undefined || value === null) return '';
+  const text = stableJson(value);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${(hash >>> 0).toString(36)}.${text.length.toString(36)}`;
+}
+
+/** A version's own time, then the times of the versions it was built on, newest first. */
+function lineage(version) {
+  if (!version) return [];
+  if (version.history && version.history.length) return version.history;
+  return version.updated ? [version.updated] : [];
+}
+
+/** Whether version `a` was built on version `b` (or is it). */
+function builtOn(a, b) {
+  return !!a && !!b && (a.updated === b.updated || lineage(a).includes(b.updated));
+}
+
+/**
+ * Whether version `a` is `b` or one `b` was built on. Two versions where neither was built on the other
+ * are on different lines (say, a file made from an older copy and uploaded later), so neither is earlier;
+ * only for `b` from before 0.26 (no history) do their times decide.
+ */
+function isSameOrEarlier(a, b) {
+  if (!a || !b) return false;
+  if (builtOn(b, a)) return true;
+  if (builtOn(a, b)) return false;
+  const known = b.history && b.history.length ? b.history : null;
+  if (known) return known.length >= HISTORY_MAX && a.updated < known[known.length - 1]; // (older than all b remembers)
+  return a.updated < b.updated;
+}
+
+/** What unpublished changes start from: a published version, and each template's and setting's fingerprint. */
+function draftBase(from) {
+  const data = from || cleanTeam({});
+  const prints = {};
+  for (const t of data.templates) prints[`t:${t.id}`] = itemPrint(t);
+  for (const name of MERGED_SETTINGS) prints[`s:${name}`] = itemPrint(data[name]);
+  return {
+    updated: data.updated || 0,
+    by: data.by || '',
+    history: (data.history || []).slice(0, HISTORY_MAX), // (none for versions from before 0.26)
+    prints,
+    admins: data.admins.slice(),
+    rateCons: rcFiles(data.rateCon).map((file) => file.id),
+  };
+}
+
+function cleanHistory(value) {
+  return Array.isArray(value) ? value.map(Number).filter((n) => Number.isFinite(n) && n > 0).slice(0, HISTORY_MAX) : [];
+}
+
+function cleanBase(value) {
+  if (!value || typeof value !== 'object' || !value.prints || typeof value.prints !== 'object') return null;
+  return {
+    updated: Number(value.updated) || 0,
+    by: String(value.by || ''),
+    history: cleanHistory(value.history),
+    prints: Object.fromEntries(Object.entries(value.prints).map(([key, print]) => [String(key), String(print || '')])),
+    admins: Array.isArray(value.admins) ? value.admins.map((a) => String(a).toLowerCase().trim()).filter(Boolean) : [],
+    rateCons: Array.isArray(value.rateCons) ? value.rateCons.map(String) : [],
+  };
+}
+
+/**
+ * What this browser last published: { base (that version), parent (the version it was built on),
+ * team (that version itself, when it went straight to GitHub, so it's live) }.
+ */
+function cleanSent(value) {
+  if (!value || typeof value !== 'object') return null;
+  const base = cleanBase(value.base);
+  if (!base) return null;
+  return { base, parent: cleanBase(value.parent) || draftBase(null), team: value.team && Array.isArray(value.team.templates) ? cleanTeam(value.team) : null };
+}
+
+/** Keeps this browser's unpublished changes (with their base) and what it last published. */
+async function storeDraft() {
+  try {
+    await writeRoaming(DRAFT_KEY, team.draft ? { ...team.draft, base: team.draftBase } : null);
+    await writeRoaming(SENT_KEY, team.sent || null);
+  } catch (error) {
+    log(`Team: couldn't keep the changes in this browser (${error.message})`);
+  }
+}
+
+/** Whether two versions of the team differ anywhere (templates, settings, admins or rate cons). */
+function teamDiffers(a, b) {
+  const one = draftBase(a);
+  const two = draftBase(b);
+  const keys = new Set([...Object.keys(one.prints), ...Object.keys(two.prints)]);
+  for (const key of keys) if ((one.prints[key] || '') !== (two.prints[key] || '')) return true;
+  const same = (x, y) => x.length === y.length && x.every((item) => y.includes(item));
+  return !same(one.admins, two.admins) || !same(one.rateCons, two.rateCons);
+}
+
+/**
+ * Adds the changes in `draft` (made from `base`) to `latest`, a version published since. Returns
+ * { team, base, conflicts }: the team with both admins' changes (yours where you both changed the
+ * same thing, until you pick), what it's based on now, and the things you both changed:
+ * [{ key ('t:<id>' or 's:<setting>'), mine, theirs }] (null: deleted, or off). The things you both
+ * changed keep their old fingerprints in the new base, so Publish to team still asks about them.
+ */
+function rebaseTeam(draft, base, latest) {
+  const conflicts = [];
+  const pick = (key, mine, theirs) => {
+    const was = base.prints[key] || '';
+    const my = itemPrint(mine);
+    const their = itemPrint(theirs);
+    if (my === was) return theirs;                    // you didn't change it: as published now
+    if (their === was || their === my) return mine;  // only you changed it (or you both made the same change)
+    conflicts.push({ key, mine, theirs });            // you both changed it
+    return mine;
+  };
+  // Templates, by id: in the published order, then any of yours that are new
+  const mine = new Map(draft.templates.map((t) => [t.id, t]));
+  const theirs = new Map(latest.templates.map((t) => [t.id, t]));
+  const inBase = Object.keys(base.prints).filter((key) => key.startsWith('t:')).map((key) => key.slice(2));
+  const kept = new Map();
+  for (const id of new Set([...theirs.keys(), ...mine.keys(), ...inBase])) {
+    const result = pick(`t:${id}`, mine.get(id) || null, theirs.get(id) || null);
+    if (result) kept.set(id, result);
+  }
+  const order = [...new Set([...theirs.keys(), ...mine.keys()])].filter((id) => kept.has(id));
+  const merged = { ...cleanTeam(latest), templates: order.map((id) => kept.get(id)), updated: draft.updated, by: draft.by };
+  for (const name of MERGED_SETTINGS) {
+    const result = pick(`s:${name}`, draft[name], latest[name]);
+    merged[name] = result === undefined ? null : result;
+  }
+  // Admins: the published list, less any you took off, plus any you added (never none)
+  const added = draft.admins.filter((a) => !base.admins.includes(a));
+  const removed = base.admins.filter((a) => !draft.admins.includes(a));
+  const admins = [...new Set([...latest.admins.filter((a) => !removed.includes(a)), ...added])].slice(0, MAX_ADMINS);
+  merged.admins = admins.length ? admins : latest.admins.length ? latest.admins : draft.admins;
+  // Rate cons: the published ones, less any you removed, plus any you added
+  const myFiles = rcFiles(draft.rateCon);
+  const gone = base.rateCons.filter((id) => !myFiles.some((file) => file.id === id));
+  const files = [...rcFiles(latest.rateCon).filter((file) => !gone.includes(file.id)), ...myFiles.filter((file) => !base.rateCons.includes(file.id))];
+  merged.rateCon = rcSetting(files.filter((file, i) => files.findIndex((other) => other.id === file.id) === i).slice(0, RC.sampleFiles));
+  const next = draftBase(latest);
+  for (const conflict of conflicts) next.prints[conflict.key] = base.prints[conflict.key] || '';
+  return { team: merged, base: next, conflicts };
+}
+
+/** Takes theirs for one of the things you both changed. */
+function takeTheirs(merged, conflict) {
+  const [kind, name] = [conflict.key.slice(0, 1), conflict.key.slice(2)];
+  if (kind === 's') {
+    merged[name] = conflict.theirs;
+    return;
+  }
+  const at = merged.templates.findIndex((t) => t.id === name);
+  if (conflict.theirs && at >= 0) merged.templates[at] = conflict.theirs;
+  else if (conflict.theirs) merged.templates.push(conflict.theirs);
+  else if (at >= 0) merged.templates.splice(at, 1);
+}
+
+const SETTING_NAMES = {
+  azure: 'Attach automatically',
+  repTemplates: "Reps' own templates",
+  receiptWords: 'Accessorial file names',
+  usage: 'Usage counts',
+  sentWith: 'Sent with restack',
+  emailLimit: 'Email size limit',
+};
+
+/** How one of the things you both changed reads in the dialog: { what, mine, theirs }. */
+function describeConflict(conflict) {
+  if (conflict.key.startsWith('t:')) {
+    const t = conflict.mine || conflict.theirs;
+    return { what: `Template "${t.name}"`, mine: conflict.mine ? 'edited' : 'deleted', theirs: conflict.theirs ? 'edited' : 'deleted' };
+  }
+  const name = conflict.key.slice(2);
+  const show = (value) => {
+    if (name === 'emailLimit') return `${value || EMAIL_MB} MB`;
+    if (name === 'receiptWords') return (value || DEFAULT_RECEIPT_WORDS).join(', ') || 'no words';
+    if (name === 'azure' || name === 'usage') return value ? `on (${String(value.url).replace(/^https?:\/\//, '').split('/')[0]})` : 'off';
+    return value ? 'on' : 'off';
+  };
+  return { what: SETTING_NAMES[name] || name, mine: show(conflict.mine), theirs: show(conflict.theirs) };
+}
+
+/** Who published a version, for the console's words: their address, or "another admin". */
+function whoPublished(data) {
+  return data && data.by ? data.by : 'another admin';
+}
+
+/**
+ * The dialog for the things two admins both changed: one choice each (yours or theirs). Resolves to
+ * Map(key → 'mine' | 'theirs'), or null for Cancel (nothing's published).
+ */
+function askMergeChoices(conflicts, latest) {
+  const dialog = $('merge-dialog');
+  const who = whoPublished(latest);
+  if (!dialog || typeof dialog.showModal !== 'function') { // (an old browser) yours, if you say so
+    const ok = window.confirm(`${who} changed ${plural(conflicts.length, 'thing')} you changed too. OK publishes yours over theirs; Cancel publishes nothing.`);
+    return Promise.resolve(ok ? new Map(conflicts.map((c) => [c.key, 'mine'])) : null);
+  }
+  const when = latest.updated ? new Date(latest.updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  $('merge-title').textContent = conflicts.length === 1 ? 'You both changed this' : 'You both changed these';
+  $('merge-text').textContent = `${who} published changes${when ? ` ${when}` : ''}, after you started yours. Everything else either of you changed goes in. For ${conflicts.length === 1 ? 'this' : 'these'}, pick which to keep.`;
+  const list = $('merge-list');
+  list.textContent = '';
+  conflicts.forEach((conflict, i) => {
+    const words = describeConflict(conflict);
+    const row = el('li', 'merge-row');
+    const what = el('span', 'merge-what', words.what);
+    what.id = `merge-what-${i}`;
+    const choices = el('span', 'merge-choices');
+    choices.setAttribute('role', 'radiogroup');
+    choices.setAttribute('aria-labelledby', what.id);
+    for (const [value, label] of [['mine', `Yours: ${words.mine}`], ['theirs', `${who}'s: ${words.theirs}`]]) {
+      const option = el('label', 'merge-choice');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `merge-${i}`;
+      radio.value = value;
+      radio.dataset.key = conflict.key;
+      option.append(radio, el('span', '', label));
+      choices.append(option);
+    }
+    row.append(what, choices);
+    list.append(row);
+  });
+  const go = $('merge-publish');
+  const picked = () => conflicts.every((c, i) => list.querySelector(`input[name="merge-${i}"]:checked`));
+  go.disabled = true;
+  return new Promise((resolve) => {
+    const onChange = () => { go.disabled = !picked(); };
+    const finish = (value) => {
+      list.removeEventListener('change', onChange);
+      go.removeEventListener('click', onGo);
+      $('merge-cancel').removeEventListener('click', onCancel);
+      dialog.removeEventListener('cancel', onCancel);
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    const onGo = (event) => {
+      event.preventDefault();
+      if (!picked()) return;
+      finish(new Map([...list.querySelectorAll('input:checked')].map((radio) => [radio.dataset.key, radio.value])));
+    };
+    const onCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+    list.addEventListener('change', onChange);
+    go.addEventListener('click', onGo);
+    $('merge-cancel').addEventListener('click', onCancel);
+    dialog.addEventListener('cancel', onCancel); // Esc
+    dialog.showModal();
+    const first = list.querySelector('input');
+    if (first) first.focus();
+  });
+}
+
+/**
+ * Which version your changes are counted from, against `latest` (the team as published now): your last
+ * publish, if `latest` was built on it (only what you changed since is yours); the version that publish was
+ * built on, if a version not built on it replaced it (so its changes are yours again); else their own base.
+ */
+function baseFor(latest) {
+  const sent = team.sent;
+  if (sent && latest) {
+    if (builtOn(latest, sent.base)) return sent.base;
+    if (sent.team && !isSameOrEarlier(latest, sent.base)) return sent.parent;
+  }
+  return team.draftBase || draftBase(team.published);
+}
+
+/**
+ * Your changes added to `latest`, the team as it's published now: { team, parent (the version it's built
+ * on), others (who else's changes went in, if anyone's) }, or null when you cancelled at the question.
+ * `remembered` keeps your picks, so trying again (GitHub turned a try away) only asks about anything new.
+ */
+async function mergeWithLatest(latest, remembered) {
+  const sent = team.sent;
+  const replaced = !!(sent && sent.team && latest && !builtOn(latest, sent.base) && !isSameOrEarlier(latest, sent.base));
+  const draft = team.draft || (replaced ? sent.team : null) || team.published;
+  const base = baseFor(latest);
+  if (!latest) return { team: draft, parent: base, others: '' }; // nothing published yet
+  if (latest.updated !== base.updated && isSameOrEarlier(latest, base)) return { team: draft, parent: base, others: '' }; // an older copy: yours as they are
+  const result = rebaseTeam(draft, base, latest);
+  if (result.conflicts.length) {
+    const known = (conflict) => {
+      const pick = remembered.get(conflict.key);
+      return pick && pick.theirs === itemPrint(conflict.theirs) && pick.mine === itemPrint(conflict.mine) ? pick.choice : ''; // (ask again if either changed)
+    };
+    const ask = result.conflicts.filter((conflict) => !known(conflict));
+    const choices = ask.length ? await askMergeChoices(ask, latest) : new Map();
+    if (!choices) return null;
+    for (const conflict of result.conflicts) {
+      const choice = known(conflict) || choices.get(conflict.key) || 'mine';
+      remembered.set(conflict.key, { theirs: itemPrint(conflict.theirs), mine: itemPrint(conflict.mine), choice });
+      if (choice === 'theirs') takeTheirs(result.team, conflict);
+    }
+    log(`Publish: you both changed ${plural(result.conflicts.length, 'thing')}; kept yours for ${result.conflicts.filter((c) => remembered.get(c.key).choice === 'mine').length}`);
+  }
+  const others = latest.updated !== base.updated && latest.by && latest.by !== team.me ? latest.by : '';
+  return { team: result.team, parent: latest, others };
+}
+
+/**
+ * After Publish: what was published is remembered (sent) until the site has it. Published straight to
+ * GitHub, it's live, so nothing's left to publish, unless you saved changes while it was publishing (they
+ * go on top of it). Downloaded, it isn't live until you upload it, so the changes stay waiting to publish.
+ */
+async function afterPublish(payload, merged, snapshot, live) {
+  const published = cleanTeam(payload);
+  const parent = merged.parent && merged.parent.prints ? merged.parent : draftBase(merged.parent);
+  team.sent = { base: draftBase(published), parent, team: live ? published : null };
+  const later = team.draft && team.draft !== snapshot ? team.draft : null; // saved while it was publishing
+  const onTop = later ? rebaseTeam(later, draftBase(snapshot || published), published).team : null;
+  if (live) {
+    team.published = published;
+    team.draft = onTop;
+    team.draftBase = onTop ? draftBase(published) : null;
+  } else {
+    team.draft = onTop || published;
+    team.draftBase = parent;
+  }
+  team.justPublished = !later;
+  await storeDraft();
+}
+
+/** After Publish added another admin's changes: the lists and cards show them, and an open template catches up (unless you're editing it). */
+function showMergedTeam() {
+  if (!CONSOLE) return;
+  if (editing && editing.scope === 'team' && editing.id) {
+    const now = teamTemplates().find((t) => t.id === editing.id);
+    if (!now && !templateFormChanged()) {
+      editing = null;
+      formSnapshot = '';
+    } else if (now && !templateFormChanged()) {
+      editTemplate('team', now.id);
+    }
+  }
+  renderConsole();
+}
+
+/** Another tab of the console saved or published: this one catches up. */
+function watchOtherTabs() {
+  window.addEventListener('storage', (event) => {
+    if (![`${STORE_PREFIX}${DRAFT_KEY}`, `${STORE_PREFIX}${SENT_KEY}`].includes(event.key)) return;
+    const stored = readRoaming(DRAFT_KEY);
+    team.draft = stored && Array.isArray(stored.templates) ? cleanTeam(stored) : null;
+    team.draftBase = team.draft ? cleanBase(stored.base) || draftBase(team.published) : null;
+    team.sent = cleanSent(readRoaming(SENT_KEY));
+    if (team.sent && team.sent.team && !isSameOrEarlier(team.sent.base, team.published)) team.published = team.sent.team;
+    team.justPublished = false;
+    log('Admin console: caught up with another tab');
+    showMergedTeam();
+    renderPublishBox();
+  });
 }
 
 async function onTemplateSubmit(event) {
@@ -7100,40 +7818,78 @@ const PUBLISHED_NOTE_MS = 5000; // "Published to owner/repository." shows this l
 const PUBLISHED_TEXT = 'team.json downloaded. Upload it to your GitHub repository (Add file → Upload files → Commit changes). If it saved as "team (1).json", rename it to team.json first. Reps get the changes the next time they open the panel.';
 
 /** Encrypts the team templates and settings with the team key and downloads team.json to upload to GitHub. */
+let publishing = false; // Publish to team is reading, asking or committing
+
+/**
+ * Publish to team: reads what's published now, adds your changes to it (asking about anything another
+ * admin changed too), then commits team.json to GitHub, or downloads it to upload.
+ */
 async function onPublish() {
   const source = team.draft || team.published;
-  if (!source || !team.key) return;
+  if (!source || !team.key || publishing) return;
   if (!team.me) {
     const why = "Couldn't read your email address from Outlook, so this can't be published.";
     renderPublishBox();
     teamNote(why, 'error');
     return;
   }
-  const admins = source.admins.length ? source.admins : [team.me];
-  const payload = { ...cleanTeam(source), v: 1, updated: source.updated || Date.now(), by: team.me, admins };
-  const text = await encryptTeam(payload, team.key);
-  if (githubReady()) {
-    $('con-publish').disabled = true;
-    consoleNote('Publishing to GitHub…');
-    let where;
+  publishing = true;
+  if (CONSOLE) $('con-publish').disabled = true;
+  try {
+    await publishMerged();
+  } finally {
+    publishing = false;
+    renderPublishBox();
+  }
+}
+
+async function publishMerged() {
+  const remembered = new Map(); // your picks, if GitHub turns a try away and it reads again
+  for (let attempt = 1; ; attempt++) {
+    let latest;
     try {
-      where = await publishToGithub(text);
+      latest = await readLatestTeam();
     } catch (error) {
-      renderConsolePublish();
-      consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Tokens/Keys → Publishing has the token.)`, 'error');
+      consoleNote(`Couldn't check what's published now: ${error.userMessage || error.message}. Nothing changed for your team.${githubReady() ? ' (Team settings → Tokens/Keys → Publishing has the token.)' : ''}`, 'error');
       return;
     }
-    team.justPublished = true;
-    log(`Team: published ${plural(payload.templates.length, 'template')} to GitHub (${where.repo}, ${where.branch})`);
+    const snapshot = team.draft; // (changes saved while it publishes go on top of what's published)
+    const merged = await mergeWithLatest(latest.team, remembered);
+    if (!merged) {
+      consoleNote('Not published. Your changes are still here, and nothing changed for your team.');
+      return;
+    }
+    const updated = Date.now();
+    const admins = merged.team.admins.length ? merged.team.admins : [team.me];
+    const history = [updated, ...lineage(merged.parent)].slice(0, HISTORY_MAX); // (what this version was built on)
+    const payload = { ...cleanTeam(merged.team), v: 1, updated, by: team.me, admins, history };
+    const text = await encryptTeam(payload, team.key);
+    const others = merged.others ? ` It has the changes ${merged.others} published too.` : '';
+    if (githubReady()) {
+      consoleNote('Publishing to GitHub…');
+      let where;
+      try {
+        where = await publishToGithub(text, latest);
+      } catch (error) {
+        if (error.conflict && attempt < 3) continue; // someone published at the same moment: again, with theirs
+        consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Tokens/Keys → Publishing has the token.)`, 'error');
+        return;
+      }
+      await afterPublish(payload, merged, snapshot, true);
+      log(`Team: published ${plural(payload.templates.length, 'template')} to GitHub (${where.repo}, ${where.branch})${merged.others ? `, with ${merged.others}'s changes` : ''}`);
+      showMergedTeam();
+      renderPublishBox();
+      consoleNote(`Published to ${where.repo}.${others}`, 'ok', PUBLISHED_NOTE_MS);
+      return;
+    }
+    downloadText(text, TEAM_FILE, 'application/json');
+    await afterPublish(payload, merged, snapshot, false);
+    log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)${merged.others ? `, with ${merged.others}'s changes` : ''}`);
+    showMergedTeam();
     renderPublishBox();
-    consoleNote(`Published to ${where.repo}.`, 'ok', PUBLISHED_NOTE_MS);
+    teamNote(`${PUBLISHED_TEXT}${others}`, 'ok');
     return;
   }
-  downloadText(text, TEAM_FILE, 'application/json');
-  team.justPublished = true;
-  log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)`);
-  renderPublishBox();
-  teamNote(PUBLISHED_TEXT, 'ok');
 }
 
 // ---- the team's settings, each in its card on the admin console's Team settings tab
@@ -7912,6 +8668,19 @@ async function startConsole() {
   $('con-tabs').hidden = false;
   renderConsole();
   showConsoleTab(CONSOLE_TABS.includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
+  watchOtherTabs();
+  // Another admin published after your changes began: theirs are in now, yours still to publish (0.26)
+  if (team.replaced) {
+    log(`Admin console: ${whoPublished(team.replaced)} published a version not built on your last publish; your changes are back`);
+    consoleNote(`${whoPublished(team.replaced)} published after you, from a copy that didn't have your last changes. Yours are back here, waiting to publish.`, 'error');
+  } else if (team.merged && team.merged.by !== team.me) {
+    const when = team.merged.updated ? ` ${new Date(team.merged.updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '';
+    const both = team.merged.conflicts
+      ? ` You both changed ${team.merged.conflicts === 1 ? 'one thing' : `${team.merged.conflicts} things`}, so Publish to team asks which to keep.`
+      : '';
+    log(`Admin console: added ${whoPublished(team.merged)}'s newer changes to yours${team.merged.conflicts ? ` (${team.merged.conflicts} to pick)` : ''}`);
+    consoleNote(`${whoPublished(team.merged)} published changes${when}, after you started yours. Theirs are in now, and yours are still waiting to publish.${both}`, 'ok');
+  }
 }
 
 /** No key, the wrong key, nothing published yet, or the site couldn't be reached. */
@@ -8284,14 +9053,14 @@ function onGithubForget() {
 }
 
 async function github(path, options = {}) {
-  const token = githubToken();
+  const token = options.anonymous ? '' : githubToken(); // anonymous: reading a public repository without a token (0.26)
   let response;
   try {
     response = await fetch(`${GITHUB_API}${path}`, {
       method: options.method || 'GET',
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'X-GitHub-Api-Version': '2022-11-28',
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       },
@@ -8305,7 +9074,19 @@ async function github(path, options = {}) {
   if (response.status === 401) throw userError("GitHub didn't accept the token (it may have expired)");
   if (response.status === 403) throw userError("the token isn't allowed to change that repository (it needs Contents: Read and write)");
   if (response.status === 404) throw userError(`GitHub can't find ${githubRepo()} with this token (check the name, and that the token includes that repository)`);
-  if (response.status === 409 || response.status === 422) throw userError('team.json changed on GitHub at the same moment; publish again');
+  if (response.status === 409 || response.status === 422) {
+    let message = '';
+    try {
+      message = String((await response.json()).message || '');
+    } catch (error) {
+      // no reason given
+    }
+    // team.json changed since it was read (its sha moved on), or appeared: Publish reads it again and tries again
+    if (response.status === 409 ? !message || /does not match/i.test(message) : /sha/i.test(message)) {
+      throw Object.assign(userError('team.json changed on GitHub at the same moment; publish again'), { conflict: true });
+    }
+    throw userError(`GitHub refused it${message ? ` (${message})` : ''}`);
+  }
   if (!response.ok) throw userError(`GitHub answered ${response.status}`);
   return response.json();
 }
@@ -8331,22 +9112,75 @@ async function onGithubTest() {
   }
 }
 
-/** Commits team.json to the repository's default branch, replacing the one there. */
-async function publishToGithub(text) {
+/**
+ * Commits team.json to the repository's default branch, replacing the copy that was there when
+ * Publish read it (`latest`: its branch and sha). If someone committed one since, GitHub says so,
+ * and Publish reads theirs and tries again.
+ */
+async function publishToGithub(text, latest = {}) {
   const repo = githubRepo();
-  const info = await github(`/repos/${repo}`);
-  const branch = info.default_branch || 'main';
-  const now = await github(`/repos/${repo}/contents/${TEAM_FILE}?ref=${encodeURIComponent(branch)}`, { missingOk: true });
+  let branch = latest.branch;
+  if (!branch) {
+    const info = await github(`/repos/${repo}`);
+    branch = info.default_branch || 'main';
+  }
+  let sha = latest.sha;
+  if (!latest.fromGithub) { // (the site's copy was read, so GitHub's sha isn't known yet)
+    const now = await github(`/repos/${repo}/contents/${TEAM_FILE}?ref=${encodeURIComponent(branch)}`, { missingOk: true });
+    sha = now && now.sha;
+  }
   await github(`/repos/${repo}/contents/${TEAM_FILE}`, {
     method: 'PUT',
     body: JSON.stringify({
       message: 'Publish team templates (Restack admin console)',
       content: bytesToBase64(new TextEncoder().encode(text)),
       branch,
-      ...(now && now.sha ? { sha: now.sha } : {}),
+      ...(sha ? { sha } : {}),
     }),
   });
   return { repo, branch };
+}
+
+/** team.json from the repository through GitHub's API: { team, sha, branch } (team null: none yet), or null if it couldn't be read there. */
+async function readGithubTeam(repo, anonymous) {
+  const info = await github(`/repos/${repo}`, { anonymous });
+  const branch = info.default_branch || 'main';
+  const file = await github(`/repos/${repo}/contents/${TEAM_FILE}?ref=${encodeURIComponent(branch)}`, { anonymous, missingOk: true });
+  if (!file) return { team: null, sha: '', branch, fromGithub: true };
+  let content = file.encoding === 'base64' && file.content ? file.content : '';
+  if (!content && file.encoding === 'none' && file.sha) { // over 1 MB, the contents answer leaves it out
+    const blob = await github(`/repos/${repo}/git/blobs/${file.sha}`, { anonymous, missingOk: true });
+    content = blob && blob.encoding === 'base64' ? blob.content : '';
+  }
+  if (!content) return null;
+  const text = new TextDecoder().decode(base64ToBytes(String(content).replace(/\s+/g, '')));
+  return { team: cleanTeam(await decryptTeam(text, team.key)), sha: file.sha || '', branch, fromGithub: true };
+}
+
+/** team.json from the site (it can be a minute or two behind the repository after a publish), or null if there's none. */
+async function readSiteTeam() {
+  const response = await fetch(new URL(`${TEAM_FILE}?t=${Date.now()}`, SITE_ROOT).href, { cache: 'no-store' });
+  if (response.status === 404) return null;
+  if (!response.ok) throw userError(`the site answered ${response.status}`);
+  return cleanTeam(await decryptTeam(await response.text(), team.key));
+}
+
+/**
+ * The team as published right now, for Publish to add your changes to: the repository's copy through
+ * GitHub (with your token, or without one for a public repository), else the site's. { team, sha, branch }.
+ */
+async function readLatestTeam() {
+  const repo = githubRepo();
+  if (/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+    try {
+      const got = await readGithubTeam(repo, !githubReady());
+      if (got) return got;
+    } catch (error) {
+      if (githubReady()) throw error; // with your token, GitHub's answer counts (an expired token, say)
+      log(`Publish: couldn't read GitHub's copy (${error.userMessage || error.message}), so the site's`);
+    }
+  }
+  return { team: await readSiteTeam(), sha: '', branch: '' };
 }
 
 // ---- the Usage tab: everyone's counts, read from the Restack Usage function with the admin key

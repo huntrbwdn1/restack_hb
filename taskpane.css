@@ -853,6 +853,28 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 .admin-form { margin: 0; }
 .admin-form .name-field .link-btn { flex: none; margin-left: 6px; font-weight: 600; }
 .admin-form .link-btn:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+/* What someone you add needs of their own (0.26): set apart under the list by a rule */
+.admin-needs { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.admin-needs strong { color: var(--fg); font-weight: 600; }
+.admin-needs-list { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+
+/* Publish to team, when you and another admin changed the same things: which to keep (0.26) */
+.merge-dialog {
+  width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-pop);
+}
+.merge-dialog::backdrop { background: var(--overlay); }
+.merge-form { display: grid; gap: 12px; margin: 0; padding: 20px 22px 22px; }
+.merge-form h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.merge-form .hint { font-size: 13px; }
+.merge-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+.merge-row { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.merge-what { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.merge-choices { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.merge-choice { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
+.merge-choice input { margin: 0; accent-color: var(--check); }
+.merge-form .btn-row { margin-top: 4px; }
+.merge-form .btn { height: 36px; }
 /* the sent with restack line, as emails get it (the console's card) */
 .sent-with-sample { display: block; width: 136px; height: 23px; }
 /* switching light and dark fades the panel over instead of snapping */
