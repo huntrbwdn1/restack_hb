@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.3';
+const VERSION = '0.28.4';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -7942,7 +7942,7 @@ async function onTemplateDelete() {
   if (CONSOLE) consoleNote(`Deleted. ${publishWhere()} to take it away from your reps too.`, 'ok');
 }
 
-const PUBLISHED_NOTE_MS = 5000; // "Published to owner/repository." shows this long after publishing to GitHub, then goes away on its own
+const PUBLISHED_NOTE_MS = 5000; // "Published to Restack." shows this long after publishing, then goes away on its own (0.28.4: it named the repository)
 const PUBLISHED_TEXT = 'team.json downloaded. Upload it to your GitHub repository (Add file → Upload files → Commit changes). If it saved as "team (1).json", rename it to team.json first. Reps get the changes the next time they open the panel.';
 
 /** Encrypts the team templates and settings with the team key and downloads team.json to upload to GitHub. */
@@ -8019,7 +8019,7 @@ async function publishMerged() {
     const text = await encryptTeam(payload, team.key);
     const others = merged.others ? ` It has the changes ${merged.others} published too.` : '';
     if (route === 'github' || route === 'function') {
-      consoleNote(route === 'github' ? 'Publishing to GitHub…' : 'Publishing through Restack Usage…');
+      consoleNote('Publishing to Restack…');
       let where;
       try {
         where = route === 'github' ? await publishToGithub(text, latest) : await publishThroughFunction(text, latest);
@@ -8035,7 +8035,7 @@ async function publishMerged() {
       log(`Team: published ${plural(payload.templates.length, 'template')} ${route === 'github' ? 'to GitHub' : 'through Restack Usage'} (${where.repo}, ${where.branch})${merged.others ? `, with ${merged.others}'s changes` : ''}`);
       showMergedTeam();
       renderPublishBox();
-      consoleNote(`Published to ${where.repo}.${others}`, 'ok', PUBLISHED_NOTE_MS);
+      consoleNote(`Published to Restack.${others}`, 'ok', PUBLISHED_NOTE_MS);
       return;
     }
     downloadText(text, TEAM_FILE, 'application/json');
@@ -8087,7 +8087,7 @@ async function publishTemplatesOnly() {
     const history = [updated, ...lineage(latest.team)].slice(0, HISTORY_MAX); // (built on the copy published now)
     const payload = { ...latest.raw, templates: merged.team.templates, updated, by: team.me, history };
     const text = await encryptTeam(payload, team.key);
-    consoleNote('Publishing through Restack Usage…');
+    consoleNote('Publishing to Restack…');
     let where;
     try {
       where = await publishThroughFunction(text, latest);
@@ -8102,7 +8102,7 @@ async function publishTemplatesOnly() {
     showMergedTeam();
     renderPublishBox();
     const others = merged.others ? ` It has the changes ${merged.others} published too.` : '';
-    consoleNote(`Published to ${where.repo}.${others}${leftOut}`, 'ok', leftOut ? 0 : PUBLISHED_NOTE_MS);
+    consoleNote(`Published to Restack.${others}${leftOut}`, 'ok', leftOut ? 0 : PUBLISHED_NOTE_MS);
     return;
   }
 }
@@ -9460,7 +9460,7 @@ function renderConsolePublish() {
     : '';
   $('con-publish-text').textContent = pending
     ? "Changes your team can't see yet"
-    : team.justPublished ? (team.publishedVia === 'download' ? 'team.json downloaded' : 'Published to GitHub') : team.published ? `Published${when ? ` ${when}` : ''}` : 'Nothing published yet';
+    : team.justPublished ? (team.publishedVia === 'download' ? 'team.json downloaded' : 'Published to Restack') : team.published ? `Published${when ? ` ${when}` : ''}` : 'Nothing published yet';
   $('con-publish').disabled = !pending;
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));

@@ -2,7 +2,7 @@
 
 An Outlook add-in that lists every attachment in an email thread, lets you preview them, and combines the ones you pick into a single PDF to email or save. Restack was called Thread Attachments before 0.13; it's the same add-in (same ID), so team keys and published templates carry over.
 
-**Status:** test build 0.28.3.
+**Status:** test build 0.28.4.
 
 ## Install
 
