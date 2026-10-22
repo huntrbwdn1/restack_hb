@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.1';
+const VERSION = '0.28.3';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -6542,6 +6542,20 @@ async function decryptTeam(text, key) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
+const MINUTES_START = { email: 3, pdf: 1 }; // Time saved's minutes per email created and per PDF saved, until a Full admin changes them
+
+/** Time saved's minutes as team.json keeps them ({ email, pdf }, 0 to 60 each), or null for the ones it starts with (0.28.3). */
+function cleanTimeSaved(value) {
+  if (!value || typeof value !== 'object') return null;
+  const minutes = (n, start) => {
+    const x = n === null || n === undefined || n === '' ? NaN : Number(n);
+    return Number.isFinite(x) ? Math.min(60, Math.max(0, Math.round(x * 10) / 10)) : start;
+  };
+  const email = minutes(value.email, MINUTES_START.email);
+  const pdf = minutes(value.pdf, MINUTES_START.pdf);
+  return email === MINUTES_START.email && pdf === MINUTES_START.pdf ? null : { email, pdf };
+}
+
 function cleanTeam(data) {
   const admins = Array.isArray(data && data.admins) ? data.admins.map((a) => String(a).toLowerCase().trim()).filter(Boolean) : [];
   return {
@@ -6558,6 +6572,7 @@ function cleanTeam(data) {
     usage: cleanUsage(data && data.usage),       // the Restack Usage function (null: nothing is counted)
     sentWith: !!(data && data.sentWith),         // the sent with restack line on every email (off to start)
     emailLimit: cleanEmailLimit(data && data.emailLimit), // the largest email Create email makes, in MB (null: 35)
+    timeSaved: cleanTimeSaved(data && data.timeSaved), // the Usage tab's minutes for Time saved, set by Full admins (null: 3 and 1) (0.28.3)
     history: cleanHistory(data && data.history),  // this version's time, then the versions it was built on (0.26)
   };
 }
@@ -6677,7 +6692,7 @@ function isAdmin() {
 
 /**
  * A template admin (0.28): in Outlook they get Settings → Admin console and their own templates, like
- * a Full admin; in the console, the Templates and Usage tabs (and Your access, for their key).
+ * a Full admin; in the console, the Templates and Usage tabs.
  */
 function isTemplateAdmin() {
   if (CONSOLE) return team.level === 'templates';
@@ -6732,7 +6747,7 @@ async function editorForKey(data, key) {
 
 /**
  * A template admin's key: in Outlook, the one kept in their Outlook account (0.28.1: pasted once, when
- * Settings → Admin console asks for it); in the console, this browser's (from the link, or Your access).
+ * Settings → Admin console asks for it); in the console, this browser's (it comes with the link from Outlook).
  */
 function templateKey() {
   return String((CONSOLE ? readSetting(TEMPLATE_KEY_SETTING) : readRoaming(TEMPLATE_KEY_SETTING)) || '');
@@ -7420,7 +7435,7 @@ const SENT_KEY = 'teamSent';  // what this browser last published, until the sit
 const HISTORY_MAX = 30;       // versions a team.json remembers it was built on
 
 /** The settings taken one by one (templates go by their id; admins and rate cons by who's added and taken off). */
-const MERGED_SETTINGS = ['azure', 'repTemplates', 'receiptWords', 'usage', 'sentWith', 'emailLimit'];
+const MERGED_SETTINGS = ['azure', 'repTemplates', 'receiptWords', 'usage', 'sentWith', 'emailLimit', 'timeSaved'];
 
 /** JSON with its keys in order, so the same template or setting always reads the same. */
 function stableJson(value) {
@@ -7619,6 +7634,7 @@ const SETTING_NAMES = {
   usage: 'Usage counts',
   sentWith: 'Sent with restack',
   emailLimit: 'Email size limit',
+  timeSaved: 'Time saved minutes',
 };
 
 /** How one of the things you both changed reads in the dialog: { what, mine, theirs }. */
@@ -7634,6 +7650,7 @@ function describeConflict(conflict) {
   const name = conflict.key.slice(2);
   const show = (value) => {
     if (name === 'emailLimit') return `${value || EMAIL_MB} MB`;
+    if (name === 'timeSaved') return `${(value || MINUTES_START).email} min per email, ${(value || MINUTES_START).pdf} per saved PDF`;
     if (name === 'receiptWords') return (value || DEFAULT_RECEIPT_WORDS).join(', ') || 'no words';
     if (name === 'azure' || name === 'usage') return value ? `on (${String(value.url).replace(/^https?:\/\//, '').split('/')[0]})` : 'off';
     return value ? 'on' : 'off';
@@ -8039,7 +8056,7 @@ async function publishMerged() {
  */
 async function publishTemplatesOnly() {
   if (!templateKey()) {
-    showAccess('Type the key a Full admin sent you, then publish.', 'error');
+    consoleNote(keyNote(), 'error');
     return;
   }
   if (!publishFunctionUrl()) {
@@ -8093,7 +8110,7 @@ async function publishTemplatesOnly() {
 /** Why a template admin's publish or Usage didn't work, with what to do about it. */
 function templatesProblem(error) {
   const reason = error.userMessage || error.message;
-  if (error.keyRefused) return `${reason}. Ask a Full admin for a new key, and put it under Your access`;
+  if (error.keyRefused) return `${reason}. Get your new key from a Full admin, then open the console from Outlook (Settings → Admin console), which asks for it`;
   if (error.notSetUp) return `${reason}. A Full admin sets that up`;
   return reason;
 }
@@ -8382,87 +8399,31 @@ async function onAdminRemove(address) {
   $('admin-new').focus();
 }
 
-// ---- Your access (a template admin's console, 0.28): what they can do, and their key
+// ---- a template admin's key in the console (0.28.2): it only comes from Outlook, with the console's link
 
-/** Says what a template admin can do and who the Full admins are, and shows whether their key is here and still theirs. */
-async function renderAccess(message, tone) {
-  if (!templatesOnly()) return;
-  const fulls = team.published ? team.published.admins : [];
-  $('acc-about').textContent = `As a template admin, you make, change and delete your team's templates and publish them, and you see Usage. ${fulls.length ? `Full admins (${andList(fulls)})` : 'Full admins'} change the team's settings and who's an admin.`;
-  const key = templateKey();
-  if (document.activeElement !== $('acc-key')) $('acc-key').value = key;
-  $('acc-forget').hidden = !key;
-  const fits = !!key && await templateKeyFits();
-  teamSubtitle('access', !key ? 'No key yet' : fits ? 'Key saved' : "Key doesn't match");
-  setStatusIn('acc-status', message || (key && !fits
-    ? "This key isn't the one on your team's list anymore: a Full admin may have made you a new one. Paste the new one in Outlook (Settings → Admin console asks for it), or here." : ''), tone || (key && !fits ? 'error' : ''));
+/** What a template admin needs to do when this browser doesn't have their key, or has an old one. */
+function keyNote() {
+  return templateKey()
+    ? 'Your key has changed. Get the new one from a Full admin, then open the console from Outlook (Settings → Admin console), which asks for it.'
+    : "Your key isn't in this browser. To publish and see Usage, open the console from Outlook (Settings → Admin console): it brings your key.";
 }
 
-/** Your access, with a message: for Publish to team or the Usage tab without a key. */
-function showAccess(message, tone) {
-  showConsoleTab('access', false);
-  renderAccess(message, tone).catch(fail);
-  $('acc-key').focus();
-}
+let forgetMineArmed = 0;
 
-async function onAccessSave() {
-  const key = $('acc-key').value.trim();
-  if (!key) {
-    setStatusIn('acc-status', 'Paste the key a Full admin sent you first.', 'error');
+/** Remove my keys from this browser (a template admin's, at the bottom of the console): for a shared computer. */
+function onForgetMine() {
+  if (team.draft && !team.justPublished && Date.now() - forgetMineArmed > 8000) {
+    forgetMineArmed = Date.now();
+    consoleNote("Your changes that aren't published yet are kept in this browser too, and they'd go as well. Publish first, or click again to remove everything.", 'error');
     return;
   }
-  if (!new RegExp(`^${TEMPLATE_KEY_PREFIX}[A-Za-z0-9_-]{32}$`).test(key)) {
-    setStatusIn('acc-status', `That doesn't look like a template admin's key. It starts with ${TEMPLATE_KEY_PREFIX} and is 36 letters and numbers long: check you copied all of it.`, 'error');
-    return;
-  }
-  const mine = await editorForKey(team.published, key);
-  if (!mine) {
-    setStatusIn('acc-status', "That key isn't on your team's list. Check you copied all of it. If a Full admin just added you or made you a new key, they need to publish first; it can take a minute or two to reach the site.", 'error');
-    return;
-  }
-  if (team.me && mine.email !== team.me && team.published.editors.some((e) => e.email === team.me)) {
-    setStatusIn('acc-status', `That's ${mine.email}'s key, not yours (${team.me}). Ask a Full admin for yours.`, 'error');
-    return;
-  }
-  writeSetting(TEMPLATE_KEY_SETTING, key);
-  team.me = mine.email;
-  usageReport.key = ''; // the Usage tab reads again
-  log('Admin console: a template admin saved their key');
-  await renderAccess('Saved. You can publish your templates and see Usage now.', 'ok');
-}
-
-/** Test: whether the Restack Usage function takes this key (and can publish). */
-async function onAccessTest() {
-  if (!templateKey()) {
-    setStatusIn('acc-status', 'Type your key and click Save first.', 'error');
-    return;
-  }
-  if (!publishFunctionUrl()) {
-    setStatusIn('acc-status', "Your team's Restack Usage function isn't set up yet. A Full admin sets it up.", 'error');
-    return;
-  }
-  $('acc-test').disabled = true;
-  setStatusIn('acc-status', 'Testing… (the first call can take a few seconds while Azure starts the function)');
-  try {
-    const data = await publishFunction('POST', { check: true });
-    log(`Admin console: template admin test worked (${data.repo})`);
-    setStatusIn('acc-status', `Works: you can publish templates to ${data.repo} and see Usage.`, 'ok');
-  } catch (error) {
-    const reason = templatesProblem(error);
-    log(`Admin console: template admin test failed (${reason})`);
-    setStatusIn('acc-status', `Didn't work: ${reason}.`, 'error');
-  } finally {
-    $('acc-test').disabled = false;
-  }
-}
-
-async function onAccessForget() {
-  writeSetting(TEMPLATE_KEY_SETTING, null);
-  $('acc-key').value = '';
+  forgetMineArmed = 0;
+  forgetConsoleKeys();
+  team.draft = null;
   usageReport.key = '';
   usageReport.events = null;
-  log('Admin console: a template admin removed their key from this browser');
-  await renderAccess('Removed from this browser. Publish to team and the Usage tab need it again.', 'ok');
+  log('Admin console: a template admin removed what it kept in this browser');
+  consoleNote('Removed from this browser. To open the console again, use Settings → Admin console in Outlook.', 'ok');
 }
 
 // ---- usage counts: the Restack Usage function (its own Function App)
@@ -9167,11 +9128,11 @@ function usageFigures(files) {
 // to the console works next time. The console works from what's published in team.json, plus its own
 // changes until they're published; with nothing published yet, it starts a new team.
 
-const CONSOLE_TABS = ['templates', 'team', 'usage', 'access']; // (Your access is a template admin's; Team settings, a Full admin's)
+const CONSOLE_TABS = ['templates', 'team', 'usage'];
 
-/** The console's tabs for this admin: Templates, Team settings and Usage, or for a template admin Templates, Usage and Your access (0.28). */
+/** The console's tabs for this admin: Templates, Team settings and Usage, or for a template admin just Templates and Usage (0.28). */
 function consoleTabs() {
-  return templatesOnly() ? ['templates', 'usage', 'access'] : ['templates', 'team', 'usage'];
+  return templatesOnly() ? ['templates', 'usage'] : ['templates', 'team', 'usage'];
 }
 let consoleTab = 'templates';
 let consoleSearch = '';
@@ -9265,12 +9226,13 @@ async function startConsole() {
     return;
   }
   applyConsoleLevel();
+  writeSetting('minutesSaved', null); // (Time saved's minutes from before 0.28.3, when each browser kept its own: they're the team's now)
+  writeSetting('minutesSavedPdf', null);
   log(`Admin console: ${plural(teamTemplates().length, 'team template')}${team.draft ? ', with changes not published yet' : ''}${templatesOnly() ? ' (a template admin)' : ''}`);
   $('con-tabs').hidden = false;
   renderConsole();
-  const needKey = templatesOnly() && !(await templateKeyFits()); // (a template admin without their key: Your access first)
-  showConsoleTab(needKey ? 'access' : consoleTabs().includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
-  if (needKey) await renderAccess();
+  showConsoleTab(consoleTabs().includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
+  const needKey = templatesOnly() && !(await ownKeyFits()); // (a template admin without their key: how to get it, below)
   watchOtherTabs();
   // Another admin published after your changes began: theirs are in now, yours still to publish (0.26)
   if (team.replaced) {
@@ -9284,6 +9246,7 @@ async function startConsole() {
     log(`Admin console: added ${whoPublished(team.merged)}'s newer changes to yours${team.merged.conflicts ? ` (${team.merged.conflicts} to pick)` : ''}`);
     consoleNote(`${whoPublished(team.merged)} published changes${when}, after you started yours. Theirs are in now, and yours are still waiting to publish.${both}`, 'ok');
   }
+  if (needKey) consoleNote(keyNote(), 'error');
 }
 
 /**
@@ -9317,13 +9280,7 @@ async function findConsoleAdmin() {
   }
 }
 
-/** Whether this browser has the template admin's key that's on the team's list for them. */
-async function templateKeyFits() {
-  const mine = await editorForKey(team.published, templateKey());
-  return !!mine && mine.email === team.me;
-}
-
-/** The tabs and cards for the console's admin: a template admin gets Templates, Usage and Your access. */
+/** The tabs for the console's admin: a template admin gets Templates and Usage, and Remove my keys at the bottom. */
 function applyConsoleLevel() {
   const tabs = consoleTabs();
   for (const name of CONSOLE_TABS) $(`con-tab-${name}`).hidden = !tabs.includes(name);
@@ -9337,8 +9294,7 @@ function applyConsoleLevel() {
   } catch (error) {
     // nothing kept there
   }
-  $('access-cards').append($('con-card-browser')); // This browser: for taking their keys off a shared computer
-  $('forget-hint').textContent = 'The console keeps your team key and your key in this browser, so a bookmark to it works next time. On a shared computer, remove them when you\'re done.';
+  $('con-forget-mine').hidden = false; // (for a shared computer)
 }
 
 /** No key, the wrong key, nothing published yet, or the site couldn't be reached. */
@@ -9411,7 +9367,7 @@ function showConsoleTab(tab, focus = true) {
   }
   if (focus) $(`con-tab-${tab}`).focus();
   if (tab === 'usage') loadUsageReport().catch(fail);
-  if (tab === 'access') renderAccess().catch(fail);
+  else closeUsageInfo(false);
 }
 
 // ---- Team settings: four pages (Tokens/Keys, Files, Toggles, Admins), one showing at a time, picked by
@@ -9487,7 +9443,7 @@ function renderConsole() {
   renderUsageBox();
   renderGithubBox();
   renderEmailLimit();
-  if (templatesOnly()) renderAccess().catch(fail);
+  renderUsageMinutes();
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
 }
@@ -9541,14 +9497,7 @@ function wireConsole() {
     event.preventDefault();
     onEmailLimitSave($('size-mb').value).catch(fail);
   });
-  $('acc-save').addEventListener('click', () => onAccessSave().catch(fail));
-  $('acc-test').addEventListener('click', () => onAccessTest().catch(fail));
-  $('acc-forget').addEventListener('click', () => onAccessForget().catch(fail));
-  $('acc-key').addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    onAccessSave().catch(fail);
-  });
+  $('con-forget-mine').addEventListener('click', onForgetMine);
   $('us-team-copy').addEventListener('click', () => copyTeamKey().catch(fail));
   $('gh-save').addEventListener('click', onGithubSave);
   $('gh-test').addEventListener('click', () => onGithubTest().catch(fail));
@@ -9563,7 +9512,6 @@ function wireConsole() {
     forgetConsoleKeys();
     team.draft = null;
     renderGithubBox();
-    renderAccess().catch(fail);
     log('Admin console: removed what it kept in this browser');
     setStatusIn('forget-status', 'Removed. To open the console again, use Settings → Admin console in Outlook.', 'ok');
   });
@@ -9571,15 +9519,10 @@ function wireConsole() {
   for (const id of ['us-from', 'us-to']) $(id).addEventListener('change', () => pickUsageDates());
   $('us-refresh').addEventListener('click', () => loadUsageReport(true).catch(fail));
   $('us-csv').addEventListener('click', downloadUsageCsv);
-  $('us-minutes').value = String(usageMinutes());
-  $('us-minutes-pdf').value = String(usagePdfMinutes());
-  for (const [id, setting] of [['us-minutes', 'minutesSaved'], ['us-minutes-pdf', 'minutesSavedPdf']]) {
-    $(id).addEventListener('change', (event) => {
-      const minutes = Math.min(60, Math.max(0, Number(event.target.value) || 0));
-      writeSetting(setting, String(minutes));
-      if (usageReport.events) renderUsageReport();
-    });
+  for (const [id, part] of [['us-minutes', 'email'], ['us-minutes-pdf', 'pdf']]) {
+    $(id).addEventListener('change', (event) => onMinutesChange(part, event.target).catch(fail));
   }
+  wireUsageInfo();
   window.addEventListener('beforeunload', (event) => {
     if (editing && templateFormChanged()) {
       event.preventDefault();
@@ -9885,16 +9828,113 @@ async function readLatestTeam() {
 
 const usageReport = { from: '', to: '', events: null, loadedAt: 0, key: '' };
 
-/** Time saved's minutes per email created (3 to start), kept in this browser. */
-function usageMinutes() {
-  const saved = Number(readSetting('minutesSaved'));
-  return Number.isFinite(saved) && saved >= 0 && readSetting('minutesSaved') !== null ? saved : 3;
+/**
+ * Time saved's minutes ({ email, pdf }): the team's, as Full admins set them on the Usage tab and publish them
+ * (0.28.3; before, each browser kept its own), else 3 per email created and 1 per PDF saved. A template admin's
+ * console uses the ones published.
+ */
+function teamMinutes() {
+  const settings = templatesOnly() ? team.published : teamSettings();
+  return (settings && cleanTimeSaved(settings.timeSaved)) || MINUTES_START;
 }
 
-/** ...and per PDF saved (1 to start). */
+function usageMinutes() {
+  return teamMinutes().email;
+}
+
 function usagePdfMinutes() {
-  const saved = Number(readSetting('minutesSavedPdf'));
-  return Number.isFinite(saved) && saved >= 0 && readSetting('minutesSavedPdf') !== null ? saved : 1;
+  return teamMinutes().pdf;
+}
+
+let minutesShown = '';
+
+/** The Usage tab's minutes: a Full admin's to change; a template admin's console doesn't show them (0.28.3). */
+function renderUsageMinutes() {
+  if (!CONSOLE || !$('us-minutes')) return;
+  $('us-minutes-line').hidden = templatesOnly();
+  const minutes = teamMinutes();
+  for (const [id, value] of [['us-minutes', minutes.email], ['us-minutes-pdf', minutes.pdf]]) {
+    if (document.activeElement !== $(id)) $(id).value = String(value);
+  }
+  const shown = `${minutes.email}/${minutes.pdf}`;
+  if (minutesShown && shown !== minutesShown && usageReport.events) renderUsageReport(); // (changed by a publish, or in another tab)
+  minutesShown = shown;
+}
+
+/** A Full admin changed one of the minutes: it's the team's, so it waits for Publish to team like any team setting. */
+async function onMinutesChange(part, input) {
+  if (templatesOnly()) return;
+  const now = teamMinutes();
+  const next = cleanTimeSaved({ ...now, [part]: Math.min(60, Math.max(0, Number(input.value) || 0)) });
+  input.value = String((next || MINUTES_START)[part]);
+  if (itemPrint(next) === itemPrint(cleanTimeSaved(now))) return;
+  try {
+    await saveTeamDraft({ timeSaved: next });
+  } catch (error) {
+    consoleNote(`Couldn't save the minutes: ${error.message}`, 'error');
+    return;
+  }
+  const minutes = next || MINUTES_START;
+  log(`Time saved: ${minutes.email} min per email, ${minutes.pdf} per saved PDF (not published yet)`);
+  renderPublishBox();
+  renderUsageMinutes();
+  if (usageReport.events) renderUsageReport();
+  consoleNote(`Saved. ${publishWhere()} so every admin's Time saved uses these minutes.`, 'ok', 8000);
+}
+
+// ---- the Usage tab's info button: what's counted, and what's kept (0.28.3). Hovering shows it; a click keeps it open.
+
+const usageInfo = { pinned: false, hoverTimer: 0, leaveTimer: 0 };
+
+function openUsageInfo(pin) {
+  clearTimeout(usageInfo.leaveTimer);
+  clearTimeout(usageInfo.hoverTimer);
+  if (pin) usageInfo.pinned = true;
+  $('us-about').hidden = false;
+  $('us-info').setAttribute('aria-expanded', 'true');
+}
+
+function closeUsageInfo(returnFocus) {
+  clearTimeout(usageInfo.hoverTimer);
+  clearTimeout(usageInfo.leaveTimer);
+  usageInfo.pinned = false;
+  if (!$('us-about') || $('us-about').hidden) return;
+  $('us-about').hidden = true;
+  $('us-info').setAttribute('aria-expanded', 'false');
+  if (returnFocus) $('us-info').focus();
+}
+
+function laterCloseUsageInfo() {
+  if (usageInfo.pinned) return;
+  clearTimeout(usageInfo.leaveTimer);
+  usageInfo.leaveTimer = setTimeout(() => closeUsageInfo(false), 350);
+}
+
+function wireUsageInfo() {
+  const button = $('us-info');
+  const box = $('us-about');
+  if (!button || !box) return;
+  button.addEventListener('mouseenter', () => {
+    clearTimeout(usageInfo.leaveTimer);
+    clearTimeout(usageInfo.hoverTimer);
+    usageInfo.hoverTimer = setTimeout(() => openUsageInfo(false), 200);
+  });
+  button.addEventListener('mouseleave', () => {
+    clearTimeout(usageInfo.hoverTimer);
+    laterCloseUsageInfo();
+  });
+  button.addEventListener('click', () => {
+    if (!box.hidden && usageInfo.pinned) closeUsageInfo(false);
+    else openUsageInfo(true);
+  });
+  box.addEventListener('mouseenter', () => clearTimeout(usageInfo.leaveTimer));
+  box.addEventListener('mouseleave', laterCloseUsageInfo);
+  document.addEventListener('pointerdown', (event) => {
+    if (!box.hidden && !event.target.closest('#us-about, #us-info')) closeUsageInfo(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !box.hidden) closeUsageInfo(document.activeElement === button || box.contains(document.activeElement));
+  });
 }
 
 function isoDay(date) {
@@ -9940,7 +9980,7 @@ function pickUsageDates() {
   loadUsageReport().catch(fail);
 }
 
-/** The Usage tab without numbers: why, and a button to the setting that's missing (Usage counts, or a template admin's Your access). */
+/** The Usage tab without numbers: why, and a button to the setting that's missing (Usage counts). */
 function usageEmpty(text, button, onClick) {
   $('us-report').hidden = true;
   $('us-csv').disabled = true;
@@ -9979,7 +10019,7 @@ async function loadUsageReport(force = false) {
   }
   if (!secret) {
     $('us-line').textContent = '';
-    if (editor) usageEmpty('Type the key a Full admin sent you under Your access to see the numbers here. It stays in this browser.', 'Add your key', () => showAccess());
+    if (editor) usageEmpty(keyNote());
     else usageEmpty('Add your admin key under Team settings → Tokens/Keys → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
     return;
   }
@@ -10014,19 +10054,18 @@ async function loadUsageReport(force = false) {
     renderUsageReport();
   } catch (error) {
     $('us-line').textContent = '';
-    usageEmpty(`Couldn't load the numbers: ${error.userMessage || error.message}.${editor && /list of template admins/.test(error.userMessage || '') ? ' Ask a Full admin for a new key, and put it under Your access.' : ''}`);
+    usageEmpty(`Couldn't load the numbers: ${error.userMessage || error.message}.${editor && /list of template admins/.test(error.userMessage || '') ? ' Get your new key from a Full admin, then open the console from Outlook (Settings → Admin console), which asks for it.' : ''}`);
   } finally {
     $('us-refresh').disabled = false;
   }
 }
 
-/** Adds up the counts: totals, per rep, per template, per day and per version. */
+/** Adds up the counts: totals, per rep, per template and per day. */
 function usageSummary(events) {
   const totals = { emails: 0, emailEvents: 0, saves: 0, pdfs: 0, files: 0, pages: 0, accessorials: 0, separate: 0, rateCons: 0, rateConPages: 0 };
   const reps = new Map();
   const templates = new Map();
   const days = new Map();
-  const versions = new Map();
   const row = (map, key, start) => {
     if (!map.has(key)) map.set(key, { ...start });
     return map.get(key);
@@ -10037,11 +10076,6 @@ function usageSummary(events) {
     const rep = row(reps, event.rep || 'Unknown', { name: event.rep || 'Unknown', emails: 0, saves: 0, files: 0, pages: 0, rateCons: 0, last: 0 });
     rep.last = Math.max(rep.last, at.getTime());
     const perDay = row(days, day, { emails: 0, saves: 0 });
-    if (event.version) {
-      const version = row(versions, `${event.version}${event.beta ? ' beta' : ''}`, { name: `${event.version}${event.beta ? ' (beta)' : ''}`, reps: new Set(), last: 0 });
-      version.reps.add(event.rep || 'Unknown');
-      version.last = Math.max(version.last, at.getTime());
-    }
     if (event.action === 'email') {
       const emails = Number(event.emails) || 1;
       totals.emails += emails;
@@ -10078,7 +10112,7 @@ function usageSummary(events) {
       rep.rateCons += 1;
     }
   }
-  return { totals, reps: [...reps.values()], templates: [...templates.values()], days, versions: [...versions.values()] };
+  return { totals, reps: [...reps.values()], templates: [...templates.values()], days };
 }
 
 function fmt(n) {
@@ -10105,7 +10139,7 @@ function renderUsageReport() {
   }
   $('us-empty').hidden = true;
   $('us-report').hidden = false;
-  const { totals, reps, templates, days, versions } = usageSummary(events);
+  const { totals, reps, templates, days } = usageSummary(events);
   const minutes = totals.emailEvents * usageMinutes() + totals.saves * usagePdfMinutes();
   const figures = [
     ['Emails created', fmt(totals.emails), `${fmt(totals.accessorials)} with accessorials`],
@@ -10131,8 +10165,6 @@ function renderUsageReport() {
   fillUsageTable($('us-templates'), ['Template', 'Emails', 'With accessorials', 'Separate accessorial email', 'Files combined', 'Pages'],
     templates.sort((a, b) => b.emails - a.emails || a.name.localeCompare(b.name))
       .map((t) => [t.name, fmt(t.emails), fmt(t.accessorials), fmt(t.separate), fmt(t.files), fmt(t.pages)]));
-  fillUsageTable($('us-versions'), ['Version', 'Reps', 'Last used'],
-    versions.sort((a, b) => b.last - a.last).map((v) => [v.name, fmt(v.reps.size), dateText(v.last)]));
 }
 
 function fillUsageTable(table, heads, rows) {

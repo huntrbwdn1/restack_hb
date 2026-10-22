@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.28.1</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.3</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -497,9 +497,9 @@
       <h3 id="usage">Usage tab</h3>
       <p>What your team makes with Restack, once usage counts are set up.</p>
       <ul>
-        <li>Pick the dates: <strong>Last 7 days</strong>, <strong>Last 30 days</strong>, <strong>This month</strong>, <strong>Last month</strong>, <strong>This year</strong>, or any <strong>From</strong> and <strong>To</strong>.</li>
-        <li>The totals: emails created, PDFs saved, files combined, pages, rate cons caught, reps, and time saved. Time saved counts the minutes you set per email created (3 to start; a POD email and its request count once) and per PDF saved (1 to start).</li>
-        <li>Per day, by rep, by template, and the versions in use. <strong>Refresh</strong> gets the latest; <strong>Download CSV</strong> saves them.</li>
+        <li>Pick the dates: <strong>Last 7 days</strong>, <strong>Last 30 days</strong>, <strong>This month</strong>, <strong>Last month</strong>, <strong>This year</strong>, or any <strong>From</strong> and <strong>To</strong>. The info button next to the dates says what's counted.</li>
+        <li>The totals: emails created, PDFs saved, files combined, pages, rate cons caught, reps, and time saved. Time saved counts the minutes a Full admin sets per email created (3 to start; a POD email and its request count once) and per PDF saved (1 to start). They're the team's: change them on the Usage tab, then <strong>Publish to team</strong>.</li>
+        <li>Per day, by rep and by template. <strong>Refresh</strong> gets the latest; <strong>Download CSV</strong> saves them.</li>
       </ul>
       <p>An email for the same load and template counts once a day, however many times it's created. Only counts are kept: the rep's email address, when, the Restack version, how many files, pages and PDFs, the template's name, which accessorials, and whether it was split, Multi-stop, a separate email or attached automatically. Never the files, file names, load numbers or customer addresses.</p>
       <figure class="wide"><img src="wiki/console-usage.png" width="760" height="487" alt="The admin console's Usage tab" loading="lazy"><figcaption>The Usage tab, for the last 30 days.</figcaption></figure>
@@ -507,9 +507,9 @@
       <h3 id="template-admins">Template admins</h3>
       <p>A template admin (<strong>Templates only</strong> on the Admins page) makes, changes and deletes the team's templates and publishes them, and sees the Usage tab. Team settings, and who's an admin, are for Full admins.</p>
       <ul>
-        <li>Their console has three tabs: <strong>Templates</strong>, <strong>Usage</strong> and <strong>Your access</strong>.</li>
+        <li>Their console has two tabs: <strong>Templates</strong> and <strong>Usage</strong>. Time saved uses the minutes a Full admin set.</li>
         <li>The first time, <strong>Settings → Admin console</strong> in Outlook asks for the key a Full admin sent them, and keeps it in their Outlook. Every console they open from there has it, on any computer, and it asks again only if a Full admin makes them a new key.</li>
-        <li><strong>Your access</strong>, in the console, says whether their key works (<strong>Test</strong> checks it with your Restack Usage function). A key pasted there is for that browser only.</li>
+        <li>Opened without their key (from a bookmark in another browser, say), or with one that's been replaced, the console says to open it from Outlook, which brings the key. <strong>Remove my keys from this browser</strong>, at the bottom, is for a shared computer.</li>
         <li><strong>Publish to team</strong> goes through your Restack Usage function with their key, and straight to your reps. Only templates go in: the function checks the key against your team's list, and turns away anything else.</li>
       </ul>
 
@@ -581,7 +581,7 @@
         <dt>The admin console says "You're not one of your team's admins"</dt>
         <dd>You're not on the Admins page's list (anymore). A Full admin adds you there and publishes. If one just did, wait a minute or two for it to reach the site and click <strong>Try again</strong>.</dd>
         <dt>A template admin's key doesn't work</dt>
-        <dd><strong>Your access</strong> says so when a Full admin has made them a new key since (<strong>New key</strong>, then publishing, turns the old one off): ask for the new one. If <strong>Test</strong> says <code>RESTACK_TEAM_KEY</code> isn't set, a Full admin adds it to the Restack Usage Function App (<strong>Tokens/Keys → Usage counts</strong> has it to copy).</dd>
+        <dd>If a Full admin has made them a new key since (<strong>New key</strong>, then publishing, turns the old one off), the console says so: they get the new one, and <strong>Settings → Admin console</strong> in Outlook asks for it. If publishing says <code>RESTACK_TEAM_KEY</code> isn't set, a Full admin adds it to the Restack Usage Function App (<strong>Tokens/Keys → Usage counts</strong> has it to copy, and <strong>Test connection</strong> checks it).</dd>
         <dt>I can't find My templates</dt>
         <dd>Your team admin has to turn on Reps' own templates and publish.</dd>
         <dt>A change in Settings or a pin didn't stick</dt>
