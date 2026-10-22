@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.26';
+const VERSION = '0.28.1';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -32,7 +32,12 @@ const TEAM_FILE = 'team.json';
 // start): one small picture from this site, attached inside the email so it shows without a "download
 // pictures" prompt and looks the same in every mail app. Drawn at 3x for sharp screens, shown at this size.
 const SENT_WITH = { file: 'sent-with-restack.png', width: 136, height: 23, alt: 'sent with restack' };
-const MAX_ADMINS = 20;                  // team admins (the admin console's Team settings tab)
+const MAX_ADMINS = 20;                  // team admins (the admin console's Team settings tab), at each level
+// Admin levels (0.28): Full admins change everything; template admins make the team's templates and see
+// Usage. Each template admin has a key of their own (TEMPLATE_KEY_PREFIX and 32 random characters);
+// team.json lists its SHA-256, and the Restack Usage function checks it when they publish or read Usage.
+const TEMPLATE_KEY_PREFIX = 'rtk_';
+const TEMPLATE_KEY_SETTING = 'templateKey'; // a template admin's key, kept in their browser by the console
 const MAX_CUSTOMERS = 50;               // templates made at once with Add Customer (the first one included)
 const ROAMING_ROOM = 32 * 1024;         // what Outlook keeps of Restack's roaming settings, for each person
 // The beta: the site's beta folder, installed as "Restack Beta" next to Restack, for trying a new
@@ -262,7 +267,9 @@ const team = {
   merged: null,        // opening the console added another admin's newer changes to them: { by, updated, conflicts }
   sent: null,          // what this browser last published, until the site has it (0.26): { base, parent, team }
   replaced: null,      // a version not built on your last publish replaced it, so your changes are back: { by, updated }
+  publishedVia: '',    // how the last Publish to team went: github, function (Restack Usage) or download
   me: '',              // this Outlook account's email address
+  level: 'full',       // the console's admin: full, or templates (a template admin, 0.28)
   error: '',
   justPublished: false,
 };
@@ -6536,11 +6543,13 @@ async function decryptTeam(text, key) {
 }
 
 function cleanTeam(data) {
+  const admins = Array.isArray(data && data.admins) ? data.admins.map((a) => String(a).toLowerCase().trim()).filter(Boolean) : [];
   return {
     v: 1,
     updated: Number(data && data.updated) || 0,
     by: String((data && data.by) || ''),
-    admins: Array.isArray(data && data.admins) ? data.admins.map((a) => String(a).toLowerCase().trim()).filter(Boolean) : [],
+    admins,                                       // Full admins (their addresses)
+    editors: cleanEditors(data && data.editors, admins), // template admins: { email, hash } (0.28)
     templates: cleanTemplates(data && data.templates),
     azure: cleanAzure(data && data.azure),
     repTemplates: !!(data && data.repTemplates), // reps may make their own templates (off to start)
@@ -6648,7 +6657,10 @@ async function loadTeam() {
     wrongkey: "this install's key doesn't open team.json",
     error: `couldn't load team.json (${team.error})`,
   }[team.status];
-  log(`Team: ${what}${isAdmin() ? ' · you manage them' : ''}${team.draft && isAdmin() ? ' · unpublished changes' : ''}`);
+  log(`Team: ${what}${isAdmin() ? ' · you manage them' : isTemplateAdmin() ? ' · you make the templates' : ''}${team.draft && isAdmin() ? ' · unpublished changes' : ''}`);
+  if (!CONSOLE && team.status === 'ok' && team.me && !isTemplateAdmin() && readRoaming(TEMPLATE_KEY_SETTING)) {
+    writeRoaming(TEMPLATE_KEY_SETTING, null).catch(() => {}); // (taken off the template admins: their key is no use now)
+  }
 }
 
 /** The console opens on the published team, or on a new one (nothing published yet) when it knows who's setting it up. */
@@ -6663,14 +6675,88 @@ function isAdmin() {
   return team.status === 'ok' && !!team.me && team.published.admins.includes(team.me);
 }
 
+/**
+ * A template admin (0.28): in Outlook they get Settings → Admin console and their own templates, like
+ * a Full admin; in the console, the Templates and Usage tabs (and Your access, for their key).
+ */
+function isTemplateAdmin() {
+  if (CONSOLE) return team.level === 'templates';
+  return team.status === 'ok' && !!team.me && team.published.editors.some((e) => e.email === team.me);
+}
+
+/** The console of a template admin. */
+function templatesOnly() {
+  return CONSOLE && team.level === 'templates';
+}
+
+/** The team's template admins, as they'll be published: { email, hash } each. */
+function teamEditors() {
+  const settings = teamSettings();
+  return settings && Array.isArray(settings.editors) ? settings.editors : [];
+}
+
+/** Template admins as team.json lists them: a real address and their key's SHA-256, once each (Full admins left out). */
+function cleanEditors(value, admins = []) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set(admins);
+  const editors = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const email = String(entry.email || '').toLowerCase().trim();
+    const hash = String(entry.hash || '');
+    if (!email || seen.has(email) || !/^[A-Za-z0-9_-]{43}$/.test(hash)) continue;
+    seen.add(email);
+    editors.push({ email, hash });
+    if (editors.length >= MAX_ADMINS) break;
+  }
+  return editors;
+}
+
+/** A new key for a template admin: shown once to the Full admin who makes it, never kept. */
+function newTemplateKey() {
+  return `${TEMPLATE_KEY_PREFIX}${randomB64url(24)}`;
+}
+
+/** A key's SHA-256 (base64url), the way team.json lists template admins' keys. */
+async function keyHash(key) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(key))));
+  return bytesToBase64(digest).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** The template admin a key belongs to, in a version of the team: { email, hash }, or null. */
+async function editorForKey(data, key) {
+  if (!data || !key || !Array.isArray(data.editors) || !data.editors.length) return null;
+  const hash = await keyHash(String(key).trim());
+  return data.editors.find((e) => e.hash === hash) || null;
+}
+
+/**
+ * A template admin's key: in Outlook, the one kept in their Outlook account (0.28.1: pasted once, when
+ * Settings → Admin console asks for it); in the console, this browser's (from the link, or Your access).
+ */
+function templateKey() {
+  return String((CONSOLE ? readSetting(TEMPLATE_KEY_SETTING) : readRoaming(TEMPLATE_KEY_SETTING)) || '');
+}
+
+/** Whether the key kept here is the one on the team's list for this person. */
+async function ownKeyFits() {
+  const mine = await editorForKey(team.published, templateKey());
+  return !!mine && !!team.me && mine.email === team.me;
+}
+
+/** Whether text looks like a template admin's key (as the admin console makes them). */
+function looksLikeTemplateKey(text) {
+  return new RegExp(`^${TEMPLATE_KEY_PREFIX}[A-Za-z0-9_-]{32}$`).test(String(text || ''));
+}
+
 /** The team settings in force for this person: the admin's unpublished changes, else what's published. */
 function teamSettings() {
   return (isAdmin() && team.draft) || team.published || null;
 }
 
-/** Making your own templates: always for the admin; for reps only once the admin turns it on. */
+/** Making your own templates: always for admins (either level); for reps only once an admin turns it on. */
 function canMakeOwn() {
-  if (isAdmin()) return true;
+  if (isAdmin() || isTemplateAdmin()) return true;
   const settings = teamSettings();
   return !!(settings && settings.repTemplates);
 }
@@ -7389,6 +7475,7 @@ function draftBase(from) {
   const prints = {};
   for (const t of data.templates) prints[`t:${t.id}`] = itemPrint(t);
   for (const name of MERGED_SETTINGS) prints[`s:${name}`] = itemPrint(data[name]);
+  for (const e of data.editors || []) prints[`e:${e.email}`] = itemPrint(e); // template admins, by address (0.28)
   return {
     updated: data.updated || 0,
     by: data.by || '',
@@ -7479,6 +7566,16 @@ function rebaseTeam(draft, base, latest) {
     const result = pick(`s:${name}`, draft[name], latest[name]);
     merged[name] = result === undefined ? null : result;
   }
+  // Template admins (0.28), by address, like templates: added, taken off or given a new key
+  const myEditors = new Map((draft.editors || []).map((e) => [e.email, e]));
+  const theirEditors = new Map((latest.editors || []).map((e) => [e.email, e]));
+  const editorsBefore = Object.keys(base.prints).filter((key) => key.startsWith('e:')).map((key) => key.slice(2));
+  const keptEditors = new Map();
+  for (const email of new Set([...theirEditors.keys(), ...myEditors.keys(), ...editorsBefore])) {
+    const result = pick(`e:${email}`, myEditors.get(email) || null, theirEditors.get(email) || null);
+    if (result) keptEditors.set(email, result);
+  }
+  merged.editors = [...new Set([...theirEditors.keys(), ...myEditors.keys()])].filter((email) => keptEditors.has(email)).map((email) => keptEditors.get(email));
   // Admins: the published list, less any you took off, plus any you added (never none)
   const added = draft.admins.filter((a) => !base.admins.includes(a));
   const removed = base.admins.filter((a) => !draft.admins.includes(a));
@@ -7501,6 +7598,14 @@ function takeTheirs(merged, conflict) {
     merged[name] = conflict.theirs;
     return;
   }
+  if (kind === 'e') { // a template admin
+    const list = merged.editors || (merged.editors = []);
+    const at = list.findIndex((e) => e.email === name);
+    if (conflict.theirs && at >= 0) list[at] = conflict.theirs;
+    else if (conflict.theirs) list.push(conflict.theirs);
+    else if (at >= 0) list.splice(at, 1);
+    return;
+  }
   const at = merged.templates.findIndex((t) => t.id === name);
   if (conflict.theirs && at >= 0) merged.templates[at] = conflict.theirs;
   else if (conflict.theirs) merged.templates.push(conflict.theirs);
@@ -7521,6 +7626,10 @@ function describeConflict(conflict) {
   if (conflict.key.startsWith('t:')) {
     const t = conflict.mine || conflict.theirs;
     return { what: `Template "${t.name}"`, mine: conflict.mine ? 'edited' : 'deleted', theirs: conflict.theirs ? 'edited' : 'deleted' };
+  }
+  if (conflict.key.startsWith('e:')) { // (both of you changed a template admin: one key each, or taken off)
+    const show = (entry, whose) => (entry ? `Templates only, with the key ${whose} made` : 'not a template admin');
+    return { what: `Admin ${conflict.key.slice(2)}`, mine: show(conflict.mine, 'you'), theirs: show(conflict.theirs, 'they') };
   }
   const name = conflict.key.slice(2);
   const show = (value) => {
@@ -7625,10 +7734,12 @@ function baseFor(latest) {
  * on), others (who else's changes went in, if anyone's) }, or null when you cancelled at the question.
  * `remembered` keeps your picks, so trying again (GitHub turned a try away) only asks about anything new.
  */
-async function mergeWithLatest(latest, remembered) {
+async function mergeWithLatest(latest, remembered, onlyTemplates = false) {
   const sent = team.sent;
   const replaced = !!(sent && sent.team && latest && !builtOn(latest, sent.base) && !isSameOrEarlier(latest, sent.base));
-  const draft = team.draft || (replaced ? sent.team : null) || team.published;
+  let draft = team.draft || (replaced ? sent.team : null) || team.published;
+  // A template admin publishes only templates: everything else is as published now, so nothing else is asked about
+  if (onlyTemplates && latest) draft = { ...cleanTeam(latest), templates: draft.templates, updated: draft.updated, by: draft.by };
   const base = baseFor(latest);
   if (!latest) return { team: draft, parent: base, others: '' }; // nothing published yet
   if (latest.updated !== base.updated && isSameOrEarlier(latest, base)) return { team: draft, parent: base, others: '' }; // an older copy: yours as they are
@@ -7843,14 +7954,39 @@ async function onPublish() {
   }
 }
 
+/**
+ * How Publish to team gets team.json onto GitHub: 'github' (a token here), 'function' (Restack Usage, with the
+ * admin key), 'download', or 'templates' (a template admin: Restack Usage, with their own key; 0.28).
+ */
+function publishRoute() {
+  if (templatesOnly()) return 'templates';
+  if (githubReady()) return 'github';
+  return functionPublishReady() ? 'function' : 'download';
+}
+
 async function publishMerged() {
+  if (templatesOnly()) {
+    await publishTemplatesOnly();
+    return;
+  }
   const remembered = new Map(); // your picks, if GitHub turns a try away and it reads again
+  let route = publishRoute();
+  let fellBack = ''; // why Restack Usage couldn't publish, when it downloads instead
   for (let attempt = 1; ; attempt++) {
     let latest;
     try {
-      latest = await readLatestTeam();
+      latest = route === 'function' ? await readFunctionTeam() : await readLatestTeam();
     } catch (error) {
-      consoleNote(`Couldn't check what's published now: ${error.userMessage || error.message}. Nothing changed for your team.${githubReady() ? ' (Team settings → Tokens/Keys → Publishing has the token.)' : ''}`, 'error');
+      if (route === 'function' && (error.notSetUp || error.unreachable)) { // (its Publish part isn't there yet): the file downloads as before
+        const why = error.userMessage || error.message;
+        fellBack = error.unreachable ? "Couldn't reach your Restack Usage function" : `Your Restack Usage function can't publish yet (${why})`;
+        log(`Publish: Restack Usage can't publish (${why}); team.json downloads instead`);
+        route = 'download';
+        attempt -= 1;
+        continue;
+      }
+      const where = route === 'function' ? ' (Team settings → Tokens/Keys → Usage counts has the admin key.)' : githubReady() ? ' (Team settings → Tokens/Keys → Publishing has the token.)' : '';
+      consoleNote(`Couldn't check what's published now: ${error.userMessage || error.message}. Nothing changed for your team.${where}`, 'error');
       return;
     }
     const snapshot = team.draft; // (changes saved while it publishes go on top of what's published)
@@ -7865,18 +8001,21 @@ async function publishMerged() {
     const payload = { ...cleanTeam(merged.team), v: 1, updated, by: team.me, admins, history };
     const text = await encryptTeam(payload, team.key);
     const others = merged.others ? ` It has the changes ${merged.others} published too.` : '';
-    if (githubReady()) {
-      consoleNote('Publishing to GitHub…');
+    if (route === 'github' || route === 'function') {
+      consoleNote(route === 'github' ? 'Publishing to GitHub…' : 'Publishing through Restack Usage…');
       let where;
       try {
-        where = await publishToGithub(text, latest);
+        where = route === 'github' ? await publishToGithub(text, latest) : await publishThroughFunction(text, latest);
       } catch (error) {
         if (error.conflict && attempt < 3) continue; // someone published at the same moment: again, with theirs
-        consoleNote(`Couldn't publish to GitHub: ${error.userMessage || error.message}. Nothing changed for your team. (Team settings → Tokens/Keys → Publishing has the token.)`, 'error');
+        const how = route === 'github' ? 'to GitHub' : 'through Restack Usage';
+        const fix = route === 'github' ? 'Team settings → Tokens/Keys → Publishing has the token.' : 'Team settings → Tokens/Keys → Usage counts has the admin key.';
+        consoleNote(`Couldn't publish ${how}: ${error.userMessage || error.message}. Nothing changed for your team. (${fix})`, 'error');
         return;
       }
       await afterPublish(payload, merged, snapshot, true);
-      log(`Team: published ${plural(payload.templates.length, 'template')} to GitHub (${where.repo}, ${where.branch})${merged.others ? `, with ${merged.others}'s changes` : ''}`);
+      team.publishedVia = route;
+      log(`Team: published ${plural(payload.templates.length, 'template')} ${route === 'github' ? 'to GitHub' : 'through Restack Usage'} (${where.repo}, ${where.branch})${merged.others ? `, with ${merged.others}'s changes` : ''}`);
       showMergedTeam();
       renderPublishBox();
       consoleNote(`Published to ${where.repo}.${others}`, 'ok', PUBLISHED_NOTE_MS);
@@ -7884,12 +8023,90 @@ async function publishMerged() {
     }
     downloadText(text, TEAM_FILE, 'application/json');
     await afterPublish(payload, merged, snapshot, false);
+    team.publishedVia = 'download';
     log(`Team: published ${plural(payload.templates.length, 'template')} (team.json downloaded)${merged.others ? `, with ${merged.others}'s changes` : ''}`);
     showMergedTeam();
     renderPublishBox();
-    teamNote(`${PUBLISHED_TEXT}${others}`, 'ok');
+    teamNote(fellBack ? `${fellBack}, so ${PUBLISHED_TEXT.replace(/^team\.json/, 'team.json was')}${others}` : `${PUBLISHED_TEXT}${others}`, fellBack ? 'error' : 'ok');
     return;
   }
+}
+
+/**
+ * Publish to team for a template admin (0.28): through the Restack Usage function, with their own key.
+ * team.json goes up as it's published now with only the templates changed (theirs added to anyone else's),
+ * since the function turns away anything more.
+ */
+async function publishTemplatesOnly() {
+  if (!templateKey()) {
+    showAccess('Type the key a Full admin sent you, then publish.', 'error');
+    return;
+  }
+  if (!publishFunctionUrl()) {
+    consoleNote("Your team's Restack Usage function isn't set up yet, so template admins can't publish. A Full admin sets it up. Your changes are kept here.", 'error');
+    return;
+  }
+  const leftOut = nonTemplateChanges() ? ' Only your templates went in: other changes need a Full admin.' : '';
+  const remembered = new Map(); // your picks, if the function turns a try away and it reads again
+  for (let attempt = 1; ; attempt++) {
+    let latest;
+    try {
+      latest = await readFunctionTeam();
+    } catch (error) {
+      consoleNote(`Couldn't check what's published now: ${templatesProblem(error)}. Nothing changed for your team.`, 'error');
+      return;
+    }
+    if (!latest.team) {
+      consoleNote("Nothing's published yet. A Full admin publishes your team's first templates.", 'error');
+      return;
+    }
+    const snapshot = team.draft;
+    const merged = await mergeWithLatest(latest.team, remembered, true);
+    if (!merged) {
+      consoleNote('Not published. Your changes are still here, and nothing changed for your team.');
+      return;
+    }
+    const updated = Math.max(Date.now(), (latest.team.updated || 0) + 1); // (after the copy published now, whatever this computer's clock says: the function checks)
+    const history = [updated, ...lineage(latest.team)].slice(0, HISTORY_MAX); // (built on the copy published now)
+    const payload = { ...latest.raw, templates: merged.team.templates, updated, by: team.me, history };
+    const text = await encryptTeam(payload, team.key);
+    consoleNote('Publishing through Restack Usage…');
+    let where;
+    try {
+      where = await publishThroughFunction(text, latest);
+    } catch (error) {
+      if (error.conflict && attempt < 3) continue; // someone published at the same moment: again, with theirs
+      consoleNote(`Couldn't publish: ${templatesProblem(error)}. Nothing changed for your team.`, 'error');
+      return;
+    }
+    await afterPublish(payload, { ...merged, parent: latest.team }, snapshot, true);
+    team.publishedVia = 'function';
+    log(`Team: published ${plural(payload.templates.length, 'template')} as a template admin, through Restack Usage (${where.repo}, ${where.branch})${merged.others ? `, with ${merged.others}'s changes` : ''}`);
+    showMergedTeam();
+    renderPublishBox();
+    const others = merged.others ? ` It has the changes ${merged.others} published too.` : '';
+    consoleNote(`Published to ${where.repo}.${others}${leftOut}`, 'ok', leftOut ? 0 : PUBLISHED_NOTE_MS);
+    return;
+  }
+}
+
+/** Why a template admin's publish or Usage didn't work, with what to do about it. */
+function templatesProblem(error) {
+  const reason = error.userMessage || error.message;
+  if (error.keyRefused) return `${reason}. Ask a Full admin for a new key, and put it under Your access`;
+  if (error.notSetUp) return `${reason}. A Full admin sets that up`;
+  return reason;
+}
+
+/** Whether a template admin's unpublished changes have more than templates in them (say, from when they were a Full admin). */
+function nonTemplateChanges() {
+  if (!team.draft || !team.draftBase) return false;
+  const now = draftBase(team.draft);
+  const was = team.draftBase;
+  const keys = [...new Set([...Object.keys(now.prints), ...Object.keys(was.prints)])].filter((key) => !key.startsWith('t:'));
+  if (keys.some((key) => (now.prints[key] || '') !== (was.prints[key] || ''))) return true;
+  const same = (x, y) => x.length === y.length && x.every((item) => y.includes(item));
+  return !same(now.admins, was.admins) || !same(now.rateCons, was.rateCons);
 }
 
 // ---- the team's settings, each in its card on the admin console's Team settings tab
@@ -7969,85 +8186,289 @@ async function onEmailLimitSave(value) {
   renderEmailLimit(`Saved. ${publishWhere()} so your reps' emails stay under ${mb} MB.`, 'ok');
 }
 
-// ---- team admins: who gets Settings → Admin console (published with the templates)
+// ---- team admins: who gets Settings → Admin console (published with the templates), at two levels (0.28):
+// Full admins change everything; template admins make the team's templates and see Usage, each with a key of
+// their own (team.json lists its SHA-256, and the Restack Usage function checks it)
 
-/** The team's admins, as they'll be published: the admin's changes, else what's published, else you. */
+const LEVEL_NAMES = { full: 'Full', templates: 'Templates only' };
+
+/** The team's Full admins, as they'll be published: the admin's changes, else what's published, else you. */
 function teamAdmins() {
   const settings = teamSettings();
   return settings && settings.admins && settings.admins.length ? settings.admins : [team.me].filter(Boolean);
 }
 
-/** The list, each with Remove (not for yourself, and never the last one), and the box to add one. */
+let keyShown = null; // a template admin's new key, while this page is open: { email, key, hash } (it's never kept)
+
+/**
+ * The list: each admin with their level, New key for a template admin, and Remove (not for yourself, and never
+ * the last Full admin); then the box to add one, and a template admin's new key.
+ */
 function renderAdminsBox(message, tone) {
-  const list = teamAdmins();
-  teamSubtitle('admins', plural(list.length, 'admin'));
+  const admins = teamAdmins();
+  const editors = teamEditors();
+  teamSubtitle('admins', plural(admins.length + editors.length, 'admin'));
   const box = $('admin-list');
   box.textContent = '';
-  for (const address of list) {
+  const rows = [...admins.map((email) => ({ email, level: 'full' })), ...editors.map((e) => ({ email: e.email, level: 'templates' }))];
+  for (const { email, level } of rows) {
     const row = el('li', 'admin-row');
-    row.append(el('span', 'admin-email', address));
-    const you = !CONSOLE && address === team.me; // (the console doesn't know who's using it)
+    row.append(el('span', 'admin-email', email));
+    const you = !CONSOLE && email === team.me; // (the console doesn't mark anyone)
     if (you) row.append(el('span', 'admin-you', 'you'));
+    const lastFull = level === 'full' && admins.length < 2; // (there's always a Full admin)
+    if (CONSOLE) {
+      const pick = el('select', 'admin-level');
+      pick.setAttribute('aria-label', `Level for ${email}`);
+      for (const [value, label] of Object.entries(LEVEL_NAMES)) pick.append(new Option(label, value, value === level, value === level));
+      pick.disabled = lastFull;
+      if (lastFull) pick.title = "There's always at least one Full admin.";
+      pick.addEventListener('change', () => onAdminLevel(email, pick.value).catch(fail));
+      row.append(pick);
+    }
+    if (level === 'templates') {
+      const rekey = el('button', 'link-btn admin-rekey', 'New key');
+      rekey.type = 'button';
+      rekey.setAttribute('aria-label', `New key for ${email}`);
+      rekey.addEventListener('click', () => onAdminNewKey(email).catch(fail));
+      row.append(rekey);
+    } else if (CONSOLE && editors.length) {
+      row.append(el('span', 'admin-rekey')); // (keeps the levels lined up with the template admins' rows)
+    }
     const remove = el('button', 'link-btn', 'Remove');
     remove.type = 'button';
-    remove.setAttribute('aria-label', `Remove ${address}`);
-    remove.disabled = you || list.length < 2;
-    remove.addEventListener('click', () => onAdminRemove(address).catch(fail));
+    remove.setAttribute('aria-label', `Remove ${email}`);
+    remove.disabled = you || lastFull;
+    remove.addEventListener('click', () => onAdminRemove(email).catch(fail));
     row.append(remove);
     box.append(row);
   }
   $('admin-self').hidden = CONSOLE;
-  $('admin-new').disabled = list.length >= MAX_ADMINS;
-  $('admin-add').disabled = list.length >= MAX_ADMINS;
-  setStatusIn('admin-status', message || (list.length >= MAX_ADMINS ? `That's the most there can be (${MAX_ADMINS}).` : ''), tone);
+  const full = admins.length >= MAX_ADMINS && editors.length >= MAX_ADMINS;
+  $('admin-new').disabled = full;
+  $('admin-add').disabled = full;
+  setStatusIn('admin-status', message || (full ? `That's the most there can be (${MAX_ADMINS} of each).` : ''), tone);
+  renderKeyShown();
+}
+
+/** A template admin's new key, shown while it's still theirs (not replaced, and they're still a template admin). */
+function renderKeyShown() {
+  const box = $('admin-key');
+  if (!box) return;
+  const entry = keyShown && teamEditors().find((e) => e.email === keyShown.email);
+  if (!entry || entry.hash !== keyShown.hash) keyShown = null;
+  box.hidden = !keyShown;
+  $('admin-key-value').value = keyShown ? keyShown.key : '';
+  $('admin-key-title').textContent = keyShown ? `${keyShown.email}'s key` : '';
+  setStatusIn('admin-key-status', '');
+}
+
+/** A new key for a template admin: their entry for team.json ({ email, hash }). The key itself is only shown, once. */
+async function makeTemplateKey(email) {
+  const key = newTemplateKey();
+  const hash = await keyHash(key);
+  keyShown = { email, key, hash };
+  return { email, hash };
 }
 
 async function onAdminAdd(event) {
   event.preventDefault();
   const input = $('admin-new');
   const address = input.value.trim().toLowerCase();
-  const list = teamAdmins();
+  const level = CONSOLE && $('admin-level').value === 'templates' ? 'templates' : 'full';
+  const admins = teamAdmins();
+  const editors = teamEditors();
   let problem = '';
   if (!address) problem = 'Type their email address first.';
   else if (!/^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/.test(address)) problem = `"${address}" doesn't look like an email address.`;
-  else if (list.includes(address)) problem = `${address} is already an admin.`;
-  else if (list.length >= MAX_ADMINS) problem = `That's the most there can be (${MAX_ADMINS}).`;
+  else if (admins.includes(address) || editors.some((e) => e.email === address)) problem = `${address} is already an admin.`;
+  else if ((level === 'full' ? admins : editors).length >= MAX_ADMINS) problem = `That's the most ${level === 'full' ? 'Full' : 'template'} admins there can be (${MAX_ADMINS}).`;
   if (problem) {
     renderAdminsBox(problem, 'error');
     input.focus();
     return;
   }
   try {
-    await saveTeamDraft({ admins: [...list, address] });
+    if (level === 'full') await saveTeamDraft({ admins: [...admins, address] });
+    else await saveTeamDraft({ editors: [...editors, await makeTemplateKey(address)] });
   } catch (error) {
+    keyShown = null;
     renderAdminsBox(`Couldn't save it: ${error.message}`, 'error');
     return;
   }
   input.value = '';
-  log(`Team admins: added one, ${list.length + 1} now (not published yet)`);
+  log(`Team admins: added a ${level === 'full' ? 'Full' : 'template'} admin, ${admins.length + editors.length + 1} now (not published yet)`);
   renderPublishBox();
-  renderAdminsBox(`Added. ${publishWhere()} so ${address} gets the admin settings.`, 'ok');
-  input.focus();
+  if (level === 'full') {
+    renderAdminsBox(`Added. ${publishWhere()} so ${address} gets the admin settings.`, 'ok');
+    input.focus();
+    return;
+  }
+  renderAdminsBox(`Added ${address} as Templates only. Copy their key below and send it to them, then ${publishWhere()}.`, 'ok');
+  $('admin-key-copy').focus();
+}
+
+/** Full ↔ Templates only. A template admin gets a new key; a Full admin needs the admin key (or GitHub access) instead. */
+async function onAdminLevel(email, level) {
+  const admins = teamAdmins();
+  const editors = teamEditors();
+  try {
+    if (level === 'templates' && admins.includes(email)) {
+      if (admins.length < 2) {
+        renderAdminsBox("There's always at least one Full admin.", 'error');
+        return;
+      }
+      await saveTeamDraft({ admins: admins.filter((a) => a !== email), editors: [...editors, await makeTemplateKey(email)] });
+    } else if (level === 'full' && editors.some((e) => e.email === email)) {
+      if (admins.length >= MAX_ADMINS) {
+        renderAdminsBox(`That's the most Full admins there can be (${MAX_ADMINS}).`, 'error');
+        return;
+      }
+      await saveTeamDraft({ admins: [...admins, email], editors: editors.filter((e) => e.email !== email) });
+    } else {
+      return;
+    }
+  } catch (error) {
+    keyShown = null;
+    renderAdminsBox(`Couldn't change it: ${error.message}`, 'error');
+    return;
+  }
+  log(`Team admins: one is ${LEVEL_NAMES[level]} now (not published yet)`);
+  renderPublishBox();
+  if (level === 'full') {
+    renderAdminsBox(`${email} is a Full admin once you ${publishWhere().replace(/^P/, 'p')}. To publish themselves, they'll need the admin key or GitHub access.`, 'ok');
+    return;
+  }
+  renderAdminsBox(`${email} is Templates only once you ${publishWhere().replace(/^P/, 'p')}. Copy their key below and send it to them. ${STILL_HAS_ADMIN_KEY}`, 'ok');
+  $('admin-key-copy').focus();
+}
+
+/** A Full admin made Templates only, or taken off, still has the admin key (and any GitHub access) until it's changed. */
+const STILL_HAS_ADMIN_KEY = 'They still have the admin key: if they shouldn\'t, make a new one under Tokens/Keys → Usage counts, put it in the Function App, and send it to your other Full admins (and take away any GitHub access they have).';
+
+/** A template admin's new key (theirs was lost, or got out): the old one stops working once it's published. */
+async function onAdminNewKey(email) {
+  const editors = teamEditors();
+  if (!editors.some((e) => e.email === email)) return;
+  try {
+    const entry = await makeTemplateKey(email);
+    await saveTeamDraft({ editors: editors.map((e) => (e.email === email ? entry : e)) });
+  } catch (error) {
+    keyShown = null;
+    renderAdminsBox(`Couldn't make a new key: ${error.message}`, 'error');
+    return;
+  }
+  log('Team admins: a new key for a template admin (not published yet)');
+  renderPublishBox();
+  renderAdminsBox(`New key made for ${email}. Copy it below and send it to them, then ${publishWhere()}: their old key stops working once it's published.`, 'ok');
+  $('admin-key-copy').focus();
 }
 
 async function onAdminRemove(address) {
-  const list = teamAdmins();
-  if (list.length < 2 || (!CONSOLE && address === team.me) || !list.includes(address)) return;
+  const admins = teamAdmins();
+  const editors = teamEditors();
+  const editor = editors.some((e) => e.email === address);
+  if (!editor && (admins.length < 2 || (!CONSOLE && address === team.me) || !admins.includes(address))) return;
   try {
-    await saveTeamDraft({ admins: list.filter((a) => a !== address) });
+    if (editor) await saveTeamDraft({ editors: editors.filter((e) => e.email !== address) });
+    else await saveTeamDraft({ admins: admins.filter((a) => a !== address) });
   } catch (error) {
     renderAdminsBox(`Couldn't remove them: ${error.message}`, 'error');
     return;
   }
-  log(`Team admins: removed one, ${list.length - 1} now (not published yet)`);
+  log(`Team admins: removed one, ${admins.length + editors.length - 1} now (not published yet)`);
   renderPublishBox();
-  renderAdminsBox(`Removed. ${publishWhere()} to take the admin settings away from ${address}.`, 'ok');
+  renderAdminsBox(`Removed. ${publishWhere()} to take the admin settings away from ${address}.${editor ? '' : ` ${STILL_HAS_ADMIN_KEY}`}`, 'ok');
   $('admin-new').focus();
+}
+
+// ---- Your access (a template admin's console, 0.28): what they can do, and their key
+
+/** Says what a template admin can do and who the Full admins are, and shows whether their key is here and still theirs. */
+async function renderAccess(message, tone) {
+  if (!templatesOnly()) return;
+  const fulls = team.published ? team.published.admins : [];
+  $('acc-about').textContent = `As a template admin, you make, change and delete your team's templates and publish them, and you see Usage. ${fulls.length ? `Full admins (${andList(fulls)})` : 'Full admins'} change the team's settings and who's an admin.`;
+  const key = templateKey();
+  if (document.activeElement !== $('acc-key')) $('acc-key').value = key;
+  $('acc-forget').hidden = !key;
+  const fits = !!key && await templateKeyFits();
+  teamSubtitle('access', !key ? 'No key yet' : fits ? 'Key saved' : "Key doesn't match");
+  setStatusIn('acc-status', message || (key && !fits
+    ? "This key isn't the one on your team's list anymore: a Full admin may have made you a new one. Paste the new one in Outlook (Settings → Admin console asks for it), or here." : ''), tone || (key && !fits ? 'error' : ''));
+}
+
+/** Your access, with a message: for Publish to team or the Usage tab without a key. */
+function showAccess(message, tone) {
+  showConsoleTab('access', false);
+  renderAccess(message, tone).catch(fail);
+  $('acc-key').focus();
+}
+
+async function onAccessSave() {
+  const key = $('acc-key').value.trim();
+  if (!key) {
+    setStatusIn('acc-status', 'Paste the key a Full admin sent you first.', 'error');
+    return;
+  }
+  if (!new RegExp(`^${TEMPLATE_KEY_PREFIX}[A-Za-z0-9_-]{32}$`).test(key)) {
+    setStatusIn('acc-status', `That doesn't look like a template admin's key. It starts with ${TEMPLATE_KEY_PREFIX} and is 36 letters and numbers long: check you copied all of it.`, 'error');
+    return;
+  }
+  const mine = await editorForKey(team.published, key);
+  if (!mine) {
+    setStatusIn('acc-status', "That key isn't on your team's list. Check you copied all of it. If a Full admin just added you or made you a new key, they need to publish first; it can take a minute or two to reach the site.", 'error');
+    return;
+  }
+  if (team.me && mine.email !== team.me && team.published.editors.some((e) => e.email === team.me)) {
+    setStatusIn('acc-status', `That's ${mine.email}'s key, not yours (${team.me}). Ask a Full admin for yours.`, 'error');
+    return;
+  }
+  writeSetting(TEMPLATE_KEY_SETTING, key);
+  team.me = mine.email;
+  usageReport.key = ''; // the Usage tab reads again
+  log('Admin console: a template admin saved their key');
+  await renderAccess('Saved. You can publish your templates and see Usage now.', 'ok');
+}
+
+/** Test: whether the Restack Usage function takes this key (and can publish). */
+async function onAccessTest() {
+  if (!templateKey()) {
+    setStatusIn('acc-status', 'Type your key and click Save first.', 'error');
+    return;
+  }
+  if (!publishFunctionUrl()) {
+    setStatusIn('acc-status', "Your team's Restack Usage function isn't set up yet. A Full admin sets it up.", 'error');
+    return;
+  }
+  $('acc-test').disabled = true;
+  setStatusIn('acc-status', 'Testing… (the first call can take a few seconds while Azure starts the function)');
+  try {
+    const data = await publishFunction('POST', { check: true });
+    log(`Admin console: template admin test worked (${data.repo})`);
+    setStatusIn('acc-status', `Works: you can publish templates to ${data.repo} and see Usage.`, 'ok');
+  } catch (error) {
+    const reason = templatesProblem(error);
+    log(`Admin console: template admin test failed (${reason})`);
+    setStatusIn('acc-status', `Didn't work: ${reason}.`, 'error');
+  } finally {
+    $('acc-test').disabled = false;
+  }
+}
+
+async function onAccessForget() {
+  writeSetting(TEMPLATE_KEY_SETTING, null);
+  $('acc-key').value = '';
+  usageReport.key = '';
+  usageReport.events = null;
+  log('Admin console: a template admin removed their key from this browser');
+  await renderAccess('Removed from this browser. Publish to team and the Usage tab need it again.', 'ok');
 }
 
 // ---- usage counts: the Restack Usage function (its own Function App)
 
 const USAGE_FUNCTION = 'usage'; // the function's name in the Restack Usage Function App
+const PUBLISH_FUNCTION = 'publish'; // ...and its Publish function's (0.27): publishing for admins without GitHub
 
 function cleanUsage(value) {
   if (!value || typeof value !== 'object') return null;
@@ -8060,6 +8481,76 @@ function cleanUsage(value) {
 function teamUsage() {
   const settings = teamSettings();
   return settings ? settings.usage || null : null;
+}
+
+/** Restack Usage's Publish function, next to its usage function: https://<app>.azurewebsites.net/api/publish (0.27). */
+function publishFunctionUrl() {
+  const usage = teamUsage();
+  return usage && usage.url ? usage.url.replace(/\/[^/]*$/, `/${PUBLISH_FUNCTION}`) : '';
+}
+
+/** Whether Publish to team goes through your Restack Usage function: no GitHub token here, and this browser has the admin key. */
+function functionPublishReady() {
+  return CONSOLE && !githubReady() && !!publishFunctionUrl() && usageAdminKey().length >= 16;
+}
+
+/** The key the console sends the Restack Usage function: a template admin's own (0.28), else the admin key. */
+function functionKeyHeader() {
+  return templatesOnly() ? { 'x-restack-key': templateKey() } : { 'x-usage-admin-key': usageAdminKey() };
+}
+
+/**
+ * Calls the Publish function with the admin key (or a template admin's own key). A function without its
+ * Publish part (or not set up for it yet) throws with notSetUp; team.json having changed on GitHub throws
+ * with conflict; a key that isn't on the list (anymore), with keyRefused.
+ */
+async function publishFunction(method, body) {
+  let response;
+  try {
+    response = await fetch(publishFunctionUrl(), {
+      method,
+      headers: { ...functionKeyHeader(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    });
+  } catch (error) {
+    throw Object.assign(userError("couldn't reach your Restack Usage function (check your internet connection)"), { unreachable: true });
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = null;
+  }
+  const reason = data && typeof data.error === 'string' ? data.error : `it answered ${response.status}`;
+  if (response.status === 404) throw Object.assign(userError("your Restack Usage function doesn't have its Publish part yet"), { notSetUp: true });
+  if (templatesOnly() && ((response.ok && method === 'GET' && data && data.service === 'restack-publish') || (response.status === 401 && /admin key/i.test(reason)))) {
+    // (its Publish part is from before template admins: it took the key for the admin key, or answered as for Test connection)
+    throw Object.assign(userError("your Restack Usage function is from before template admins and needs updating (its README has the steps)"), { notSetUp: true });
+  }
+  if (response.status === 503 && /publishing isn't set up|can't use the function yet/i.test(reason)) throw Object.assign(userError(reason), { notSetUp: true });
+  if (response.status === 409 && !/nothing's published yet/i.test(reason)) throw Object.assign(userError('team.json changed on GitHub at the same moment; publish again'), { conflict: true });
+  if (response.status === 401 && templatesOnly()) throw Object.assign(userError(reason), { keyRefused: true });
+  if (!response.ok) throw userError(reason);
+  return data || {};
+}
+
+/**
+ * team.json as it is on GitHub now, through the Publish function: { team, raw (as it was published, for a
+ * template admin's publish), sha, branch, repo, fromGithub }.
+ */
+async function readFunctionTeam() {
+  const data = await publishFunction('GET');
+  const at = { sha: String(data.sha || ''), branch: String(data.branch || ''), repo: String(data.repo || ''), fromGithub: true };
+  if (data.missing) return { team: null, raw: null, ...at };
+  const raw = await decryptTeam(String(data.text || ''), team.key);
+  return { team: cleanTeam(raw), raw, ...at };
+}
+
+/** Commits team.json through the Publish function, in place of the copy read (latest.sha). */
+async function publishThroughFunction(text, latest) {
+  const data = await publishFunction('POST', { text, sha: latest.sha || '', by: team.me });
+  return { repo: String(data.repo || latest.repo || ''), branch: String(data.branch || latest.branch || '') };
 }
 
 /** The function address as typed: the Function App's domain alone becomes https://<app>.azurewebsites.net/api/usage. */
@@ -8081,6 +8572,7 @@ function renderUsageBox(message, tone) {
   $('us-url').value = usage ? usage.url : '';
   $('us-key').value = usage ? usage.key : '';
   $('us-admin').value = usageAdminKey();
+  if ($('us-team')) $('us-team').value = CONSOLE && team.key ? team.key : ''; // (dots: Copy takes it for RESTACK_TEAM_KEY)
   teamSubtitle('usage', usage ? 'On' : 'Off');
   setStatusIn('us-status', message || (usage
     ? 'Counting. The admin console\'s Usage tab shows the numbers.'
@@ -8118,6 +8610,58 @@ async function copyFrom(input, statusId) {
   }
 }
 
+/** Usage counts → Team key → Copy: the team key, for the Function App's RESTACK_TEAM_KEY (template admins, 0.28). */
+async function copyTeamKey() {
+  if (!team.key) return;
+  const done = 'Team key copied. Paste it into the Function App as RESTACK_TEAM_KEY.';
+  try {
+    await navigator.clipboard.writeText(team.key);
+    setStatusIn('us-status', done);
+    return;
+  } catch (error) {
+    // the older way below
+  }
+  const input = $('us-team');
+  input.type = 'text'; // (a password box can't be copied from)
+  input.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (ignored) {
+    copied = false;
+  }
+  input.type = 'password';
+  input.blur();
+  setStatusIn('us-status', copied ? done : "Couldn't copy it. Your browser may not allow it on this page.", copied ? '' : 'error');
+}
+
+/**
+ * For Test: whether template admins can publish and see Usage through the Restack Usage function: its Publish
+ * part with the admin key, and RESTACK_TEAM_KEY. A sentence for Test's message (0.28).
+ */
+function templateAdminsLine(state) {
+  if (state === undefined) return ' For template admins, update your Restack Usage function (its README has the steps).'; // (from before 0.28)
+  return {
+    works: ' Template admins can publish and see Usage.',
+    unset: ' For template admins, add the team key (Copy, above) to the Function App as RESTACK_TEAM_KEY.',
+    invalid: " RESTACK_TEAM_KEY in the Function App isn't a team key: copy it again (above).",
+    wrong: " RESTACK_TEAM_KEY in the Function App isn't your team's key: copy it again (above).",
+    nofile: ' Publish once, then Test again to check RESTACK_TEAM_KEY for template admins.',
+  }[state] || '';
+}
+
+/** What Test says about template admins, with the admin key: from the Publish function (or why it can't say). */
+async function templateAdminsCheck() {
+  if (!publishFunctionUrl()) return '';
+  try {
+    const data = await publishFunction('POST', { check: true });
+    return templateAdminsLine(data.teamKey);
+  } catch (error) {
+    if (error.notSetUp) return ' Template admins publish through its Publish part, which isn\'t set up yet (its README has the steps).';
+    return ` Couldn't check it for template admins (${error.userMessage || error.message}).`;
+  }
+}
+
 async function onUsageSave() {
   const { usage, admin, problem, off } = usageFromFields();
   if (problem) {
@@ -8133,6 +8677,7 @@ async function onUsageSave() {
   }
   log(`Usage counts: settings ${off ? 'cleared' : 'saved'} (not published yet)`);
   renderPublishBox();
+  if (CONSOLE) renderGithubBox(); // (the admin key can publish through Restack Usage)
   usageReport.key = ''; // the Usage tab reads again
   renderUsageBox(off ? `Turned off. ${publishWhere()} to stop the counting.` : `Saved. ${publishWhere()} so your reps' panels start counting.`, 'ok');
 }
@@ -8152,14 +8697,16 @@ async function onUsageTest() {
     if (info.storage === false) throw userError(info.storageError || "the function can't reach its storage");
     await sendUsage(usage, { check: true });
     let read = '';
+    let editors = '';
     if (admin) {
       if (!info.adminKeySet) throw userError("RESTACK_USAGE_ADMIN_KEY isn't set in the Function App yet");
       const today = new Date().toISOString().slice(0, 10);
       await readUsage(usage.url, admin, today, today);
       read = ' The admin key reads the numbers.';
+      if (usage.url === (teamUsage() || {}).url && admin === usageAdminKey()) editors = await templateAdminsCheck(); // (once saved: it's checked with the saved ones)
     }
     log(`Usage counts: test connection worked (${info.version || 'version unknown'})`);
-    setStatusIn('us-status', `Connection works.${read} Click Save, then Publish.`, 'ok');
+    setStatusIn('us-status', `Connection works.${read}${editors} Click Save, then Publish.`, 'ok');
   } catch (error) {
     const reason = error.userMessage || error.message;
     log(`Usage counts: test failed (${reason})`);
@@ -8176,6 +8723,7 @@ function consoleUrl() {
   const admin = usageAdminKey();
   if (admin) parts.push(`u=${encodeURIComponent(admin)}`);
   if (team.me) parts.push(`m=${encodeURIComponent(team.me)}`); // who's opening it: for a team's first publish
+  if (isTemplateAdmin() && looksLikeTemplateKey(templateKey())) parts.push(`t=${encodeURIComponent(templateKey())}`); // a template admin's key, from their Outlook (0.28.1)
   return `${new URL('console.html', window.location.href).href}#${parts.join('&')}`; // the beta opens the beta's console
 }
 
@@ -8199,11 +8747,57 @@ function openHelp() {
   window.open(url, '_blank', 'noopener');
 }
 
+/**
+ * Settings → Admin console in Outlook, for a template admin without their key kept in Outlook (or with one
+ * that's been replaced): the box to paste it in, once.
+ */
+function askForTemplateKey(why, tone) {
+  const form = $('team-key-form');
+  if (!form) return;
+  form.hidden = false;
+  teamNote(why, tone);
+  $('team-key').focus();
+}
+
+/** Saves a template admin's key in their Outlook account, then opens the console with it. */
+async function onTeamKeySave(event) {
+  event.preventDefault();
+  const input = $('team-key');
+  const key = input.value.trim();
+  let problem = '';
+  if (!looksLikeTemplateKey(key)) problem = `That doesn't look like an admin key. It starts with ${TEMPLATE_KEY_PREFIX} and is 36 letters and numbers long: check you copied all of it.`;
+  else {
+    const mine = await editorForKey(team.published, key);
+    if (!mine) problem = "That key isn't on your team's list. Check you copied all of it, or ask a Full admin for a new one.";
+    else if (mine.email !== team.me) problem = "That key is someone else's. Ask a Full admin for yours.";
+  }
+  if (problem) {
+    teamNote(problem, 'error');
+    input.focus();
+    return;
+  }
+  try {
+    await writeRoaming(TEMPLATE_KEY_SETTING, key);
+  } catch (error) {
+    teamNote(`Couldn't keep it in your Outlook: ${error.message}`, 'error');
+    return;
+  }
+  input.value = '';
+  $('team-key-form').hidden = true;
+  log('Team: a template admin kept their key in Outlook');
+  await openConsole(true);
+}
+
 /** Settings → Admin console (team admins): the team's templates and settings, in a browser. */
-async function openConsole() {
+async function openConsole(keySaved = false) {
+  if (!CONSOLE && isTemplateAdmin() && !(await ownKeyFits())) { // a template admin's key goes with the link: pasted once, here
+    if (templateKey()) askForTemplateKey('Your admin key has changed. Paste the new one a Full admin sent you.', 'error');
+    else askForTemplateKey('Paste the admin key a Full admin sent you. Restack keeps it in your Outlook, so you only do this once.');
+    return;
+  }
   const url = consoleUrl();
   log('Team: admin console');
-  const opened = (how) => teamNote(`The admin console opened ${how}.`, 'ok');
+  const opened = (how) => teamNote(`${keySaved === true ? 'Your key is saved. ' : ''}The admin console opened ${how}.`, 'ok');
   try {
     if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.openBrowserWindow === 'function') {
       Office.context.ui.openBrowserWindow(url);
@@ -8220,7 +8814,7 @@ async function openConsole() {
   }
   try {
     await navigator.clipboard.writeText(url);
-    teamNote("Outlook didn't open your browser, so the console's link is copied: paste it into your browser's address bar. It has your team key in it, so don't share it.", 'error');
+    teamNote("Outlook didn't open your browser, so the console's link is copied: paste it into your browser's address bar. It has your keys in it, so don't share it.", 'error');
   } catch (error) {
     teamNote(`Outlook didn't open your browser. Open ${SITE_ROOT}console.html from Settings → Admin console on your computer's Outlook instead.`, 'error');
   }
@@ -8408,7 +9002,7 @@ function usageUnreachable() {
   return userError(`couldn't reach the Restack Usage function (check its address, and that its CORS settings list ${window.location.origin})`);
 }
 
-async function usageProblem(response) {
+async function usageProblem(response, editor = false) {
   let detail = '';
   try {
     const body = await response.json();
@@ -8416,7 +9010,7 @@ async function usageProblem(response) {
   } catch (error) {
     detail = '';
   }
-  if (response.status === 401) return userError("the key doesn't match the Function App's setting");
+  if (response.status === 401) return userError(editor && detail ? detail : "the key doesn't match the Function App's setting"); // (a template admin's: why it isn't on the list)
   if (response.status === 503) return userError(detail || "the Function App isn't set up yet (its keys or storage)");
   if (response.status === 404) return userError(`there's no ${USAGE_FUNCTION} function at that address`);
   return userError(`Azure answered ${response.status}${detail ? `: ${detail}` : ''}`);
@@ -8462,16 +9056,17 @@ async function sendUsage(usage, body) {
   }
 }
 
-/** Everyone's counts from `from` to `to` (YYYY-MM-DD), with the admin key. */
-async function readUsage(url, adminKey, from, to) {
+/** Everyone's counts from `from` to `to` (YYYY-MM-DD), with the admin key (or with editor, a template admin's own key, 0.28). */
+async function readUsage(url, key, from, to, editor = false) {
   let response;
   try {
-    response = await fetch(`${url}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers: { 'x-usage-admin-key': adminKey }, cache: 'no-store' });
+    response = await fetch(`${url}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { headers: { [editor ? 'x-restack-key' : 'x-usage-admin-key']: key }, cache: 'no-store' });
   } catch (error) {
     throw usageUnreachable();
   }
-  if (!response.ok) throw await usageProblem(response);
+  if (!response.ok) throw await usageProblem(response, editor);
   const data = await response.json();
+  if (editor && !(data && Array.isArray(data.events))) throw userError("your Restack Usage function is from before template admins and needs updating (its README has the steps)");
   const events = Array.isArray(data && data.events) ? data.events : [];
   events.truncated = !!(data && data.truncated);
   return events;
@@ -8572,7 +9167,12 @@ function usageFigures(files) {
 // to the console works next time. The console works from what's published in team.json, plus its own
 // changes until they're published; with nothing published yet, it starts a new team.
 
-const CONSOLE_TABS = ['templates', 'team', 'usage'];
+const CONSOLE_TABS = ['templates', 'team', 'usage', 'access']; // (Your access is a template admin's; Team settings, a Full admin's)
+
+/** The console's tabs for this admin: Templates, Team settings and Usage, or for a template admin Templates, Usage and Your access (0.28). */
+function consoleTabs() {
+  return templatesOnly() ? ['templates', 'usage', 'access'] : ['templates', 'team', 'usage'];
+}
 let consoleTab = 'templates';
 let consoleSearch = '';
 
@@ -8623,7 +9223,9 @@ function readConsoleHash() {
   const key = hash.get('k');
   const admin = hash.get('u');
   const me = String(hash.get('m') || '').trim().toLowerCase();
+  const own = String(hash.get('t') || '').trim(); // a template admin's key, kept in their Outlook (0.28.1)
   if (key && /^[A-Za-z0-9_-]{22}$/.test(key)) writeSetting('teamKey', key);
+  if (looksLikeTemplateKey(own)) writeSetting(TEMPLATE_KEY_SETTING, own);
   if (admin && admin.length >= 16) writeSetting('usageAdmin', JSON.stringify(admin)); // what readRoaming reads outside Outlook
   if (/^[^\s@]+@[^\s@]+$/.test(me)) writeSetting('consoleMe', me); // who opened it from Outlook
   if (window.location.hash) {
@@ -8656,18 +9258,19 @@ async function startConsole() {
   wireConsole();
   consoleNote('Opening your team’s templates…');
   await loadTeam();
-  const me = String(readSetting('consoleMe') || '');
-  if (team.status === 'ok') team.me = team.published.admins.includes(me) ? me : team.published.admins[0] || '';
-  else if (team.status === 'nofile') team.me = me; // a new team: whoever opened the console from Outlook sets it up
+  await findConsoleAdmin();
   consoleNote('');
-  if (!consoleOpens()) {
+  if (!consoleOpens() || team.level === 'none') {
     showConsoleLocked();
     return;
   }
-  log(`Admin console: ${plural(teamTemplates().length, 'team template')}${team.draft ? ', with changes not published yet' : ''}`);
+  applyConsoleLevel();
+  log(`Admin console: ${plural(teamTemplates().length, 'team template')}${team.draft ? ', with changes not published yet' : ''}${templatesOnly() ? ' (a template admin)' : ''}`);
   $('con-tabs').hidden = false;
   renderConsole();
-  showConsoleTab(CONSOLE_TABS.includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
+  const needKey = templatesOnly() && !(await templateKeyFits()); // (a template admin without their key: Your access first)
+  showConsoleTab(needKey ? 'access' : consoleTabs().includes(readSetting('tab')) ? readSetting('tab') : 'templates', false);
+  if (needKey) await renderAccess();
   watchOtherTabs();
   // Another admin published after your changes began: theirs are in now, yours still to publish (0.26)
   if (team.replaced) {
@@ -8683,12 +9286,68 @@ async function startConsole() {
   }
 }
 
+/**
+ * Who's using the console, and at which level (0.28): whoever opened it from Outlook (its link says who), if
+ * they're on the team's lists; else whoever this browser's template admin key is for; else, as before levels,
+ * the first admin, with a Full admin's console (nothing can be published from it without a way to publish).
+ */
+async function findConsoleAdmin() {
+  const me = String(readSetting('consoleMe') || '');
+  team.level = 'full';
+  if (team.status === 'nofile') {
+    team.me = me; // a new team: whoever opened the console from Outlook sets it up
+    return;
+  }
+  if (team.status !== 'ok') return;
+  const { admins, editors } = team.published;
+  if (admins.includes(me)) {
+    team.me = me;
+    return;
+  }
+  const mine = editors.some((e) => e.email === me) ? null : await editorForKey(team.published, templateKey());
+  if (mine || editors.some((e) => e.email === me)) {
+    team.level = 'templates';
+    team.me = mine ? mine.email : me;
+    return;
+  }
+  team.me = admins[0] || '';
+  if (me && admins.length) { // opened from Outlook by someone on neither list (taken off, say): it doesn't open for them
+    team.level = 'none';
+    team.me = me;
+  }
+}
+
+/** Whether this browser has the template admin's key that's on the team's list for them. */
+async function templateKeyFits() {
+  const mine = await editorForKey(team.published, templateKey());
+  return !!mine && mine.email === team.me;
+}
+
+/** The tabs and cards for the console's admin: a template admin gets Templates, Usage and Your access. */
+function applyConsoleLevel() {
+  const tabs = consoleTabs();
+  for (const name of CONSOLE_TABS) $(`con-tab-${name}`).hidden = !tabs.includes(name);
+  document.documentElement.classList.toggle('is-templates-only', templatesOnly());
+  if (!templatesOnly()) return;
+  // A template admin doesn't use the admin key or a GitHub token: any kept here (from when they were a Full admin, say) go
+  writeSetting('usageAdmin', null);
+  writeSetting('githubToken', null);
+  try {
+    sessionStorage.removeItem(`${STORE_PREFIX}githubToken`);
+  } catch (error) {
+    // nothing kept there
+  }
+  $('access-cards').append($('con-card-browser')); // This browser: for taking their keys off a shared computer
+  $('forget-hint').textContent = 'The console keeps your team key and your key in this browser, so a bookmark to it works next time. On a shared computer, remove them when you\'re done.';
+}
+
 /** No key, the wrong key, nothing published yet, or the site couldn't be reached. */
 function showConsoleLocked() {
   const box = $('con-locked');
   box.textContent = '';
   const card = el('div', 'con-locked-card');
-  const [title, ...lines] = {
+  const [title, ...lines] = team.level === 'none' ? ["You're not one of your team's admins",
+    `${team.me} isn't on your team's list of admins, so the console doesn't open for you. A Full admin adds admins on the Admins page (Team settings), then publishes. If one just added you, it can take a minute or two to reach the site: try again then.`] : {
     nokey: ['Open the console from Outlook',
       'In Restack, choose Settings (the gear at the bottom) → Admin console. That link carries your team key, and this browser keeps it so the console opens straight away next time.'],
     wrongkey: ["This key doesn't open your team's templates",
@@ -8707,20 +9366,20 @@ function showConsoleLocked() {
   helpLine.append(help);
   card.append(helpLine);
   const row = el('div', 'btn-row');
-  if (team.status === 'wrongkey') {
-    const forget = el('button', 'btn', 'Remove the key from this browser');
+  if (team.status === 'error' || team.level === 'none') {
+    const again = el('button', 'btn primary', 'Try again');
+    again.type = 'button';
+    again.addEventListener('click', () => window.location.reload());
+    row.append(again);
+  }
+  if (team.status === 'wrongkey' || team.level === 'none') {
+    const forget = el('button', 'btn', team.level === 'none' ? 'Remove what this browser keeps' : 'Remove the key from this browser');
     forget.type = 'button';
     forget.addEventListener('click', () => {
       forgetConsoleKeys();
       window.location.reload();
     });
     row.append(forget);
-  }
-  if (team.status === 'error') {
-    const again = el('button', 'btn primary', 'Try again');
-    again.type = 'button';
-    again.addEventListener('click', () => window.location.reload());
-    row.append(again);
   }
   if (row.childElementCount) card.append(row);
   box.append(card);
@@ -8740,7 +9399,7 @@ function forgetConsoleKeys() {
 let forgetArmed = 0;
 
 function showConsoleTab(tab, focus = true) {
-  if (!CONSOLE_TABS.includes(tab)) return;
+  if (!consoleTabs().includes(tab)) return;
   consoleTab = tab;
   writeSetting('tab', tab);
   for (const name of CONSOLE_TABS) {
@@ -8752,6 +9411,7 @@ function showConsoleTab(tab, focus = true) {
   }
   if (focus) $(`con-tab-${tab}`).focus();
   if (tab === 'usage') loadUsageReport().catch(fail);
+  if (tab === 'access') renderAccess().catch(fail);
 }
 
 // ---- Team settings: four pages (Tokens/Keys, Files, Toggles, Admins), one showing at a time, picked by
@@ -8827,6 +9487,7 @@ function renderConsole() {
   renderUsageBox();
   renderGithubBox();
   renderEmailLimit();
+  if (templatesOnly()) renderAccess().catch(fail);
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
 }
@@ -8843,7 +9504,7 @@ function renderConsolePublish() {
     : '';
   $('con-publish-text').textContent = pending
     ? "Changes your team can't see yet"
-    : team.justPublished ? (githubReady() ? 'Published to GitHub' : 'team.json downloaded') : team.published ? `Published${when ? ` ${when}` : ''}` : 'Nothing published yet';
+    : team.justPublished ? (team.publishedVia === 'download' ? 'team.json downloaded' : 'Published to GitHub') : team.published ? `Published${when ? ` ${when}` : ''}` : 'Nothing published yet';
   $('con-publish').disabled = !pending;
   const settings = teamSettings();
   markSwitch('con-rep-templates', !!(settings && settings.repTemplates));
@@ -8854,11 +9515,12 @@ function wireConsole() {
   const tabs = $('con-tabs');
   for (const name of CONSOLE_TABS) $(`con-tab-${name}`).addEventListener('click', () => showConsoleTab(name));
   tabs.addEventListener('keydown', (event) => {
-    const at = CONSOLE_TABS.indexOf(consoleTab);
-    const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: CONSOLE_TABS.length - 1 }[event.key];
+    const tabs = consoleTabs();
+    const at = tabs.indexOf(consoleTab);
+    const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[event.key];
     if (next === undefined) return;
     event.preventDefault();
-    showConsoleTab(CONSOLE_TABS[(next + CONSOLE_TABS.length) % CONSOLE_TABS.length]);
+    showConsoleTab(tabs[(next + tabs.length) % tabs.length]);
   });
   $('con-publish').addEventListener('click', () => onPublish().catch(fail));
   $('con-new').addEventListener('click', () => editTemplate('team', null));
@@ -8879,6 +9541,15 @@ function wireConsole() {
     event.preventDefault();
     onEmailLimitSave($('size-mb').value).catch(fail);
   });
+  $('acc-save').addEventListener('click', () => onAccessSave().catch(fail));
+  $('acc-test').addEventListener('click', () => onAccessTest().catch(fail));
+  $('acc-forget').addEventListener('click', () => onAccessForget().catch(fail));
+  $('acc-key').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    onAccessSave().catch(fail);
+  });
+  $('us-team-copy').addEventListener('click', () => copyTeamKey().catch(fail));
   $('gh-save').addEventListener('click', onGithubSave);
   $('gh-test').addEventListener('click', () => onGithubTest().catch(fail));
   $('gh-forget').addEventListener('click', onGithubForget);
@@ -8892,6 +9563,7 @@ function wireConsole() {
     forgetConsoleKeys();
     team.draft = null;
     renderGithubBox();
+    renderAccess().catch(fail);
     log('Admin console: removed what it kept in this browser');
     setStatusIn('forget-status', 'Removed. To open the console again, use Settings → Admin console in Outlook.', 'ok');
   });
@@ -9005,15 +9677,18 @@ function githubReady() {
 }
 
 function renderGithubBox(message, tone) {
-  if (!CONSOLE) return;
+  if (!CONSOLE || templatesOnly()) return; // (a template admin publishes only through Restack Usage, with their own key)
   $('gh-repo').value = githubRepo();
   $('gh-token').value = githubToken();
   $('gh-remember').checked = !!readSetting('githubToken');
   $('gh-forget').hidden = !githubToken();
-  $('github-state').textContent = githubReady() ? 'Straight to GitHub' : 'Download and upload';
-  setStatusIn('gh-status', message || (githubReady()
-    ? `Publish to team commits team.json to ${githubRepo()} for you.`
-    : 'Without a token, Publish to team downloads team.json for you to upload.'), tone);
+  const route = publishRoute();
+  $('github-state').textContent = { github: 'Straight to GitHub', function: 'Through Restack Usage', download: 'Download and upload' }[route];
+  setStatusIn('gh-status', message || {
+    github: `Publish to team commits team.json to ${githubRepo()} for you.`,
+    function: 'Publish to team goes to GitHub through your Restack Usage function, with the admin key under Usage counts. No GitHub account or token needed.',
+    download: 'Without a token, Publish to team downloads team.json for you to upload.',
+  }[route], tone);
 }
 
 function onGithubSave() {
@@ -9092,8 +9767,12 @@ async function github(path, options = {}) {
 }
 
 async function onGithubTest() {
+  if (!githubToken() && functionPublishReady()) {
+    await testFunctionPublish();
+    return;
+  }
   if (!githubToken()) {
-    renderGithubBox('Paste a token and click Save first.', 'error');
+    renderGithubBox('Paste a token and click Save first, or put the admin key under Usage counts to publish through your Restack Usage function.', 'error');
     return;
   }
   $('gh-test').disabled = true;
@@ -9107,6 +9786,25 @@ async function onGithubTest() {
     setStatusIn('gh-status', `Works: the token reaches ${repo}${file ? `, and team.json is on its ${branch} branch` : ` (${branch} branch; no team.json there yet)`}. Publish to team will commit team.json there.`, 'ok');
   } catch (error) {
     setStatusIn('gh-status', `Didn't work: ${error.userMessage || error.message}.`, 'error');
+  } finally {
+    $('gh-test').disabled = false;
+  }
+}
+
+/** Test, publishing through Restack Usage: whether its Publish function is there, set up, and can reach the repository. */
+async function testFunctionPublish() {
+  $('gh-test').disabled = true;
+  setStatusIn('gh-status', 'Testing… (the first call can take a few seconds while Azure starts the function)');
+  try {
+    const data = await publishFunction('POST', { check: true });
+    log(`Admin console: Restack Usage publishing test worked (${data.repo}, ${data.branch}; team key ${data.teamKey || 'not checked'})`);
+    setStatusIn('gh-status', `Works: your Restack Usage function publishes to ${data.repo}${data.found ? `, where team.json is on its ${data.branch} branch` : ` (${data.branch} branch; no team.json there yet)`}.${templateAdminsLine(data.teamKey).replace('(Copy, above)', '(Usage counts has it to copy)').replace('copy it again (above)', 'copy it again from Usage counts')}`, 'ok');
+  } catch (error) {
+    const reason = error.userMessage || error.message;
+    log(`Admin console: Restack Usage publishing test failed (${reason})`);
+    setStatusIn('gh-status', error.notSetUp
+      ? `Your Restack Usage function can't publish yet: ${reason}. Its README has the steps. Until then, Publish to team downloads team.json.`
+      : `Didn't work: ${reason}.`, 'error');
   } finally {
     $('gh-test').disabled = false;
   }
@@ -9242,7 +9940,8 @@ function pickUsageDates() {
   loadUsageReport().catch(fail);
 }
 
-function usageEmpty(text, button) {
+/** The Usage tab without numbers: why, and a button to the setting that's missing (Usage counts, or a template admin's Your access). */
+function usageEmpty(text, button, onClick) {
   $('us-report').hidden = true;
   $('us-csv').disabled = true;
   const box = $('us-empty');
@@ -9251,11 +9950,11 @@ function usageEmpty(text, button) {
   if (button) {
     const go = el('button', 'btn', button);
     go.type = 'button';
-    go.addEventListener('click', () => {
+    go.addEventListener('click', onClick || (() => {
       showConsoleTab('team', false);
       goToSetting('con-card-usage');
       $('us-url').focus();
-    });
+    }));
     box.append(go);
   }
   box.hidden = false;
@@ -9270,15 +9969,18 @@ async function loadUsageReport(force = false) {
     for (const button of document.querySelectorAll('#con-usage .us-range')) button.setAttribute('aria-pressed', String(button.dataset.range === range));
   }
   const usage = teamUsage();
-  const adminKey = usageAdminKey();
+  const editor = templatesOnly(); // a template admin reads them with their own key (0.28)
+  const secret = editor ? templateKey() : usageAdminKey();
   if (!usage) {
     $('us-line').textContent = '';
-    usageEmpty("Usage counts aren't on yet. Set up your Restack Usage function under Team settings → Tokens/Keys → Usage counts, then publish, and each rep's panel starts counting.", 'Set up usage counts');
+    if (editor) usageEmpty("Usage counts aren't on yet. A Full admin sets them up, and each rep's panel starts counting.");
+    else usageEmpty("Usage counts aren't on yet. Set up your Restack Usage function under Team settings → Tokens/Keys → Usage counts, then publish, and each rep's panel starts counting.", 'Set up usage counts');
     return;
   }
-  if (!adminKey) {
+  if (!secret) {
     $('us-line').textContent = '';
-    usageEmpty('Add your admin key under Team settings → Tokens/Keys → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
+    if (editor) usageEmpty('Type the key a Full admin sent you under Your access to see the numbers here. It stays in this browser.', 'Add your key', () => showAccess());
+    else usageEmpty('Add your admin key under Team settings → Tokens/Keys → Usage counts to see the numbers here. It stays in this browser.', 'Add the admin key');
     return;
   }
   let from = $('us-from').value;
@@ -9298,7 +10000,7 @@ async function loadUsageReport(force = false) {
     before.setDate(before.getDate() - 1);
     const after = dayFromIso(to);
     after.setDate(after.getDate() + 1);
-    const events = await readUsage(usage.url, adminKey, before.toISOString().slice(0, 10), after.toISOString().slice(0, 10));
+    const events = await readUsage(usage.url, secret, before.toISOString().slice(0, 10), after.toISOString().slice(0, 10), editor);
     Object.assign(usageReport, {
       from, to, key, loadedAt: Date.now(), truncated: !!events.truncated,
       events: events.filter((event) => {
@@ -9312,7 +10014,7 @@ async function loadUsageReport(force = false) {
     renderUsageReport();
   } catch (error) {
     $('us-line').textContent = '';
-    usageEmpty(`Couldn't load the numbers: ${error.userMessage || error.message}.`);
+    usageEmpty(`Couldn't load the numbers: ${error.userMessage || error.message}.${editor && /list of template admins/.test(error.userMessage || '') ? ' Ask a Full admin for a new key, and put it under Your access.' : ''}`);
   } finally {
     $('us-refresh').disabled = false;
   }
@@ -9743,6 +10445,7 @@ function wireReadUi() {
   $('rw-save').addEventListener('click', () => onReceiptWordsSave($('rw-words').value.split(/[,;\n]+/)).catch(fail));
   $('rw-default').addEventListener('click', () => onReceiptWordsSave(DEFAULT_RECEIPT_WORDS).catch(fail));
   $('admin-form')?.addEventListener('submit', (event) => onAdminAdd(event).catch(fail));
+  $('admin-key-copy')?.addEventListener('click', () => copyFrom('admin-key-value', 'admin-key-status').catch(fail));
   $('us-gen').addEventListener('click', () => {
     $('us-key').value = randomB64url(24);
     setStatusIn('us-status', 'New counting key made. Copy it into the Function App as RESTACK_USAGE_KEY.');
@@ -10013,8 +10716,9 @@ function openSettings() {
   const pop = $('settings-pop');
   const templates = $('set-templates');
   templates.hidden = !(readUiWired && canMakeOwn()); // your own templates
-  const admin = readUiWired && isAdmin(); // the team's are made in the admin console
+  const admin = readUiWired && (isAdmin() || isTemplateAdmin()); // the team's are made in the admin console (either level)
   $('set-team-group').hidden = !admin;
+  if ($('team-key-form')) $('team-key-form').hidden = true; // (a template admin's key box: only when Admin console asks)
   teamNote('');
   $('set-sep-look').hidden = templates.hidden && !admin;
   for (const id of ['set-size', 'set-view', 'set-sep-prefs', 'set-tag-receipts', 'set-keep-adding']) $(id).hidden = !readUiWired;
@@ -10114,7 +10818,8 @@ function wireSettings() {
   $('set-tag-receipts').addEventListener('click', () => setTagReceipts(!prefs.tagReceipts));
   $('set-keep-adding').addEventListener('click', () => setKeepAdding(!prefs.keepAdding));
   // The admin console (team admins): the team's templates and settings are made there
-  $('team-console').addEventListener('click', openConsole);
+  $('team-console').addEventListener('click', () => openConsole().catch(fail));
+  $('team-key-form')?.addEventListener('submit', (event) => onTeamKeySave(event).catch(fail));
   $('set-help').addEventListener('click', openHelp);
   box.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || pop.hidden) return;

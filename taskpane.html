@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.26">
+  <meta name="restack-version" content="0.28.1">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.26"></script>
+  <script src="mode.js?v=0.28.1"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.26">
-  <script type="module" src="taskpane.js?v=0.26"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.28.1">
+  <script type="module" src="taskpane.js?v=0.28.1"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -227,6 +227,14 @@
           <!-- The admin console: only team admins see this. Team templates and settings are made there, in a browser. -->
           <div id="set-team-group" hidden>
             <button id="team-console" class="menu-item set-row" type="button"><span class="mi-name">Admin console</span><svg class="opt-ext" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5 9.5 10.5M8 5H4.5v10.5H15V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <!-- A template admin's key (0.28.1): pasted here once, kept in their Outlook, and passed to every console opened from here -->
+            <form id="team-key-form" class="set-key" novalidate hidden>
+              <label class="set-key-label" for="team-key">Your admin key</label>
+              <span class="name-field">
+                <input id="team-key" type="text" autocomplete="off" spellcheck="false" placeholder="rtk_…">
+                <button id="team-key-save" class="link-btn" type="submit">Save</button>
+              </span>
+            </form>
             <p id="team-menu-note" class="set-note" role="status" hidden></p>
           </div>
           <div id="set-sep-look" class="menu-sep" hidden></div>
@@ -463,7 +471,7 @@
     <div>
       <section id="admins-section" class="team-section" hidden>
         <div class="azure-form">
-          <p class="hint">Admins can change the team templates and settings here: in Restack they get Settings → Admin console. Everyone else gets the rep view.</p>
+          <p class="hint">Full admins change everything here. Template admins (Templates only) get the Templates and Usage tabs: they make, change and delete the team's templates and publish them. In Restack, both get Settings → Admin console. Everyone else gets the rep view.</p>
           <ul id="admin-list" class="admin-list" aria-label="Team admins"></ul>
           <p id="admin-self" class="hint">You can't remove yourself. Another admin can.</p>
           <form id="admin-form" class="admin-form" novalidate>
@@ -471,18 +479,32 @@
               <span>Add an admin</span>
               <span class="name-field">
                 <input id="admin-new" type="email" autocomplete="off" spellcheck="false" maxlength="254" placeholder="Their email address">
+                <select id="admin-level" class="admin-level" aria-label="Their level">
+                  <option value="full">Full</option>
+                  <option value="templates">Templates only</option>
+                </select>
                 <button id="admin-add" class="link-btn" type="submit">Add</button>
               </span>
             </label>
           </form>
           <p id="admin-status" class="hint" role="status"></p>
+          <!-- A template admin's new key: shown once, here, for the Full admin to send them (0.28) -->
+          <div id="admin-key" class="admin-key" hidden>
+            <p id="admin-key-title" class="admin-key-title"></p>
+            <span class="name-field">
+              <input id="admin-key-value" type="text" readonly autocomplete="off" spellcheck="false" aria-labelledby="admin-key-title">
+              <button id="admin-key-copy" class="link-btn" type="button">Copy</button>
+            </span>
+            <p class="hint">Send it to them privately. Restack in their Outlook asks for it once (Settings → Admin console). Restack doesn't keep it, so copy it now: New key makes another. It works once you publish.</p>
+            <p id="admin-key-status" class="hint" role="status"></p>
+          </div>
           <div class="admin-needs">
-            <p class="hint"><strong>Someone you add</strong> gets the team's templates and settings once you publish, and their team key comes with the restack-team.xml they installed. Of their own, they need:</p>
+            <p class="hint"><strong>Someone you add</strong> gets their access once you publish, and their team key comes with the restack-team.xml they installed. Of their own, they need:</p>
             <ul class="hint admin-needs-list">
-              <li><strong>Upload access to your GitHub repository</strong>, to publish. With their own GitHub token under Tokens/Keys → Publishing, Publish to team goes straight there.</li>
-              <li><strong>The usage admin key</strong>, to see the Usage tab. They type it once under Tokens/Keys → Usage counts; send it to them privately.</li>
+              <li><strong>Full:</strong> the admin key, which they type once under Tokens/Keys → Usage counts. With your Restack Usage function set up for publishing, it's all they need to publish, with no GitHub account, and it shows the Usage tab. Or their own GitHub access: as a collaborator on your repository, Publish to team downloads team.json for them to upload, or goes straight there with their own token.</li>
+              <li><strong>Templates only:</strong> their own key, shown when you add them, which they paste once in Restack in Outlook, when Settings → Admin console asks for it. They publish through your Restack Usage function, which needs your team key as RESTACK_TEAM_KEY (Tokens/Keys → Usage counts has it to copy). Don't give them GitHub access: a collaborator on your repository can change anything there.</li>
             </ul>
-            <p class="hint">Each admin's unpublished changes stay in the browser they made them in. Publish to team adds them to what's already published, so one admin's changes don't undo another's.</p>
+            <p class="hint">Send keys privately. Each admin's unpublished changes stay in the browser they made them in. Publish to team adds them to what's already published, so one admin's changes don't undo another's.</p>
           </div>
         </div>
       </section>
@@ -560,7 +582,15 @@
               <button id="us-admin-gen" class="link-btn" type="button">Generate</button>
               <button id="us-admin-copy" class="link-btn" type="button">Copy</button>
             </span>
-            <small class="hint">Goes in RESTACK_USAGE_ADMIN_KEY. It's what lets the admin console read everyone's numbers, so it stays in this browser and isn't published.</small>
+            <small class="hint">Goes in RESTACK_USAGE_ADMIN_KEY. It lets the admin console read everyone's numbers and, once the function is set up for publishing, publish without a GitHub account. So it stays in this browser and isn't published.</small>
+          </label>
+          <label class="field">
+            <span>Team key <span class="muted">(for template admins)</span></span>
+            <span class="name-field">
+              <input id="us-team" type="password" readonly autocomplete="off" tabindex="-1" aria-label="Team key (hidden)">
+              <button id="us-team-copy" class="link-btn" type="button">Copy</button>
+            </span>
+            <small class="hint">Goes in RESTACK_TEAM_KEY, so the function can check that template admins publish only templates. It's the same key that's in every install file.</small>
           </label>
           <p id="us-status" class="hint" role="status"></p>
           <div class="btn-row">
@@ -592,6 +622,7 @@
           <button id="con-tab-templates" class="con-tab" type="button" role="tab" aria-selected="true" aria-controls="con-templates">Templates</button>
           <button id="con-tab-team" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-team" tabindex="-1">Team settings</button>
           <button id="con-tab-usage" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-usage" tabindex="-1">Usage</button>
+          <button id="con-tab-access" class="con-tab" type="button" role="tab" aria-selected="false" aria-controls="con-access" tabindex="-1" hidden>Your access</button>
         </nav>
         <!-- Help: the Restack wiki's admin console pages, in a new tab -->
         <a id="con-help" class="con-help" href="wiki.html#admin-console" target="_blank" rel="noopener">Help<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M11.5 3.5h5v5M16.5 3.5 9.5 10.5M8 5H4.5v10.5H15V12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
@@ -617,7 +648,7 @@
               <article class="con-card" id="con-card-publishing">
                 <header class="con-card-head"><h3>Publishing</h3><span id="github-state" class="con-chip"></span></header>
                 <div class="con-card-body azure-form">
-                  <p class="hint">Publish to team downloads <b>team.json</b> for you to upload to your GitHub repository. With a GitHub token here, it goes straight to GitHub instead.</p>
+                  <p class="hint">Publish to team goes straight to GitHub with a GitHub token here, or through your Restack Usage function (once it's set up for publishing) with the admin key under Usage counts: no GitHub account needed. Otherwise it downloads <b>team.json</b> for you to upload to your GitHub repository. Template admins always publish through your Restack Usage function, with their own keys.</p>
                   <label class="field">
                     <span>Repository</span>
                     <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
@@ -647,7 +678,7 @@
               <article class="con-card" id="con-card-browser">
                 <header class="con-card-head"><h3>This browser</h3></header>
                 <div class="con-card-body azure-form">
-                  <p class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
+                  <p id="forget-hint" class="hint">The console keeps your team key, usage admin key and any GitHub token you chose to remember in this browser, so a bookmark to it works next time. On a shared computer, remove them when you're done.</p>
                   <p id="forget-status" class="hint" role="status"></p>
                   <div><button id="con-forget" class="btn" type="button">Remove them from this browser</button></div>
                 </div>
@@ -715,6 +746,29 @@
               </article>
             </section>
           </div>
+        </div>
+      </section>
+
+      <!-- Your access: a template admin's (0.28). What they can do, their key, and This browser (moved in) -->
+      <section id="con-access" class="con-panel" role="tabpanel" aria-labelledby="con-tab-access" hidden>
+        <div id="access-cards" class="access-cards">
+          <article class="con-card" id="con-card-access">
+            <header class="con-card-head"><h3>Template admin</h3><span id="access-state" class="con-chip"></span></header>
+            <div class="con-card-body azure-form">
+              <p id="acc-about" class="hint"></p>
+              <label class="field">
+                <span>Your key</span>
+                <input id="acc-key" type="text" autocomplete="off" spellcheck="false" placeholder="rtk_…">
+                <small class="hint">The key a Full admin sent you. Pasted in Outlook (Settings → Admin console asks for it), it comes with every console you open from there; pasted here, it's for this browser.</small>
+              </label>
+              <p id="acc-status" class="hint" role="status"></p>
+              <div class="btn-row">
+                <button id="acc-save" class="btn primary" type="button">Save</button>
+                <button id="acc-test" class="btn" type="button">Test</button>
+                <button id="acc-forget" class="btn" type="button" hidden>Remove the key</button>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
 

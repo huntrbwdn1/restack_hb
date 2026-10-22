@@ -830,6 +830,13 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 [aria-checked="true"] > .switch { background: var(--btn-primary-bg); }
 [aria-checked="true"] > .switch::after { transform: translateX(12px); }
 .set-note { margin: 4px 12px 6px; padding: 7px 9px; border-radius: 5px; background: var(--surface-2); font-size: 12px; color: var(--fg); overflow-wrap: anywhere; }
+/* A template admin's key, under Admin console (0.28.1): asked for once, then kept in their Outlook */
+.set-key { display: grid; gap: 5px; margin: 2px 12px 4px; }
+.set-key-label { font-size: 12px; font-weight: 600; }
+.set-key .name-field { height: 30px; }
+.set-key .name-field input { width: 0; }
+.set-key .name-field .link-btn { flex: none; margin-left: 6px; font-weight: 600; }
+#team-key:not(:focus) { -webkit-text-security: disc; }
 .set-note.error { background: var(--danger-soft); color: var(--danger-ink); }
 .set-note.ok { background: var(--accent-soft); color: var(--accent-soft-ink); }
 /* the team's settings, each in its card on the admin console's Team settings tab */
@@ -857,6 +864,28 @@ html[data-mode="dark"] .one-tip .info-btn:hover, html[data-mode="dark"] .one-tip
 .admin-needs { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
 .admin-needs strong { color: var(--fg); font-weight: 600; }
 .admin-needs-list { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+/* Admin levels (0.28): each admin's level (Full, Templates only) in the list and in Add an admin; a template
+   admin's new key, set apart in the accent's soft color until it's copied and sent; a template admin's Your access */
+.admin-row { flex-wrap: wrap; }
+.admin-row .admin-email { flex: 1 1 180px; }
+.admin-level {
+  flex: none; height: 26px; padding: 0 4px; border: 1px solid var(--field-line); border-radius: 4px;
+  background: var(--surface); color: var(--fg); font: inherit; font-size: 12px; cursor: pointer;
+}
+.admin-level:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.admin-level:disabled { border-color: var(--line); color: var(--muted); cursor: default; opacity: 1; }
+.admin-row .admin-level { margin-right: 6px; }
+.admin-row .admin-rekey { flex: none; width: 54px; text-align: left; }
+@media (max-width: 560px) { .admin-row span.admin-rekey { display: none; } }
+.admin-form .name-field input { width: 0; } /* (it grows to fill the box; with a level picker beside it, it mustn't push the card wider on a phone) */
+.admin-form .name-field .admin-level { min-width: 0; height: 22px; margin-left: 6px; padding: 0 2px 0 8px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; font-weight: 600; }
+.admin-key { display: grid; gap: 8px; padding: 12px 14px 10px; border-radius: 6px; background: var(--accent-soft); }
+.admin-key-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--accent-soft-ink); overflow-wrap: anywhere; }
+.admin-key .name-field .link-btn { flex: none; margin-left: 6px; font-weight: 600; }
+.admin-key .hint { margin: 0; }
+.admin-key .hint:empty { display: none; }
+#admin-key-value:not(:focus), #acc-key:not(:focus) { -webkit-text-security: disc; } /* (keys stay out of screenshots; Copy copies them) */
+.access-cards { display: grid; gap: 16px; align-items: start; max-width: 820px; }
 
 /* Publish to team, when you and another admin changed the same things: which to keep (0.26) */
 .merge-dialog {

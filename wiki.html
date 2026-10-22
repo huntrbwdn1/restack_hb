@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.26</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.1</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -169,6 +169,7 @@
               <li><a href="#console-templates">Templates tab</a></li>
               <li><a href="#team-settings">Team settings tab</a></li>
               <li><a href="#usage">Usage tab</a></li>
+              <li><a href="#template-admins">Template admins</a></li>
             </ol>
           </li>
           <li><a href="#team-admin">For the team admin</a>
@@ -440,16 +441,18 @@
 
       <!-- ===================================================== Admin console -->
       <h2 id="admin-console">Admin console <span class="who">Team admins</span></h2>
-      <p>The admin console is where the team's templates and settings are made, full size in your browser.</p>
+      <p>The admin console is where the team's templates and settings are made, full size in your browser. Admins have one of two levels: <strong>Full</strong> admins get all of it, and <a href="#template-admins">template admins</a> (Templates only) get the Templates and Usage tabs.</p>
 
       <h3 id="console-open">Open the console</h3>
-      <p>In Restack, choose <strong>Settings → Admin console</strong>. Only team admins see it. The link carries your team key, and the browser keeps it so a bookmark to the console works next time (<a href="#team-settings">This browser</a> removes it). With nothing published yet, whoever opens the console from Outlook sets up the team and becomes its admin.</p>
+      <p>In Restack, choose <strong>Settings → Admin console</strong>. Only team admins see it, at either level. The link carries your team key, and the browser keeps it so a bookmark to the console works next time (<a href="#team-settings">This browser</a> removes it). With nothing published yet, whoever opens the console from Outlook sets up the team and becomes its admin. Someone who isn't on the team's list of admins (anymore) can't open it.</p>
 
       <h3 id="publish">Publish to team</h3>
       <p>Your reps don't see changes until you publish. The top right of the console says when there are changes they can't see yet.</p>
       <ul>
         <li><strong>Publish to team</strong> downloads <code>team.json</code>. Upload it to your GitHub repository (<strong>Add file → Upload files → Commit changes</strong>).</li>
         <li>With a GitHub token under <strong>Team settings → Tokens/Keys → Publishing</strong>, it goes straight to GitHub instead.</li>
+        <li>Without a GitHub account: once your Restack Usage function is set up for publishing (its folder's README has the steps), it goes to GitHub through the function, with the admin key under <strong>Tokens/Keys → Usage counts</strong>. The function keeps the GitHub token, and it can only change <code>team.json</code>.</li>
+        <li>Template admins always publish through your Restack Usage function, with their own keys. Their changes go straight to your reps, and the function turns away anything but templates.</li>
         <li>Unpublished changes stay in the browser they were made in. <strong>Publish to team</strong> adds them to what's already published, so changes another admin published in the meantime stay. If you both changed the same template or setting, it asks which to keep.</li>
         <li>Opening the console brings in what other admins have published since your changes began, and yours stay waiting to publish.</li>
         <li>It checks what's published on GitHub itself (the site can be a minute or two behind), so the latest is what your changes go on top of. If another admin's publish replaces yours with a version made from an older copy, the console brings your changes back to publish again.</li>
@@ -464,10 +467,10 @@
       <figure class="wide"><img src="wiki/console-team.png" width="760" height="487" alt="The admin console's Team settings tab, on its Files page" loading="lazy"><figcaption>The Team settings tab, on its Files page.</figcaption></figure>
       <h4>Tokens/Keys</h4>
       <dl class="terms">
-        <dt>Publishing</dt><dd>Your repository (<code>owner/repository</code>) and, optionally, a GitHub token: a fine-grained personal access token for that one repository, with <strong>Contents: Read and write</strong>. Make one on GitHub under <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>. Tick <strong>Remember it in this browser</strong> to keep it after the tab closes. <strong>Test</strong> checks it; <strong>Remove the token</strong> forgets it.</dd>
+        <dt>Publishing</dt><dd>Your repository (<code>owner/repository</code>) and, optionally, a GitHub token: a fine-grained personal access token for that one repository, with <strong>Contents: Read and write</strong>. Make one on GitHub under <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>. Tick <strong>Remember it in this browser</strong> to keep it after the tab closes. <strong>Test</strong> checks it; <strong>Remove the token</strong> forgets it. With no token here, Publish to team goes through your Restack Usage function when it's set up for publishing and the admin key is under Usage counts (the card's chip says <strong>Through Restack Usage</strong>, and <strong>Test</strong> checks the function).</dd>
         <dt>Attach automatically</dt><dd>Needs your own PDF Emails Azure Function App (its folder has the setup steps). Enter its address (its Default domain, from the Function App's Overview page) and an upload key (<strong>Generate</strong>, then <strong>Copy</strong> it into the Function App's <code>THREAD_ATTACHMENTS_UPLOAD_KEY</code> setting). Then <strong>Test connection</strong>, <strong>Save</strong>, and publish. Create email then opens with the PDF already attached, for everyone.</dd>
-        <dt>Usage counts</dt><dd>Needs your own Restack Usage Azure Function App (its folder has the setup steps). Enter its address, a counting key (its <code>RESTACK_USAGE_KEY</code> setting; it's published with your templates, so reps' panels can send counts) and an admin key (<code>RESTACK_USAGE_ADMIN_KEY</code>; it stays in this browser and isn't published). Then the Usage tab shows everyone's numbers.</dd>
-        <dt>This browser</dt><dd><strong>Remove them from this browser</strong>: your team key, usage admin key, any remembered GitHub token, and changes you haven't published (it asks first). Do this on a shared computer.</dd>
+        <dt>Usage counts</dt><dd>Needs your own Restack Usage Azure Function App (its folder has the setup steps). Enter its address, a counting key (its <code>RESTACK_USAGE_KEY</code> setting; it's published with your templates, so reps' panels can send counts) and an admin key (<code>RESTACK_USAGE_ADMIN_KEY</code>; it stays in this browser and isn't published). Then the Usage tab shows everyone's numbers. With the function set up for publishing, the admin key also publishes, with no GitHub account. For template admins, <strong>Team key → Copy</strong> copies your team key for the Function App's <code>RESTACK_TEAM_KEY</code> setting, which lets the function check their keys and what they publish. <strong>Test connection</strong> says whether template admins can publish and see Usage.</dd>
+        <dt>This browser</dt><dd><strong>Remove them from this browser</strong>: your team key, usage admin key (or a template admin's own key), any remembered GitHub token, and changes you haven't published (it asks first). Do this on a shared computer.</dd>
       </dl>
       <h4>Files</h4>
       <dl class="terms">
@@ -483,7 +486,12 @@
       </dl>
       <h4>Admins</h4>
       <dl class="terms">
-        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook. Add one by their email address (up to 20); <strong>Remove</strong> takes one off, yourself too, but the last admin stays. Someone you add gets the team's templates and settings once you publish, and their team key comes with the <code>restack-team.xml</code> they installed. Of their own, they need upload access to your GitHub repository to publish (and their own GitHub token, if Publish to team should go straight there), and the usage admin key to see the Usage tab: they type it once under <strong>Tokens/Keys → Usage counts</strong>, so send it to them privately.</dd>
+        <dt>Team admins</dt><dd>Everyone on the list gets <strong>Settings → Admin console</strong> in Outlook, and their own templates. Each has a level, picked next to their address: <strong>Full</strong> (everything in the console) or <strong>Templates only</strong> (a <a href="#template-admins">template admin</a>). Add one by their email address and level (up to 20 of each); <strong>Remove</strong> takes one off, yourself too, but there's always a Full admin. Someone you add gets their access once you publish, and their team key comes with the <code>restack-team.xml</code> they installed. Of their own, they need:
+          <ul>
+            <li><strong>Full:</strong> the admin key, which they type once under <strong>Tokens/Keys → Usage counts</strong> (send it to them privately). With your Restack Usage function set up for publishing, that's all they need to publish, with no GitHub account, and it shows the Usage tab. Or their own GitHub access: as a collaborator on your repository, Publish to team downloads <code>team.json</code> for them to upload, or goes straight there with their own token.</li>
+            <li><strong>Templates only:</strong> their own key. Restack makes it when you add them (or switch them to Templates only) and shows it once under the list: <strong>Copy</strong> it and send it to them privately: Restack in their Outlook asks for it once (<strong>Settings → Admin console</strong>). Restack doesn't keep it; <strong>New key</strong> makes another, and the old one stops working once you publish. They publish through your Restack Usage function, which needs <code>RESTACK_TEAM_KEY</code> (see Usage counts). Don't give them GitHub access: a collaborator on your repository can change anything there.</li>
+          </ul>
+        </dd>
       </dl>
 
       <h3 id="usage">Usage tab</h3>
@@ -495,6 +503,15 @@
       </ul>
       <p>An email for the same load and template counts once a day, however many times it's created. Only counts are kept: the rep's email address, when, the Restack version, how many files, pages and PDFs, the template's name, which accessorials, and whether it was split, Multi-stop, a separate email or attached automatically. Never the files, file names, load numbers or customer addresses.</p>
       <figure class="wide"><img src="wiki/console-usage.png" width="760" height="487" alt="The admin console's Usage tab" loading="lazy"><figcaption>The Usage tab, for the last 30 days.</figcaption></figure>
+
+      <h3 id="template-admins">Template admins</h3>
+      <p>A template admin (<strong>Templates only</strong> on the Admins page) makes, changes and deletes the team's templates and publishes them, and sees the Usage tab. Team settings, and who's an admin, are for Full admins.</p>
+      <ul>
+        <li>Their console has three tabs: <strong>Templates</strong>, <strong>Usage</strong> and <strong>Your access</strong>.</li>
+        <li>The first time, <strong>Settings → Admin console</strong> in Outlook asks for the key a Full admin sent them, and keeps it in their Outlook. Every console they open from there has it, on any computer, and it asks again only if a Full admin makes them a new key.</li>
+        <li><strong>Your access</strong>, in the console, says whether their key works (<strong>Test</strong> checks it with your Restack Usage function). A key pasted there is for that browser only.</li>
+        <li><strong>Publish to team</strong> goes through your Restack Usage function with their key, and straight to your reps. Only templates go in: the function checks the key against your team's list, and turns away anything else.</li>
+      </ul>
 
       <!-- ===================================================== For the team admin -->
       <h2 id="team-admin">For the team admin <span class="who">Team admins</span></h2>
@@ -533,7 +550,7 @@
         <li>The add-in runs inside Outlook. Attachments are read and combined on your computer.</li>
         <li>With automatic attaching on, PDFs made with Email are uploaded to your team admin's own Azure function, so Outlook can download them into the new email. Those links stop working after an hour, and the files are then deleted.</li>
         <li>With usage counts on, your panel sends counts to your team admin's own Azure function: your email address, when, the Restack version, how many files, pages and PDFs, the template's name, which accessorials, and whether it was split, Multi-stop, a separate email or attached automatically. Never the files, file names, load numbers or customer addresses.</li>
-        <li>Team templates and settings are stored on the Restack site encrypted with your team's key. Only your install file and your team admins' console have it. Your own templates and choices are saved in your Outlook account.</li>
+        <li>Team templates and settings are stored on the Restack site encrypted with your team's key. Only your install file and your team admins' console have it (and, with template admins, your team admin's own Restack Usage function, to check what they publish). Your own templates and choices are saved in your Outlook account.</li>
       </ul>
 
       <!-- ===================================================== Troubleshooting -->
@@ -561,6 +578,10 @@
         <dd>The customer's mailbox takes less than your team's <a href="#email-size">email size limit</a>; the bounce says the most it takes. Ask your team admin to set the limit to that or lower (Team settings → Files → Email size limit) and publish, then create the email again.</dd>
         <dt>Attach PDF can't find the PDF</dt>
         <dd>Create the email from Restack first. The PDF waits for up to 2 hours, and only the latest one waits.</dd>
+        <dt>The admin console says "You're not one of your team's admins"</dt>
+        <dd>You're not on the Admins page's list (anymore). A Full admin adds you there and publishes. If one just did, wait a minute or two for it to reach the site and click <strong>Try again</strong>.</dd>
+        <dt>A template admin's key doesn't work</dt>
+        <dd><strong>Your access</strong> says so when a Full admin has made them a new key since (<strong>New key</strong>, then publishing, turns the old one off): ask for the new one. If <strong>Test</strong> says <code>RESTACK_TEAM_KEY</code> isn't set, a Full admin adds it to the Restack Usage Function App (<strong>Tokens/Keys → Usage counts</strong> has it to copy).</dd>
         <dt>I can't find My templates</dt>
         <dd>Your team admin has to turn on Reps' own templates and publish.</dd>
         <dt>A change in Settings or a pin didn't stick</dt>
