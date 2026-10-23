@@ -318,7 +318,6 @@ input[type="checkbox"]:disabled { cursor: default; }
 .hint.ok { color: var(--ok); }
 .parts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 12px; }
 .parts .link-btn { color: var(--accent); }
-.parts .parts-own { flex-basis: 100%; }
 
 /* ---- thumbnails */
 .thumb {

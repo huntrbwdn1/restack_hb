@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.28.8">
+  <meta name="restack-version" content="0.28.9">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.28.8"></script>
+  <script src="mode.js?v=0.28.9"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.28.8">
-  <script type="module" src="taskpane.js?v=0.28.8"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.28.9">
+  <script type="module" src="taskpane.js?v=0.28.9"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -453,16 +453,6 @@
             <input type="checkbox" id="tpl-stop-files">
             <span>Separate file for each stop</span>
           </label>
-          <!-- Image POD? (0.28.7): for a customer whose PODs are imaged in by printing them -->
-          <div class="field">
-            <label class="check-row tpl-check">
-              <input type="checkbox" id="tpl-image-pod">
-              <span>Image POD?</span>
-            </label>
-            <div id="tpl-image-pod-hint" class="tpl-sub" hidden>
-              <small class="hint">When the email's created, the POD opens in your browser with the print screen up (this needs Attach automatically).</small>
-            </div>
-          </div>
           <p class="hint">A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files are kept whole.</p>
         </section>
         <section class="tpl-group q-field">
