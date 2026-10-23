@@ -336,6 +336,10 @@ input[type="checkbox"]:disabled { cursor: default; }
 .load-form { max-height: calc(var(--page-h, 100vh) * .72); overflow-y: auto; overscroll-behavior: contain; padding: 2px; margin: -2px; }
 .load-form > .btn-row { position: sticky; bottom: -2px; padding: 6px 0 2px; background: var(--bg); }
 .field-stack { display: grid; gap: 6px; }
+/* the load number and the BOL number, side by side; one under the other when the panel is too narrow for both (0.28.5) */
+.id-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px 10px; }
+.id-row > .field-stack { min-width: 0; }
+.id-row .name-field input { width: 0; } /* (the box fills its half, whatever the input's own width) */
 .acc { margin: 2px 0 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; }
 .acc legend { padding: 0; margin-bottom: 6px; }
 /* Add an accessorial: looks like a drop-down; each one picked gets its box under it */

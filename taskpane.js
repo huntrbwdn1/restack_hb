@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.4';
+const VERSION = '0.28.5';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -163,6 +163,7 @@ const WORDS = {
 
   // Create email (the accessorials' names and fields are written the same way in the email)
   loadNumber: "Load number",
+  bolNumber: "BOL number",                         // needed for every email: it goes in the subject (0.28.5)
   accessorials: "Accessorials",
   addAccessorial: "Add an accessorial",            // drops down the accessorials; each one picked gets its own box
   lumper: "Lumper",
@@ -182,10 +183,10 @@ const WORDS = {
   shipperOrReceiver: "Shipper or receiver?",       // the drop-down's prompt
   shipperOrStop: "Shipper or which stop?",         // the same, with Multi-stop on
   createEmail: "Create email",
-  subject: "{load} POD(s)",                        // every email's subject
+  subject: "{load} // {bol} POD(s)",               // every email's subject ({bol}: the BOL number typed with the load number)
 
   // The separate accessorial email (for templates with "Accessorials in a separate email")
-  accessorialSubject: "{load} - {types} Request",  // its subject; {types} is like Lumper/Detention
+  accessorialSubject: "{load} // {bol} - {types}", // its subject; {types} is like Lumper/Detention
   accessorialIntro: "Please see the {types} request for load {load} below.", // its first line, unless the template has its own
 
   // The rate confirmation check
@@ -281,6 +282,7 @@ const state = {
   topic: '',
   fileName: '',          // the name typed in "Name the PDF" (for the current thread)
   loadNumber: '',        // the load number typed for an email template (for the current thread)
+  bolNumber: '',         // ...and its BOL number (0.28.5)
   accessorials: emptyAccessorials(), // the accessorials picked and typed for the current thread
   myTemplates: [],
   multiStop: false,      // Multi-stop: one PDF per stop, named -1, -2… (for the current thread)
@@ -997,6 +999,7 @@ async function loadThreadNow(token) {
   renderOneEmailTip(0);
   state.fileName = '';
   state.loadNumber = '';
+  state.bolNumber = '';
   state.accessorials = emptyAccessorials();
   state.multiStop = false; // a new thread starts as a single-stop load
   state.order = null;      // ...in the order its files came in
@@ -4488,9 +4491,9 @@ function templateSub(t, accOnlyNote = true) {
   return notes.join(' · ');
 }
 
-/** Every email's subject, whatever the template: "3645493 POD(s)" (WORDS.subject). */
-function emailSubject(load) {
-  return word('subject', { load: String(load || '').trim() }).trim().slice(0, 255);
+/** Every email's subject, whatever the template: "3645493 // 7720418 POD(s)" (WORDS.subject; the BOL is in it from 0.28.5). */
+function emailSubject(load, bol) {
+  return word('subject', { load: String(load || '').trim(), bol: String(bol || '').trim() }).trim().slice(0, 255);
 }
 
 /** The PDF's name for an email, without .pdf: the template's PDF name, or just the load number. */
@@ -4547,8 +4550,8 @@ function bodyHtml(text, acc, t, lines = true) {
  * The new email's To, CC, subject and message from a template (or a blank email when t is null).
  * lines false: the accessorials are left out (they go in their own email).
  */
-function emailFields(t, load, acc, lines = true) {
-  const form = { subject: emailSubject(load) };
+function emailFields(t, load, acc, lines = true, bol = '') {
+  const form = { subject: emailSubject(load, bol) };
   if (t) {
     const to = parseAddresses(fill(t.to, load));
     const cc = parseAddresses(fill(t.cc, load));
@@ -4574,9 +4577,9 @@ function separateAccessorials(t, acc) {
   return !!(t && t.accSeparate && accessorialTypes(acc).length);
 }
 
-/** "3645493 - Lumper/Detention Request" */
-function accessorialSubject(load, acc) {
-  return word('accessorialSubject', { load: String(load || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
+/** "3645493 // 7720418 - Lumper/Detention" (WORDS.accessorialSubject) */
+function accessorialSubject(load, acc, bol) {
+  return word('accessorialSubject', { load: String(load || '').trim(), bol: String(bol || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
 }
 
 /** The accessorial email's To and CC: the template's own. A blank To uses the POD email's; a blank CC means no CC. */
@@ -4589,8 +4592,8 @@ function accessorialRecipients(t, load) {
 }
 
 /** The accessorial email: its To, CC, subject, and a message with the accessorials' details. */
-function accessorialFields(t, load, acc) {
-  const form = { subject: accessorialSubject(load, acc) };
+function accessorialFields(t, load, acc, bol = '') {
+  const form = { subject: accessorialSubject(load, acc, bol) };
   const { to, cc } = accessorialRecipients(t, load);
   if (to.length) form.toRecipients = to;
   if (cc.length) form.ccRecipients = cc;
@@ -5032,19 +5035,23 @@ function openLoadForm(t) {
   $('load-form').hidden = false;
   setStatus('');
   $('load-number').value = state.loadNumber || guessLoadNumber(state.fileName) || guessLoadNumber(state.topic) || '';
+  $('bol-number').value = state.bolNumber || '';
   syncAtChoices(); // before the remembered picks go back in, so a stop picked earlier can be found
   fillAccessorials(state.accessorials);
   addTaggedAccessorials(); // a file tagged Lumper (or Other) brings its box
   $('acc-error').textContent = '';
   updateLoadHint();
   updateSelectionUi();
-  $('load-number').focus();
-  $('load-number').select();
+  // The first box to fill in: the load number, or once it's there (from the thread's subject, say) and the BOL isn't, the BOL
+  const first = !$('load-number').value.trim() || $('bol-number').value.trim() ? 'load-number' : 'bol-number';
+  $(first).focus();
+  $(first).select();
 }
 
 function hideLoadForm() {
   closePopup(false);
   if (!$('load-form').hidden) {
+    state.bolNumber = $('bol-number').value.trim(); // (kept for this thread, like the accessorials)
     state.accessorials = readAccessorials(); // kept for this thread
     // (but not a box a tag brought and that's still empty: the tag brings it again)
     for (const kind of emailDraft ? emailDraft.byTag : []) if (accBoxEmpty(kind)) state.accessorials[kind].on = false;
@@ -5079,7 +5086,7 @@ function updateLoadHint() {
     const requestTo = accessorialRecipients(t, load).to.join(', ');
     const both = !layout.splitAcc && accMix().tagged ? ' (PODs and accessorials)' : ''; // (the same name as the POD email's file)
     if (podEmail) hint.append(el('br'));
-    hint.append(`${accessorialSubject(load || '…', acc)}: attaches `, namesFragment(request.names), `${both}${request.note}${untagged}${requestTo ? ` · to ${requestTo}` : ''}`);
+    hint.append(`${accessorialSubject(load || '…', acc, $('bol-number').value.trim() || '…')}: attaches `, namesFragment(request.names), `${both}${request.note}${untagged}${requestTo ? ` · to ${requestTo}` : ''}`);
   } else if (t && t.accSeparate) {
     hint.append(' · accessorials get their own email');
   }
@@ -5090,11 +5097,12 @@ function onLoadSubmit(event) {
   if (!emailDraft || state.busy || !checkedFiles().length) return;
   const t = emailDraft.template;
   const load = $('load-number').value.trim();
-  if (!load) {
+  const bol = $('bol-number').value.trim();
+  if (!load || !bol) { // (both go in the subject)
     const hint = $('load-hint');
-    hint.textContent = 'Type the load number.';
+    hint.textContent = !load ? 'Type the load number.' : 'Type the BOL number.';
     hint.classList.add('error');
-    $('load-number').focus();
+    $(!load ? 'load-number' : 'bol-number').focus();
     return;
   }
   // Typed times and dates as they'll be written (dates first: n there also fills its time)
@@ -5113,8 +5121,9 @@ function onLoadSubmit(event) {
     return;
   }
   state.loadNumber = load;
+  state.bolNumber = bol;
   hideLoadForm();
-  createEmail(t, load, acc).catch(fail);
+  createEmail(t, load, acc, bol).catch(fail);
 }
 
 /** Tidies a typed amount when you leave the box: 350 -> 350.00 */
@@ -5873,7 +5882,7 @@ function onQuizKeys(event) {
  * Outlook attaches them itself; otherwise (or if the upload fails) they wait for the new email's
  * Attach PDF button.
  */
-async function createEmail(template, load, acc) {
+async function createEmail(template, load, acc, bol = '') {
   const base = emailFileBase(template, load);
   const layout = layoutOf(template);
   const stems = accessorialStems(load, acc, base);
@@ -5890,7 +5899,7 @@ async function createEmail(template, load, acc) {
     if (!result) return null;
     const list = [];
     if (!separate) {
-      list.push({ form: emailFields(template, load, acc), files: result.files });
+      list.push({ form: emailFields(template, load, acc, true, bol), files: result.files });
     } else {
       let podFiles = result.files.filter((f) => !f.acc);
       if (mix.tagged && mix.pods && !layout.splitAcc) {
@@ -5900,8 +5909,8 @@ async function createEmail(template, load, acc) {
         podFiles = pods.files;
       }
       // Only accessorial files checked (a lumper request on its own): just the request, no empty POD email
-      if (mix.pods) list.push({ form: emailFields(template, load, acc, false), files: podFiles });
-      list.push({ form: accessorialFields(template, load, acc), files: result.files });
+      if (mix.pods) list.push({ form: emailFields(template, load, acc, false, bol), files: podFiles });
+      list.push({ form: accessorialFields(template, load, acc, bol), files: result.files });
     }
     return { result, emails: list, shrink };
   };

@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.28.4</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.5</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -320,6 +320,7 @@
       <h3 id="create">The Create email step</h3>
       <ol>
         <li>Check the <strong>Load number</strong>. Restack fills it in from the thread's subject, or the one you used earlier on this thread.</li>
+        <li>Type the <strong>BOL number</strong>. Every email needs it: it goes in the subject. Restack keeps it for the thread.</li>
         <li>The line under it says which files the email will get, and who it goes to.</li>
         <li>Add the load's <a href="#accessorials">accessorials</a>, if any.</li>
         <li>Choose <strong>Create email</strong>. <strong>Cancel</strong> goes back to the list.</li>
@@ -347,7 +348,7 @@
 
       <h3 id="the-email">What the email has</h3>
       <ul>
-        <li><strong>Subject:</strong> the load number and POD(s), like <code>3645493 POD(s)</code>.</li>
+        <li><strong>Subject:</strong> the load number, BOL number and POD(s), like <code>3645493 // 7720418 POD(s)</code>.</li>
         <li><strong>To, CC and message:</strong> from the template, with the load number filled in, and the accessorials' details under the message. A template can also say <strong>No Lumper</strong> when Lumper isn't picked.</li>
         <li><strong>The PDF</strong>, named after the load: <code>3645493.pdf</code> (or the template's own name for it). See <a href="#file-names">File names and sizes</a>.</li>
         <li>If your team turned on <strong>Sent with restack</strong>, a small "sent with restack" line goes under the message, above your own signature.</li>
@@ -361,7 +362,7 @@
       <p>With a template set to send accessorials separately, Create email opens two emails whenever an accessorial is picked (just the request, if only tagged files are checked):</p>
       <ol>
         <li>The <strong>POD email</strong>, with the usual subject and the PODs.</li>
-        <li>The <strong>request</strong>, like <code>3645493 - Lumper/Detention Request</code> (Other's type goes in it too), with the PODs and the accessorial files, each accessorial's details, and the template's own accessorial To, CC and message.</li>
+        <li>The <strong>request</strong>, like <code>3645493 // 7720418 - Lumper/Detention</code> (Other's type goes in it too), with the PODs and the accessorial files, each accessorial's details, and the template's own accessorial To, CC and message.</li>
       </ol>
       <p>Didn't see the second email? <strong>Open it again</strong> under the panel's status line opens it again.</p>
       <figure class="wide"><img src="wiki/two-emails.png" width="592" height="507" alt="The POD email and the Lumper/Detention request" loading="lazy"><figcaption>The two emails. Lumper's receipt is in its own file because the template puts accessorials in their own file; Detention has none, since the PODs are its paperwork.</figcaption></figure>
@@ -412,7 +413,7 @@
       <h4>Email</h4>
       <ul>
         <li><strong>Template name</strong>, <strong>To</strong> (separate addresses with <code>;</code> or <code>,</code>), <strong>CC</strong> (optional) and <strong>Message</strong>.</li>
-        <li>Type <code>{load}</code> wherever the load number goes, in To, CC or Message (and the PDF name). You're asked for it each time. The subject is always the load number and POD(s).</li>
+        <li>Type <code>{load}</code> wherever the load number goes, in To, CC or Message (and the PDF name). You're asked for it, and the BOL number, each time. The subject is always the load number, BOL number and POD(s).</li>
       </ul>
       <h4>Accessorials</h4>
       <ul>
