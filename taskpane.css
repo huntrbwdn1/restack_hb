@@ -318,6 +318,7 @@ input[type="checkbox"]:disabled { cursor: default; }
 .hint.ok { color: var(--ok); }
 .parts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 12px; }
 .parts .link-btn { color: var(--accent); }
+.parts .parts-own { flex-basis: 100%; }
 
 /* ---- thumbnails */
 .thumb {
@@ -337,9 +338,15 @@ input[type="checkbox"]:disabled { cursor: default; }
 .load-form > .btn-row { position: sticky; bottom: -2px; padding: 6px 0 2px; background: var(--bg); }
 .field-stack { display: grid; gap: 6px; }
 /* the load number and the BOL number, side by side; one under the other when the panel is too narrow for both (0.28.5) */
-.id-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px 10px; }
+.id-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px 10px; align-items: end; }
 .id-row > .field-stack { min-width: 0; }
 .id-row .name-field input { width: 0; } /* (the box fills its half, whatever the input's own width) */
+/* No BOL, across from the BOL number's label; ticked, the box empties and greys out (0.28.6) */
+.bol-head { display: flex; align-items: center; justify-content: space-between; gap: 2px 8px; flex-wrap: wrap; }
+.no-bol { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.no-bol input { width: 14px; height: 14px; }
+.name-field.off { background: var(--surface-2); border-color: var(--line); }
+.name-field.off input { cursor: not-allowed; }
 .acc { margin: 2px 0 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; }
 .acc legend { padding: 0; margin-bottom: 6px; }
 /* Add an accessorial: looks like a drop-down; each one picked gets its box under it */

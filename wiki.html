@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.28.5</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.7</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -247,7 +247,7 @@
         <dt>What goes into the PDF</dt>
         <dd>PDFs (fax-style and JPEG 2000 scans too), photos and multi-page fax scans (TIFF). Word and Excel files, iPhone photos (.heic), attached emails and cloud links are listed but can't be combined yet. Photos go in at most 2000 pixels on their long side: the whole photo, smaller, never cropped.</dd>
         <dt>Logos and icons</dt>
-        <dd>Small pictures in email signatures, like logos and social media icons, are hidden. A picture pasted into the message itself, like a screenshot of a receipt, stays in the list even when it's small. A small picture from a mail app that doesn't mark its signature is hidden too, since Restack can't tell where it is. <strong>Show logos &amp; icons</strong> under the list shows the hidden ones.</dd>
+        <dd>Pictures in email signatures, like logos, banners and social media icons, are hidden, whatever their size. A picture pasted into the message itself, like a screenshot of a receipt, stays in the list even when it's small. A small picture from a mail app that doesn't mark its signature is hidden too, since Restack can't tell where it is. <strong>Show logos &amp; icons</strong> under the list shows the hidden ones.</dd>
         <dt>Views</dt>
         <dd><strong>Settings → View</strong> shows the list as Large, Medium or Small pictures, a List, Details (with columns) or Tiles, like File Explorer.</dd>
       </dl>
@@ -276,7 +276,7 @@
         <li>Detention and Layover aren't in the drop-down: the PODs are their paperwork.</li>
         <li>Tagging a file adds that accessorial on the <a href="#create">Create email</a> step, ready for its details.</li>
       </ul>
-      <p><strong>Where tagged files go:</strong> after the PODs, in the same PDF. With a template set to <a href="#template-options">Accessorials in their own file</a>, each one tagged gets a file of its own: <code>3645493 Lumper.pdf</code>, and Other's named for its type, like <code>3645493 Scale Ticket.pdf</code>. Save PDF never gives them a file of their own: they go last.</p>
+      <p><strong>Where tagged files go:</strong> after the PODs, in the same PDF. With a template set to <a href="#template-options">Accessorials in a separate file</a>, each one tagged gets a file of its own: <code>3645493 Lumper.pdf</code>, and Other's named for its type, like <code>3645493 Scale Ticket.pdf</code>. Save PDF never gives them a file of their own: they go last.</p>
       <p><strong>Tag accessorials by file name</strong> (in <a href="#settings">Settings</a>, off to start): turn it on, and files with words like <em>lumper</em> or <em>receipt</em> in their name start out tagged Lumper. Your team admin sets the words. A tag you set by hand stays as you set it.</p>
       <figure><img src="wiki/tags.png" width="300" height="392" alt="Files tagged Lumper and by page" loading="lazy"><figcaption>lumper.pdf is tagged Lumper; mixed.pdf has page 2 tagged Other.</figcaption></figure>
 
@@ -286,7 +286,7 @@
         <li>Change a file's stop with its picker if it's wrong, or to put two photos in one stop.</li>
         <li>If one PDF holds several stops, open its preview and pick a stop for each page. Its picker then says <strong>By page</strong>.</li>
       </ol>
-      <p>Save PDF, Blank email and templates with <strong>each stop in its own file</strong> ticked make one PDF per stop, named <code>3645493-1</code>, <code>3645493-2</code> and so on. A stop's POD that comes in later can go out on its own as <code>-2</code>. Other templates put every stop in one file, in stop order (a new template starts with that box unticked). A file tagged Lumper or Other goes with the PODs' last stop; its picker changes that. On the Create email step, the Shipper or Receiver choices name the stop, like <em>Receiver (Stop 2)</em>.</p>
+      <p>Save PDF, Blank email and templates with <strong>Separate file for each stop</strong> ticked make one PDF per stop, named <code>3645493-1</code>, <code>3645493-2</code> and so on. A stop's POD that comes in later can go out on its own as <code>-2</code>. Other templates put every stop in one file, in stop order (a new template starts with that box unticked). A file tagged Lumper or Other goes with the PODs' last stop; its picker changes that. On the Create email step, the Shipper or Receiver choices name the stop, like <em>Receiver (Stop 2)</em>.</p>
       <figure><img src="wiki/multi-stop.png" width="300" height="389" alt="Multi-stop on, with a stop picker on each file" loading="lazy"><figcaption>With Multi-stop on, each file has its stop.</figcaption></figure>
 
       <h3 id="rate-con">Rate confirmation check</h3>
@@ -320,7 +320,7 @@
       <h3 id="create">The Create email step</h3>
       <ol>
         <li>Check the <strong>Load number</strong>. Restack fills it in from the thread's subject, or the one you used earlier on this thread.</li>
-        <li>Type the <strong>BOL number</strong>. Every email needs it: it goes in the subject. Restack keeps it for the thread.</li>
+        <li>Type the <strong>BOL number</strong>: it goes in the subject, and <strong>Create email</strong> stays greyed out until it's in. For a load without one, tick <strong>No BOL</strong> and the subject leaves it out. Restack keeps either for the thread.</li>
         <li>The line under it says which files the email will get, and who it goes to.</li>
         <li>Add the load's <a href="#accessorials">accessorials</a>, if any.</li>
         <li>Choose <strong>Create email</strong>. <strong>Cancel</strong> goes back to the list.</li>
@@ -348,7 +348,7 @@
 
       <h3 id="the-email">What the email has</h3>
       <ul>
-        <li><strong>Subject:</strong> the load number, BOL number and POD(s), like <code>3645493 // 7720418 POD(s)</code>.</li>
+        <li><strong>Subject:</strong> the load number, BOL number and POD(s), like <code>3645493 // 7720418 POD(s)</code> (with No BOL, <code>3645493 POD(s)</code>).</li>
         <li><strong>To, CC and message:</strong> from the template, with the load number filled in, and the accessorials' details under the message. A template can also say <strong>No Lumper</strong> when Lumper isn't picked.</li>
         <li><strong>The PDF</strong>, named after the load: <code>3645493.pdf</code> (or the template's own name for it). See <a href="#file-names">File names and sizes</a>.</li>
         <li>If your team turned on <strong>Sent with restack</strong>, a small "sent with restack" line goes under the message, above your own signature.</li>
@@ -365,13 +365,13 @@
         <li>The <strong>request</strong>, like <code>3645493 // 7720418 - Lumper/Detention</code> (Other's type goes in it too), with the PODs and the accessorial files, each accessorial's details, and the template's own accessorial To, CC and message.</li>
       </ol>
       <p>Didn't see the second email? <strong>Open it again</strong> under the panel's status line opens it again.</p>
-      <figure class="wide"><img src="wiki/two-emails.png" width="592" height="507" alt="The POD email and the Lumper/Detention request" loading="lazy"><figcaption>The two emails. Lumper's receipt is in its own file because the template puts accessorials in their own file; Detention has none, since the PODs are its paperwork.</figcaption></figure>
+      <figure class="wide"><img src="wiki/two-emails.png" width="592" height="507" alt="The POD email and the Lumper/Detention request" loading="lazy"><figcaption>The two emails. Lumper's receipt is in its own file because the template puts accessorials in a separate file; Detention has none, since the PODs are its paperwork.</figcaption></figure>
 
       <h3 id="file-names">File names and sizes</h3>
       <ul>
         <li>The PDF is named after the load (<code>3645493.pdf</code>), or the template's PDF name with the load number in it.</li>
         <li><strong>Multi-stop:</strong> one PDF per stop, <code>3645493-1</code>, <code>3645493-2</code>…, unless the template puts every stop in one file.</li>
-        <li><strong>Accessorials in their own file:</strong> <code>3645493 Lumper</code>, and Other's named for its type, like <code>3645493 Scale Ticket</code>. On a Multi-stop load, one for each stop.</li>
+        <li><strong>Accessorials in a separate file:</strong> <code>3645493 Lumper</code>, and Other's named for its type, like <code>3645493 Scale Ticket</code>. On a Multi-stop load, one for each stop.</li>
         <li><strong>Every PDF stays under 10 MB.</strong> A bigger one is split, in page order, into <code>3645493-1</code>, <code>3645493-2</code> and so on, all attached to the same email. A Lumper or Other file is split the same way, like <code>3645493 Lumper-1</code>. Stop files are kept whole, and so is a single page over 10 MB; the panel says so when that happens.</li>
         <li id="email-size"><strong>Every email stays under your team's email size limit</strong> (35 MB to start). Files travel in an email as text, about a third bigger, so a 35 MB email holds about 25 MB of PDFs. When a load's files would make it bigger, Restack makes the scanned pages and photos smaller: it redraws them at about 150 dpi, still easy to read, and typed pages stay as they are. The status line says so. If that still isn't enough, Create email opens two emails or more, like <code>3645493 POD(s) (1 of 2)</code> and <code>(2 of 2)</code>, with as many of the files in each as fit. Emails under the limit, and Save PDF, don't change.</li>
       </ul>
@@ -419,13 +419,14 @@
       <ul>
         <li><strong>Accessorial Only:</strong> for customers that get the POD only when there's an accessorial. It's listed under Accessorial Only in the Email menu, and Create email needs an accessorial picked.</li>
         <li><strong>Say No Lumper</strong> in the message when Lumper isn't picked.</li>
-        <li><strong>Accessorials in their own file:</strong> each accessorial tagged in the list gets a file of its own, like <code>3645493 Lumper</code>. Off: tagged files go after the PODs, in the same file.</li>
+        <li><strong>Accessorials in a separate file:</strong> each accessorial tagged in the list gets a file of its own, like <code>3645493 Lumper</code>. Off: tagged files go after the PODs, in the same file.</li>
         <li><strong>Accessorials in a separate email:</strong> <a href="#separate">two emails</a> when an accessorial is picked. The request's <strong>To</strong> (blank: the same as the POD email's), <strong>CC</strong> and <strong>Message</strong>. In its message, <code>{types}</code> is Lumper, Detention and so on.</li>
       </ul>
       <h4>PDF</h4>
       <ul>
         <li><strong>PDF name</strong>, with <code>{load}</code> for the load number.</li>
-        <li><strong>Multi-stop loads: each stop in its own file.</strong> Off: all stops in one file, in stop order.</li>
+        <li><strong>Separate file for each stop</strong> (Multi-stop loads). Off: all stops in one file, in stop order.</li>
+        <li><strong>Image POD?</strong> For a customer whose PODs are imaged in by printing them: when the email's created, the POD also opens in your browser with the print screen up. Pick the imaging printer and print; the imaging program's own windows are yours to fill in. It uses <a href="#team-settings">Attach automatically</a> to get the PDF to your browser, and the print screen can be opened again from under the panel's status line for an hour.</li>
       </ul>
       <h4>Questions before Create email</h4>
       <ul>

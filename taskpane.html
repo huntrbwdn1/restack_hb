@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restack</title>
   <!-- Which version this page is (taskpane.js reloads the page once if it was kept from an older one) -->
-  <meta name="restack-version" content="0.28.5">
+  <meta name="restack-version" content="0.28.7">
   <!-- light or dark before anything shows, so the panel doesn't flash white in dark mode -->
-  <script src="mode.js?v=0.28.5"></script>
+  <script src="mode.js?v=0.28.7"></script>
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <script src="pdf-lib.min.js"></script>
   <script src="pako_inflate.min.js"></script>
   <script src="UTIF.js"></script>
   <!-- ?v= makes Outlook load the matching versions after an update -->
-  <link rel="stylesheet" href="taskpane.css?v=0.28.5">
-  <script type="module" src="taskpane.js?v=0.28.5"></script>
+  <link rel="stylesheet" href="taskpane.css?v=0.28.7">
+  <script type="module" src="taskpane.js?v=0.28.7"></script>
 </head>
 <body>
   <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false"><defs><linearGradient id="pin-fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5aa2b"/><stop offset=".55" stop-color="#f37f29"/><stop offset="1" stop-color="#f05026"/></linearGradient></defs></svg>
@@ -130,7 +130,11 @@
             </div>
           </div>
           <div id="bol-row" class="field-stack">
-            <label for="bol-number" class="name-label" data-w="bolNumber">BOL number</label>
+            <!-- No BOL (0.28.6): for the rare load without one; Create email waits for one or the other -->
+            <div class="bol-head">
+              <label for="bol-number" class="name-label" data-w="bolNumber">BOL number</label>
+              <label class="no-bol"><input id="no-bol" type="checkbox"><span data-w="noBol">No BOL</span></label>
+            </div>
             <div class="name-field">
               <input id="bol-number" type="text" autocomplete="off" spellcheck="false" maxlength="60" aria-required="true">
             </div>
@@ -407,7 +411,7 @@
           <div class="field">
             <label class="check-row tpl-check">
               <input type="checkbox" id="tpl-lumper-sep">
-              <span>Accessorials in their own file</span>
+              <span>Accessorials in a separate file</span>
             </label>
             <div id="tpl-lumper-row" class="tpl-sub" hidden>
               <small class="hint">Each accessorial tagged in the list (or on its pages, in the preview) gets a file of its own: <b data-w="lumper">Lumper</b> in one like <b>3645493 Lumper</b>, and <b data-w="other">Other</b> in one named for its type, like <b>3645493 Scale Ticket</b>. Detention and Layover go with the PODs. Off: tagged files go after the PODs, in the same file.</small>
@@ -447,8 +451,18 @@
           </label>
           <label class="check-row tpl-check">
             <input type="checkbox" id="tpl-stop-files">
-            <span>Multi-stop loads: each stop in its own file (-1, -2…). Off: all stops in one file, in stop order.</span>
+            <span>Separate file for each stop</span>
           </label>
+          <!-- Image POD? (0.28.7): for a customer whose PODs are imaged in by printing them -->
+          <div class="field">
+            <label class="check-row tpl-check">
+              <input type="checkbox" id="tpl-image-pod">
+              <span>Image POD?</span>
+            </label>
+            <div id="tpl-image-pod-hint" class="tpl-sub" hidden>
+              <small class="hint">When the email's created, the POD opens in your browser with the print screen up (this needs Attach automatically).</small>
+            </div>
+          </div>
           <p class="hint">A PDF over 10 MB is split, in page order, into 3645493-1, 3645493-2 and so on, all attached to the same email. Stop files are kept whole.</p>
         </section>
         <section class="tpl-group q-field">

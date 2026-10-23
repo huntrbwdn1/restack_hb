@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Image POD? (a template setting, 0.28.7): Create email opens this page in the browser, outside Outlook, with
+       each POD file's link (from the team's PDF Emails function, good for an hour) after the #. It shows the PDF
+       and opens the print screen, for printing to an imaging printer. Outlook add-ins can't print by themselves. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Image POD · Restack</title>
+  <link rel="icon" href="icon-32.png">
+  <style>
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    @font-face { font-family: "Jost"; src: url("fonts/jost-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; size-adjust: 105%; ascent-override: 83.6%; descent-override: 20%; line-gap-override: 0%; }
+    :root {
+      color-scheme: light;
+      --bg: #fff; --fg: #242424; --muted: #5e5e5e; --line: #e6e6e6; --frame: #f2f2f2;
+      --accent: #c2410c; --soft: #fff1e8; --soft-ink: #8a2e06; --error: #b42318; --error-bg: #fdecea;
+      --g1: #f5aa2b; --g2: #f37f29; --g3: #f05026;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #1b1b1b; --fg: #f3f3f3; --muted: #ababab; --line: #333; --frame: #262626;
+        --accent: #ff8a3d; --soft: #3a2414; --soft-ink: #ffc7a1; --error: #ffb4a9; --error-bg: #3b1f1c;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; display: flex; flex-direction: column; font: 16px/1.5 "Jost", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif; word-spacing: -.06em; color: var(--fg); background: var(--bg); }
+    /* the masthead: the restack logo and what this page is for, over the site's stripe */
+    .mast { position: relative; flex: none; border-bottom: 1px solid var(--line); }
+    .mast-in { display: flex; align-items: center; gap: 14px; padding: 16px 20px 18px; }
+    .mast::after { content: ""; position: absolute; left: 0; right: 96px; bottom: -1px; height: 6px;
+      background: linear-gradient(90deg, var(--g1), var(--g2)); clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%); }
+    .mast::before { content: ""; position: absolute; right: 14px; bottom: -1px; width: 74px; height: 6px;
+      background: linear-gradient(90deg, var(--g2) 0 34px, transparent 34px 44px, var(--g3) 44px 74px); transform: skewX(-45deg); transform-origin: 0 100%; }
+    .logo { display: block; height: 28px; width: auto; }
+    h1 { margin: 0; padding-left: 14px; border-left: 1px solid var(--line); font-size: 20px; font-weight: 400; color: var(--muted); }
+    /* the file (or files), what to do, and Print */
+    .bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 20px; }
+    .files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .file { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; cursor: pointer; }
+    .file[aria-current="true"] { border-color: var(--accent); background: var(--soft); color: var(--soft-ink); font-weight: 600; }
+    .file .done { color: var(--muted); font-weight: 400; }
+    .file.one { cursor: default; }
+    .line { flex: 1 1 260px; margin: 0; color: var(--muted); font-size: 15px; }
+    .line.error { padding: 8px 12px; border-radius: 6px; background: var(--error-bg); color: var(--error); }
+    .button { flex: none; padding: 8px 18px; border: 0; border-radius: 5px; background: linear-gradient(100deg, var(--g1), var(--g2) 55%, var(--g3)); color: #000; font: inherit; font-weight: 700; cursor: pointer; }
+    .button:hover { filter: brightness(1.05) saturate(1.1); }
+    .button:disabled { opacity: .45; cursor: default; filter: none; }
+    .button:focus-visible, .file:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    a { color: var(--accent); }
+    /* the PDF itself, filling the rest of the window (its own toolbar has a print button too) */
+    .frame { flex: 1 1 auto; min-height: 320px; margin: 0 20px 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--frame); overflow: hidden; }
+    .frame iframe { display: block; width: 100%; height: 100%; border: 0; }
+    @media (max-width: 560px) {
+      .mast-in, .bar { padding-left: 16px; padding-right: 16px; }
+      .frame { margin: 0 16px 16px; }
+    }
+  </style>
+</head>
+<body data-state="loading">
+  <header class="mast">
+    <div class="mast-in">
+      <img class="logo" src="brand/restack-logo-large.png" width="137" height="28" alt="Restack">
+      <h1>Image POD</h1>
+    </div>
+  </header>
+  <div class="bar">
+    <ul id="files" class="files" aria-label="Files to print"></ul>
+    <p id="line" class="line" role="status">Getting the POD…</p>
+    <button id="print" class="button" type="button" disabled>Print</button>
+  </div>
+  <div class="frame"><iframe id="pdf" title="The POD"></iframe></div>
+  <script>
+    (function () {
+      'use strict';
+      var $ = function (id) { return document.getElementById(id); };
+      // The files after the #: f=<link>&n=<name>, one pair each (only https links, or this computer's for testing)
+      var params = new URLSearchParams(location.hash.slice(1));
+      var links = params.getAll('f');
+      var names = params.getAll('n');
+      var files = [];
+      links.forEach(function (link, i) {
+        if (/^https:\/\//i.test(link) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(link)) {
+          files.push({ link: link, name: names[i] || 'POD ' + (i + 1) + '.pdf', blob: '', printed: false });
+        }
+      });
+      var current = null;
+
+      function say(text, error) {
+        var line = $('line');
+        line.textContent = '';
+        if (typeof text === 'string') line.textContent = text;
+        else line.append.apply(line, text);
+        line.className = 'line' + (error ? ' error' : '');
+      }
+
+      function renderFiles() {
+        var list = $('files');
+        list.textContent = '';
+        if (files.length < 2) {
+          if (files.length) list.append(Object.assign(document.createElement('li'), { className: 'file one', textContent: files[0].name }));
+          return;
+        }
+        files.forEach(function (file) {
+          var item = document.createElement('li');
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'file';
+          button.textContent = file.name;
+          if (file.printed) button.append(Object.assign(document.createElement('span'), { className: 'done', textContent: '✓', title: 'Print screen opened' }));
+          button.setAttribute('aria-current', String(file === current));
+          button.addEventListener('click', function () { show(file, true); });
+          item.append(button);
+          list.append(item);
+        });
+      }
+
+      /** The print screen for the PDF in the frame (the browser's own PDF viewer prints the PDF itself, page for page). */
+      function printNow() {
+        var frame = $('pdf');
+        try {
+          frame.contentWindow.focus();
+          document.body.dataset.state = 'printing';
+          say('Choose your imaging printer and print.');
+          frame.contentWindow.print(); // (some browsers wait here until the print screen closes)
+          current.printed = true;
+          document.body.dataset.printed = files.filter(function (f) { return f.printed; }).map(function (f) { return f.name; }).join(',');
+          var next = files.filter(function (f) { return !f.printed; })[0];
+          say(next ? 'Next: choose ' + next.name + ' above.' : 'To print it again, choose Print.');
+          renderFiles();
+        } catch (error) {
+          say('Print it with the printer button on the PDF below (or Ctrl+P).');
+        }
+        document.body.dataset.state = 'ready';
+      }
+
+      /** Gets a file (once), shows it, and opens the print screen when asked to. */
+      var waiting = 0;
+      function show(file, print) {
+        current = file;
+        clearTimeout(waiting);
+        renderFiles();
+        $('print').disabled = true;
+        document.body.dataset.state = 'loading';
+        var shown = function () {
+          if (current !== file) return; // (another file was chosen meanwhile)
+          var frame = $('pdf');
+          say('Opening the print screen…');
+          // A browser set to download PDFs instead of showing them saves it, and the frame never loads
+          waiting = setTimeout(function () {
+            document.body.dataset.state = 'notshown';
+            say('If the POD isn\'t showing below, your browser saved it to your downloads: open it from there and print it.');
+          }, 6000);
+          frame.onload = function () {
+            clearTimeout(waiting);
+            $('print').disabled = false;
+            if (print) setTimeout(printNow, 400); // (the PDF viewer, a moment to be ready)
+            else document.body.dataset.state = 'ready';
+          };
+          frame.src = file.blob;
+        };
+        if (file.blob) return shown();
+        say('Getting ' + file.name + '…');
+        fetch(file.link, { cache: 'no-store' }).then(function (response) {
+          if (response.status === 404 || response.status === 410) throw Object.assign(new Error('expired'), { expired: true });
+          if (!response.ok) throw new Error('the PDF Emails function answered ' + response.status);
+          return response.blob();
+        }).then(function (blob) {
+          file.blob = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+          shown();
+        }).catch(function (error) {
+          if (current !== file) return;
+          document.body.dataset.state = 'error';
+          if (error.expired) {
+            say('This POD\'s link has expired (they work for an hour). Create the email again, or save the PDF and print it from there.', true);
+            return;
+          }
+          var download = Object.assign(document.createElement('a'), { href: file.link, textContent: 'download it' });
+          say(['Couldn\'t get ' + file.name + ' (' + (error.message || 'no answer') + '). You can ', download, ', then open it and print it.'], true);
+        });
+      }
+
+      $('print').addEventListener('click', function () { if (current && current.blob) printNow(); });
+      if (!files.length) {
+        document.body.dataset.state = 'error';
+        say('Nothing to print here. In Restack, a template with Image POD? ticked opens this page when it creates the email.', true);
+        return;
+      }
+      show(files[0], true);
+    }());
+  </script>
+</body>
+</html>

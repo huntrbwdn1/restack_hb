@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.5';
+const VERSION = '0.28.7';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -164,6 +164,7 @@ const WORDS = {
   // Create email (the accessorials' names and fields are written the same way in the email)
   loadNumber: "Load number",
   bolNumber: "BOL number",                         // needed for every email: it goes in the subject (0.28.5)
+  noBol: "No BOL",                                 // the box to tick for a load without one (0.28.6): the subject leaves it out
   accessorials: "Accessorials",
   addAccessorial: "Add an accessorial",            // drops down the accessorials; each one picked gets its own box
   lumper: "Lumper",
@@ -184,9 +185,11 @@ const WORDS = {
   shipperOrStop: "Shipper or which stop?",         // the same, with Multi-stop on
   createEmail: "Create email",
   subject: "{load} // {bol} POD(s)",               // every email's subject ({bol}: the BOL number typed with the load number)
+  subjectNoBol: "{load} POD(s)",                   // ...with No BOL ticked
 
   // The separate accessorial email (for templates with "Accessorials in a separate email")
   accessorialSubject: "{load} // {bol} - {types}", // its subject; {types} is like Lumper/Detention
+  accessorialSubjectNoBol: "{load} - {types}",     // ...with No BOL ticked
   accessorialIntro: "Please see the {types} request for load {load} below.", // its first line, unless the template has its own
 
   // The rate confirmation check
@@ -283,6 +286,7 @@ const state = {
   fileName: '',          // the name typed in "Name the PDF" (for the current thread)
   loadNumber: '',        // the load number typed for an email template (for the current thread)
   bolNumber: '',         // ...and its BOL number (0.28.5)
+  noBol: false,          // ...or No BOL ticked for it (0.28.6)
   accessorials: emptyAccessorials(), // the accessorials picked and typed for the current thread
   myTemplates: [],
   multiStop: false,      // Multi-stop: one PDF per stop, named -1, -2… (for the current thread)
@@ -1000,6 +1004,7 @@ async function loadThreadNow(token) {
   state.fileName = '';
   state.loadNumber = '';
   state.bolNumber = '';
+  state.noBol = false;
   state.accessorials = emptyAccessorials();
   state.multiStop = false; // a new thread starts as a single-stop load
   state.order = null;      // ...in the order its files came in
@@ -1509,7 +1514,7 @@ function partsOfFile(file) {
  * The PDFs to make, before building them: [{ stop, acc, entries: [{ file, only }] }], the PODs
  * first, then Lumper's file, then Other's. splitStops: one PDF per stop (stop 0 = all stops
  * together, in stop order). splitAcc: the files tagged Lumper and Other each in a PDF of their own
- * (a template's Accessorials in their own file); otherwise they go after the PODs in the same file
+ * (a template's Accessorials in a separate file); otherwise they go after the PODs in the same file
  * (Save PDF, and the other templates). noAcc: just the PODs.
  * Within that, files go in the order of the list, which you can change.
  */
@@ -1545,7 +1550,7 @@ function logOrder(name, entries) {
 
 /**
  * How an email's files are made (t null: Blank email): stops as the template says. With the template's
- * Accessorials in their own file, each accessorial tagged (Lumper, Other) gets a file of its own;
+ * Accessorials in a separate file, each accessorial tagged (Lumper, Other) gets a file of its own;
  * without it, the tagged files go after the PODs in the same file.
  */
 function layoutOf(t) {
@@ -1859,10 +1864,11 @@ function onMultiStopToggle(on) {
 }
 
 /**
- * Signature logos and icons: small pictures in the email body. Judged by pixel size, so a
- * photo of a mostly white page (which can be a very small file) still counts as a photo. A picture
- * pasted into the message itself (not its signature), like a screenshot of a receipt, stays in the
- * list whatever its size, unless it's icon-sized (0.25.3).
+ * Signature logos and icons: pictures in an email's signature, whatever their size (0.28.6), and
+ * small pictures elsewhere in the body. Judged by pixel size, so a photo of a mostly white page
+ * (which can be a very small file) still counts as a photo. A picture pasted into the message itself
+ * (not its signature), like a screenshot of a receipt, stays in the list whatever its size, unless
+ * it's icon-sized (0.25.3).
  */
 function looksLikeLogo(file) {
   if (!file.inline || (file.kind !== 'Image' && file.kind !== 'TIFF')) return false;
@@ -1870,6 +1876,8 @@ function looksLikeLogo(file) {
   const dims = file.dims || (file.kind === 'Image' && file.bytes ? imageSize(file.bytes) : null);
   if (dims) file.dims = dims;
   if (dims && (Math.max(dims[0], dims[1]) <= ICON_SIDE || Math.min(dims[0], dims[1]) <= LINE_SIDE)) return true;
+  // In a signature (as its email marks it), whatever its size: a banner with someone's name and company, say (0.28.6)
+  if (file.place === 'signature') return true;
   // Pasted into one email's message (other copies only quote it): a picture someone sent. The same
   // picture in the message of several emails is more like a logo a mail server adds to every email.
   if (file.place === 'message' && (file.pasted || 0) < 2) return false;
@@ -2713,7 +2721,8 @@ function updateSelectionUi() {
   const anyChecked = checkedFiles().length > 0;
   const problems = teamRateCon() ? rcProblems() : [];
   renderRcBanner(problems);
-  for (const id of ['btn-save', 'name-save', 'load-go']) $(id).disabled = state.busy || !anyChecked || problems.length > 0;
+  for (const id of ['btn-save', 'name-save']) $(id).disabled = state.busy || !anyChecked || problems.length > 0;
+  syncLoadGo(problems);
   $('btn-save').title = !anyChecked ? 'Check the files to save first.' : problems.length ? 'Leave out the rate confirmation first.' : '';
   $('btn-email').disabled = state.busy; // still opens, to reach My templates
   for (const id of ['keep-add-anyway', 'keep-ask-restart']) if ($(id)) $(id).disabled = state.busy;
@@ -4493,7 +4502,8 @@ function templateSub(t, accOnlyNote = true) {
 
 /** Every email's subject, whatever the template: "3645493 // 7720418 POD(s)" (WORDS.subject; the BOL is in it from 0.28.5). */
 function emailSubject(load, bol) {
-  return word('subject', { load: String(load || '').trim(), bol: String(bol || '').trim() }).trim().slice(0, 255);
+  const b = String(bol || '').trim();
+  return word(b ? 'subject' : 'subjectNoBol', { load: String(load || '').trim(), bol: b }).trim().slice(0, 255); // (No BOL: "3645493 POD(s)", 0.28.6)
 }
 
 /** The PDF's name for an email, without .pdf: the template's PDF name, or just the load number. */
@@ -4579,7 +4589,8 @@ function separateAccessorials(t, acc) {
 
 /** "3645493 // 7720418 - Lumper/Detention" (WORDS.accessorialSubject) */
 function accessorialSubject(load, acc, bol) {
-  return word('accessorialSubject', { load: String(load || '').trim(), bol: String(bol || '').trim(), types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
+  const b = String(bol || '').trim();
+  return word(b ? 'accessorialSubject' : 'accessorialSubjectNoBol', { load: String(load || '').trim(), bol: b, types: accessorialTypes(acc).join('/') }).trim().slice(0, 255);
 }
 
 /** The accessorial email's To and CC: the template's own. A blank To uses the POD email's; a blank CC means no CC. */
@@ -5035,7 +5046,9 @@ function openLoadForm(t) {
   $('load-form').hidden = false;
   setStatus('');
   $('load-number').value = state.loadNumber || guessLoadNumber(state.fileName) || guessLoadNumber(state.topic) || '';
-  $('bol-number').value = state.bolNumber || '';
+  $('bol-number').value = state.noBol ? '' : state.bolNumber || '';
+  $('no-bol').checked = state.noBol;
+  syncNoBol();
   syncAtChoices(); // before the remembered picks go back in, so a stop picked earlier can be found
   fillAccessorials(state.accessorials);
   addTaggedAccessorials(); // a file tagged Lumper (or Other) brings its box
@@ -5043,7 +5056,7 @@ function openLoadForm(t) {
   updateLoadHint();
   updateSelectionUi();
   // The first box to fill in: the load number, or once it's there (from the thread's subject, say) and the BOL isn't, the BOL
-  const first = !$('load-number').value.trim() || $('bol-number').value.trim() ? 'load-number' : 'bol-number';
+  const first = !$('load-number').value.trim() || bolReady() ? 'load-number' : 'bol-number';
   $(first).focus();
   $(first).select();
 }
@@ -5052,6 +5065,7 @@ function hideLoadForm() {
   closePopup(false);
   if (!$('load-form').hidden) {
     state.bolNumber = $('bol-number').value.trim(); // (kept for this thread, like the accessorials)
+    state.noBol = $('no-bol').checked;
     state.accessorials = readAccessorials(); // kept for this thread
     // (but not a box a tag brought and that's still empty: the tag brings it again)
     for (const kind of emailDraft ? emailDraft.byTag : []) if (accBoxEmpty(kind)) state.accessorials[kind].on = false;
@@ -5086,10 +5100,34 @@ function updateLoadHint() {
     const requestTo = accessorialRecipients(t, load).to.join(', ');
     const both = !layout.splitAcc && accMix().tagged ? ' (PODs and accessorials)' : ''; // (the same name as the POD email's file)
     if (podEmail) hint.append(el('br'));
-    hint.append(`${accessorialSubject(load || '…', acc, $('bol-number').value.trim() || '…')}: attaches `, namesFragment(request.names), `${both}${request.note}${untagged}${requestTo ? ` · to ${requestTo}` : ''}`);
+    hint.append(`${accessorialSubject(load || '…', acc, $('no-bol').checked ? '' : $('bol-number').value.trim() || '…')}: attaches `, namesFragment(request.names), `${both}${request.note}${untagged}${requestTo ? ` · to ${requestTo}` : ''}`);
   } else if (t && t.accSeparate) {
     hint.append(' · accessorials get their own email');
   }
+}
+
+/** Whether the BOL is settled for Create email: typed, or No BOL ticked (0.28.6). */
+function bolReady() {
+  return $('no-bol').checked || !!$('bol-number').value.trim();
+}
+
+/** No BOL ticked: its box is emptied and greyed out; unticked, it's back to type in. */
+function syncNoBol() {
+  const off = $('no-bol').checked;
+  if (off) $('bol-number').value = '';
+  $('bol-number').disabled = off;
+  $('bol-number').closest('.name-field').classList.toggle('off', off);
+}
+
+function onNoBolChange() {
+  syncNoBol();
+  if (!$('no-bol').checked) $('bol-number').focus();
+  syncLoadGo();
+}
+
+/** Create email: greyed out while it's busy, nothing's checked, a rate con's flagged, or there's no BOL yet (typed, or No BOL ticked). */
+function syncLoadGo(problems = teamRateCon() ? rcProblems() : []) {
+  $('load-go').disabled = state.busy || !checkedFiles().length || problems.length > 0 || !bolReady();
 }
 
 function onLoadSubmit(event) {
@@ -5097,10 +5135,11 @@ function onLoadSubmit(event) {
   if (!emailDraft || state.busy || !checkedFiles().length) return;
   const t = emailDraft.template;
   const load = $('load-number').value.trim();
-  const bol = $('bol-number').value.trim();
-  if (!load || !bol) { // (both go in the subject)
+  const noBol = $('no-bol').checked;
+  const bol = noBol ? '' : $('bol-number').value.trim();
+  if (!load || (!bol && !noBol)) { // (both go in the subject; Create email waits for the BOL anyway)
     const hint = $('load-hint');
-    hint.textContent = !load ? 'Type the load number.' : 'Type the BOL number.';
+    hint.textContent = !load ? 'Type the load number.' : `Type the BOL number, or tick ${word('noBol')}.`;
     hint.classList.add('error');
     $(!load ? 'load-number' : 'bol-number').focus();
     return;
@@ -5122,6 +5161,7 @@ function onLoadSubmit(event) {
   }
   state.loadNumber = load;
   state.bolNumber = bol;
+  state.noBol = noBol;
   hideLoadForm();
   createEmail(t, load, acc, bol).catch(fail);
 }
@@ -5910,7 +5950,7 @@ async function createEmail(template, load, acc, bol = '') {
       }
       // Only accessorial files checked (a lumper request on its own): just the request, no empty POD email
       if (mix.pods) list.push({ form: emailFields(template, load, acc, false, bol), files: podFiles });
-      list.push({ form: accessorialFields(template, load, acc, bol), files: result.files });
+      list.push({ form: accessorialFields(template, load, acc, bol), files: result.files, isRequest: true });
     }
     return { result, emails: list, shrink };
   };
@@ -5977,6 +6017,9 @@ async function createEmail(template, load, acc, bol = '') {
     }
   }
 
+  // Image POD? (a template setting, 0.28.7): the POD's print screen, in the browser
+  const imaging = template && template.imagePod ? startImaging(emails, links, azureProblem) : null;
+
   // An email for the same load and template counts once a day, however many times it's created
   if (teamUsage() && !firstEmailToday(load, template)) {
     log("Usage counts: this load's email with this template was counted already today, so this one isn't");
@@ -6003,49 +6046,113 @@ async function createEmail(template, load, acc, bol = '') {
   else if (built.shrink) sizeNote = ` To keep ${emails.length > 1 ? 'each email' : 'the email'} under ${limitMb} MB, the scanned pages and photos are smaller (${emails.length > 1 ? 'the bigger one' : 'it'} would have been ${Math.round(built.before / MB)} MB).`;
   const still = emails.filter((e) => !fitsInEmail(e.files));
   if (still.length) sizeNote += ` The email with ${still.map((e) => namesOf(e.files)).join(' and the one with ')} is still over ${limitMb} MB, so it may not go through.`;
-  const tail = `${sizeNote}${oversizeNote(allFiles, result.partLimit)}${leftOutText(result)}`;
+  const tail = `${sizeNote}${oversizeNote(allFiles, result.partLimit)}${leftOutText(result)}${imaging ? imaging.note : ''}`;
   const why = azureProblem ? ` (Couldn't attach automatically: ${azureProblem}.)` : '';
   const tone = azureProblem || secondProblem ? 'error' : 'ok';
   const describe = (e) => `${e.form.subject}${toOf(e.form) ? ` to ${toOf(e.form)}` : ''}`;
+  showEmailOutcome();
+  if (imaging && imaging.url) addImagingButton(imaging.url, imaging.opened);
 
-  if (parted) {
-    // Several emails (over the size limit): each with its files
-    const opened = emails.filter((e) => !e.failed);
-    const missed = emails.filter((e) => e.failed);
-    let text = links
-      ? `Opened ${plural(opened.length, 'email')}: ${opened.map((e) => `${describe(e)} with ${namesOf(e.files)} attached`).join('; ')}.`
-      : `Opened ${plural(opened.length, 'email')}: ${opened.map(describe).join('; ')}. Click ${word('attachPdf')} on each one's ribbon: ${opened.map((e) => `${e.form.subject} gets ${namesOf(e.files)}`).join('; ')}.${why}`;
-    if (missed.length) text += ` Couldn't open ${missed.map((e) => e.form.subject).join(', ')}: ${secondProblem}.`;
-    const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
-    setStatus(`${text}${extras ? ` In the ${separate ? 'request' : 'message'}: ${extras}.` : ''}${tail}`, tone);
-    showReopenAll(emails.slice(1).map((e) => ({ form: e.form, label: e.part && !separate ? e.part : e.form.subject, failed: !!e.failed })));
-    return;
-  }
+  function showEmailOutcome() {
+    if (parted) {
+      // Several emails (over the size limit): each with its files
+      const opened = emails.filter((e) => !e.failed);
+      const missed = emails.filter((e) => e.failed);
+      let text = links
+        ? `Opened ${plural(opened.length, 'email')}: ${opened.map((e) => `${describe(e)} with ${namesOf(e.files)} attached`).join('; ')}.`
+        : `Opened ${plural(opened.length, 'email')}: ${opened.map(describe).join('; ')}. Click ${word('attachPdf')} on each one's ribbon: ${opened.map((e) => `${e.form.subject} gets ${namesOf(e.files)}`).join('; ')}.${why}`;
+      if (missed.length) text += ` Couldn't open ${missed.map((e) => e.form.subject).join(', ')}: ${secondProblem}.`;
+      const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
+      setStatus(`${text}${extras ? ` In the ${separate ? 'request' : 'message'}: ${extras}.` : ''}${tail}`, tone);
+      showReopenAll(emails.slice(1).map((e) => ({ form: e.form, label: e.part && !separate ? e.part : e.form.subject, failed: !!e.failed })));
+      return;
+    }
 
-  if (emails.length === 1) {
-    const [only] = emails;
-    const to = toOf(only.form);
-    // (with the accessorials in a separate email, this is the request: only accessorial files were checked)
-    const what = separate ? `: ${only.form.subject}` : '';
-    const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
-    const extra = `${extras ? ` In the message: ${extras}.` : ''}${tail}`;
-    if (links) setStatus(`New email opened${what}${to ? ` to ${to}` : ''} with ${namesOf(only.files)} attached.${extra}`, 'ok');
-    else setStatus(`New email opened${what}${to ? ` to ${to}` : ''}. Click ${word('attachPdf')} on its ribbon to add ${namesOf(only.files)}.${why}${extra}`, tone);
-    return;
-  }
+    if (emails.length === 1) {
+      const [only] = emails;
+      const to = toOf(only.form);
+      // (with the accessorials in a separate email, this is the request: only accessorial files were checked)
+      const what = separate ? `: ${only.form.subject}` : '';
+      const extras = separate ? summary : [summary, noLumper].filter(Boolean).join(', ');
+      const extra = `${extras ? ` In the message: ${extras}.` : ''}${tail}`;
+      if (links) setStatus(`New email opened${what}${to ? ` to ${to}` : ''} with ${namesOf(only.files)} attached.${extra}`, 'ok');
+      else setStatus(`New email opened${what}${to ? ` to ${to}` : ''}. Click ${word('attachPdf')} on its ribbon to add ${namesOf(only.files)}.${why}${extra}`, tone);
+      return;
+    }
 
-  const [pod, request] = emails;
-  const extra = ` In the request: ${summary}.${noLumper ? ` The POD email says ${noLumper}.` : ''}${tail}`;
-  let text;
-  if (secondProblem) {
-    text = `Opened ${describe(pod)}, but couldn't open the accessorial email: ${secondProblem}.${links ? '' : ` Click ${word('attachPdf')} on the POD email's ribbon to add ${namesOf(pod.files) || 'its files'}.`}`;
-  } else if (links) {
-    text = `Opened 2 emails: ${describe(pod)} with ${namesOf(pod.files) || 'nothing'} attached, and ${describe(request)} with ${namesOf(request.files)}${both} attached.`;
-  } else {
-    text = `Opened 2 emails: ${describe(pod)}, and ${describe(request)}. Click ${word('attachPdf')} on each one's ribbon: the POD email gets ${namesOf(pod.files) || 'nothing'}, the request gets ${namesOf(request.files)}${both}.${why}`;
+    const [pod, request] = emails;
+    const extra = ` In the request: ${summary}.${noLumper ? ` The POD email says ${noLumper}.` : ''}${tail}`;
+    let text;
+    if (secondProblem) {
+      text = `Opened ${describe(pod)}, but couldn't open the accessorial email: ${secondProblem}.${links ? '' : ` Click ${word('attachPdf')} on the POD email's ribbon to add ${namesOf(pod.files) || 'its files'}.`}`;
+    } else if (links) {
+      text = `Opened 2 emails: ${describe(pod)} with ${namesOf(pod.files) || 'nothing'} attached, and ${describe(request)} with ${namesOf(request.files)}${both} attached.`;
+    } else {
+      text = `Opened 2 emails: ${describe(pod)}, and ${describe(request)}. Click ${word('attachPdf')} on each one's ribbon: the POD email gets ${namesOf(pod.files) || 'nothing'}, the request gets ${namesOf(request.files)}${both}.${why}`;
+    }
+    setStatus(`${text}${extra}`, tone);
+    showReopen(request.form, !!secondProblem);
   }
-  setStatus(`${text}${extra}`, tone);
-  showReopen(request.form, !!secondProblem);
+}
+
+// ---- Image POD? (a template setting, 0.28.7): for a customer whose PODs are imaged in by printing them (to
+// LoadMaster Imaging's printer, say). Outlook add-ins can't print by themselves, so the POD opens in the browser,
+// outside Outlook, with the print screen up: the site's print.html, given each file's link from the team's PDF
+// Emails function (the links Attach automatically makes, good for an hour). The printer, and the imaging
+// program's own windows, are the rep's.
+
+/** The print page for these files ([{ url, name }]): print.html next to the panel, with each file's link and name after the #. */
+function imagingUrl(files) {
+  const parts = files.map((f) => `f=${encodeURIComponent(f.url)}&n=${encodeURIComponent(f.name)}`);
+  return `${new URL('print.html', window.location.href).href}#${parts.join('&')}`; // (the beta opens the beta's)
+}
+
+/** Opens the print page in the browser, like Settings → Admin console. Whether Outlook was asked to. */
+function openImaging(url) {
+  try {
+    if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.openBrowserWindow === 'function') {
+      Office.context.ui.openBrowserWindow(url);
+      return true;
+    }
+  } catch (error) {
+    // a new window below
+  }
+  return !!window.open(url, '_blank');
+}
+
+/**
+ * After Create email, for a template with Image POD? ticked: the POD files' print screen (not the accessorial
+ * files of their own, nor the separate request email's). { note (for the status), url (for the button) }.
+ */
+function startImaging(emails, links, azureProblem) {
+  const files = [...new Set(emails.filter((e) => !e.isRequest).flatMap((e) => e.files))].filter((f) => !f.acc);
+  if (!files.length) return null; // (only accessorial files: no POD to image)
+  if (!links) {
+    log(`Image POD: no print screen (${azureProblem ? 'the upload failed' : 'Attach automatically is off'})`);
+    return {
+      note: azureProblem ? " The print screen didn't open, since the PDF wasn't uploaded." : ' The print screen needs Attach automatically (a Full admin sets it up).',
+      url: '',
+    };
+  }
+  const url = imagingUrl(files.map((f) => ({ url: links.get(f).url, name: f.name })));
+  const opened = openImaging(url);
+  log(`Image POD: ${opened ? 'opened' : "couldn't open"} the print screen in the browser for ${files.map((f) => f.name).join(', ')}`);
+  return { note: opened ? ' The print screen opened in your browser.' : " Your browser didn't open: choose Open the print screen.", url, opened };
+}
+
+/** Under the status: the print screen (again: the links work for an hour). */
+function addImagingButton(url, again) {
+  const box = $('parts');
+  const button = el('button', 'link-btn', again ? 'Open the print screen again' : 'Open the print screen');
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    openImaging(url);
+    log('Image POD: the print screen again');
+  });
+  const row = el('span', 'parts-own'); // (on a line of its own, under Open it again and the like)
+  row.append(button);
+  box.append(row);
+  box.hidden = false;
 }
 
 /** Whether new emails get the sent with restack line: the team's setting (off to start). */
@@ -6412,7 +6519,8 @@ function cleanTemplates(list) {
       body: String(t.body || ''),
       file: String(t.file || ''),
       stopFiles: t.stopFiles !== false,             // Multi-stop: each stop its own file (else all stops in one)
-      lumperSeparate: !!t.lumperSeparate,           // Accessorials in their own file: each one tagged (Lumper, Other) in a file of its own
+      lumperSeparate: !!t.lumperSeparate,           // Accessorials in a separate file: each one tagged (Lumper, Other) in a file of its own
+      imagePod: !!t.imagePod,                       // Image POD?: Create email also opens the POD's print screen in the browser, for imaging (0.28.7)
       lumperName: receiptName(t),                   // (that file's own name until 0.23: kept for older panels)
       receiptNamed: !!t.receiptNamed,             // saved in 0.16 or later: its receipt name is what was typed
       accOnly: !!t.accOnly,                         // Accessorial Only: for customers that get the POD only with an accessorial
@@ -7003,6 +7111,8 @@ function editTemplate(scope, id) {
   $('tpl-no-lumper').checked = !!(t && t.noLumper);
   $('tpl-stop-files').checked = !!t && t.stopFiles !== false; // a new template starts with every box unticked
   $('tpl-lumper-sep').checked = !!(t && t.lumperSeparate);
+  $('tpl-image-pod').checked = !!(t && t.imagePod);
+  syncImagePodHint();
   syncAccFilesHint();
   $('tpl-acc-only').checked = !!(t && t.accOnly);
   syncAccOnlyHint();
@@ -7056,7 +7166,12 @@ function onTemplateDuplicate() {
   log(`Templates: copying "${name}"`);
 }
 
-/** Says how the accessorial files are named, once Accessorials in their own file is ticked. */
+/** Says what Image POD? does, once it's ticked (0.28.7). */
+function syncImagePodHint() {
+  $('tpl-image-pod-hint').hidden = !$('tpl-image-pod').checked;
+}
+
+/** Says how the accessorial files are named, once Accessorials in a separate file is ticked. */
 function syncAccFilesHint() {
   $('tpl-lumper-row').hidden = !$('tpl-lumper-sep').checked;
 }
@@ -7862,6 +7977,7 @@ async function onTemplateSubmit(event) {
     accBody: $('tpl-acc-message').value.replace(/\s+$/, ''),
     stopFiles: $('tpl-stop-files').checked,
     lumperSeparate: $('tpl-lumper-sep').checked,
+    imagePod: $('tpl-image-pod').checked,
     lumperName: before ? receiptName(before) : NEW_TEMPLATE.lumperName, // (no longer asked: the accessorial file is named for the picks)
     receiptNamed: true,
     questions: null,
@@ -10456,7 +10572,9 @@ function wireReadUi() {
   $('load-form').addEventListener('input', () => { // (the hint follows the accessorials: Other's type names its file)
     $('acc-error').textContent = '';
     updateLoadHint();
+    syncLoadGo(); // (Create email waits for the BOL)
   });
+  $('no-bol').addEventListener('change', onNoBolChange);
   $('tpl-back').addEventListener('click', () => (editing ? cancelEdit() : closeTemplates()));
   $('tpl-form').addEventListener('submit', (event) => onTemplateSubmit(event).catch(fail));
   $('tpl-form').addEventListener('paste', onCustomerPaste); // several customers from Excel (Add Customer)
@@ -10465,6 +10583,7 @@ function wireReadUi() {
   $('tpl-cancel').addEventListener('click', cancelEdit);
   $('tpl-lumper-sep').addEventListener('change', syncAccFilesHint);
   $('tpl-acc-only').addEventListener('change', syncAccOnlyHint);
+  $('tpl-image-pod').addEventListener('change', syncImagePodHint);
   $('tpl-acc-sep').addEventListener('change', syncAccRow);
   $('q-add').addEventListener('click', addQuestion);
   $('q-intro').addEventListener('input', (event) => { qDraft.intro = event.target.value; });
