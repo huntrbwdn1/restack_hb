@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.7';
+const VERSION = '0.28.8';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -184,11 +184,11 @@ const WORDS = {
   shipperOrReceiver: "Shipper or receiver?",       // the drop-down's prompt
   shipperOrStop: "Shipper or which stop?",         // the same, with Multi-stop on
   createEmail: "Create email",
-  subject: "{load} // {bol} POD(s)",               // every email's subject ({bol}: the BOL number typed with the load number)
+  subject: "{load} // {bol} POD(s)",               // the email's subject ({bol}: the BOL number typed with the load number)
   subjectNoBol: "{load} POD(s)",                   // ...with No BOL ticked
 
   // The separate accessorial email (for templates with "Accessorials in a separate email")
-  accessorialSubject: "{load} // {bol} - {types}", // its subject; {types} is like Lumper/Detention
+  accessorialSubject: "{load} // {bol} - {types}", // its subject, and an Accessorial Only template's; {types} is like Lumper/Detention
   accessorialSubjectNoBol: "{load} - {types}",     // ...with No BOL ticked
   accessorialIntro: "Please see the {types} request for load {load} below.", // its first line, unless the template has its own
 
@@ -4500,7 +4500,7 @@ function templateSub(t, accOnlyNote = true) {
   return notes.join(' · ');
 }
 
-/** Every email's subject, whatever the template: "3645493 // 7720418 POD(s)" (WORDS.subject; the BOL is in it from 0.28.5). */
+/** An email's subject: "3645493 // 7720418 POD(s)" (WORDS.subject; the BOL is in it from 0.28.5). Accessorial Only templates: accessorialSubject. */
 function emailSubject(load, bol) {
   const b = String(bol || '').trim();
   return word(b ? 'subject' : 'subjectNoBol', { load: String(load || '').trim(), bol: b }).trim().slice(0, 255); // (No BOL: "3645493 POD(s)", 0.28.6)
@@ -4561,7 +4561,10 @@ function bodyHtml(text, acc, t, lines = true) {
  * lines false: the accessorials are left out (they go in their own email).
  */
 function emailFields(t, load, acc, lines = true, bol = '') {
-  const form = { subject: emailSubject(load, bol) };
+  // Accessorial Only (0.28.8): the email with the accessorials in it is named for them, like the separate
+  // accessorial email ("3645493 // 7720418 - Lumper"). With that email on too, this one keeps POD(s).
+  const named = t && t.accOnly && lines && accessorialTypes(acc).length;
+  const form = { subject: named ? accessorialSubject(load, acc, bol) : emailSubject(load, bol) };
   if (t) {
     const to = parseAddresses(fill(t.to, load));
     const cc = parseAddresses(fill(t.cc, load));

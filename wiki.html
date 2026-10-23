@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.28.7</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.8</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -348,7 +348,7 @@
 
       <h3 id="the-email">What the email has</h3>
       <ul>
-        <li><strong>Subject:</strong> the load number, BOL number and POD(s), like <code>3645493 // 7720418 POD(s)</code> (with No BOL, <code>3645493 POD(s)</code>).</li>
+        <li><strong>Subject:</strong> the load number, BOL number and POD(s), like <code>3645493 // 7720418 POD(s)</code> (with No BOL, <code>3645493 POD(s)</code>). An <strong>Accessorial Only</strong> template's names the accessorials instead, like <code>3645493 // 7720418 - Lumper</code>.</li>
         <li><strong>To, CC and message:</strong> from the template, with the load number filled in, and the accessorials' details under the message. A template can also say <strong>No Lumper</strong> when Lumper isn't picked.</li>
         <li><strong>The PDF</strong>, named after the load: <code>3645493.pdf</code> (or the template's own name for it). See <a href="#file-names">File names and sizes</a>.</li>
         <li>If your team turned on <strong>Sent with restack</strong>, a small "sent with restack" line goes under the message, above your own signature.</li>
@@ -413,11 +413,11 @@
       <h4>Email</h4>
       <ul>
         <li><strong>Template name</strong>, <strong>To</strong> (separate addresses with <code>;</code> or <code>,</code>), <strong>CC</strong> (optional) and <strong>Message</strong>.</li>
-        <li>Type <code>{load}</code> wherever the load number goes, in To, CC or Message (and the PDF name). You're asked for it, and the BOL number, each time. The subject is always the load number, BOL number and POD(s).</li>
+        <li>Type <code>{load}</code> wherever the load number goes, in To, CC or Message (and the PDF name). You're asked for it, and the BOL number, each time. The subject is the load number, BOL number and POD(s).</li>
       </ul>
       <h4>Accessorials</h4>
       <ul>
-        <li><strong>Accessorial Only:</strong> for customers that get the POD only when there's an accessorial. It's listed under Accessorial Only in the Email menu, and Create email needs an accessorial picked.</li>
+        <li><strong>Accessorial Only:</strong> for customers that get the POD only when there's an accessorial. It's listed under Accessorial Only in the Email menu, and Create email needs an accessorial picked. Its subject names the accessorials, like <code>3645493 // 7720418 - Lumper/Detention</code> (with Accessorials in a separate email also ticked, only that email's does).</li>
         <li><strong>Say No Lumper</strong> in the message when Lumper isn't picked.</li>
         <li><strong>Accessorials in a separate file:</strong> each accessorial tagged in the list gets a file of its own, like <code>3645493 Lumper</code>. Off: tagged files go after the PODs, in the same file.</li>
         <li><strong>Accessorials in a separate email:</strong> <a href="#separate">two emails</a> when an accessorial is picked. The request's <strong>To</strong> (blank: the same as the POD email's), <strong>CC</strong> and <strong>Message</strong>. In its message, <code>{types}</code> is Lumper, Detention and so on.</li>
