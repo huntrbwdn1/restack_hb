@@ -6,7 +6,7 @@
  * optional "attach automatically" step, to the team admin's own PDF Emails Azure function.
  */
 
-const VERSION = '0.28.9';
+const VERSION = '0.28.10';
 const SMALL_INLINE_BYTES = 50 * 1024; // logo test for images whose pixel size can't be read
 const LOGO_MAX_SIDE = 400;            // pictures in the email body this small (in pixels) are logos/icons...
 const LOGO_THIN_SIDE = 120;           // ...and so are thin banners, unless they were pasted into the message itself
@@ -9520,6 +9520,22 @@ function renderConsolePublish() {
   markSwitch('con-sent-with', !!(settings && settings.sentWith));
 }
 
+/**
+ * Customer list (0.28.10): the names of the published team templates, unencrypted, as restack_customers.json.
+ * Load Command Center reads it to know which customers need the POD sent with Restack. Names only: no
+ * addresses, messages or keys. It stays on this computer (a download), like the PDFs.
+ */
+function onCustomerList() {
+  const templates = (team.published ? team.published.templates : []).map((t) => ({ name: t.name, accOnly: !!t.accOnly }));
+  if (!templates.length) {
+    consoleNote('Nothing is published yet, so there are no customers to list.', 'error');
+    return;
+  }
+  downloadText(JSON.stringify({ made: new Date().toISOString(), templates }, null, 2), 'restack_customers.json', 'application/json');
+  log(`Customer list: downloaded ${plural(templates.length, 'template')}`);
+  consoleNote(`restack_customers.json downloaded (${plural(templates.length, 'template')}). Move it to the Load Command Center sync folder.`, 'ok');
+}
+
 function wireConsole() {
   const tabs = $('con-tabs');
   for (const name of CONSOLE_TABS) $(`con-tab-${name}`).addEventListener('click', () => showConsoleTab(name));
@@ -9532,6 +9548,7 @@ function wireConsole() {
     showConsoleTab(tabs[(next + tabs.length) % tabs.length]);
   });
   $('con-publish').addEventListener('click', () => onPublish().catch(fail));
+  $('con-customers').addEventListener('click', onCustomerList);
   $('con-new').addEventListener('click', () => editTemplate('team', null));
   $('tpl-search').addEventListener('input', (event) => {
     consoleSearch = event.target.value;

@@ -111,7 +111,7 @@
   <header class="mast">
     <div class="mast-in">
       <h1><img class="logo" src="brand/restack-logo-large.png" width="195" height="40" alt="Restack"> <span class="sub">Wiki: how every part of Restack works</span></h1>
-      <div class="mast-links"><span class="tag">For version 0.28.9</span><a href="./">Install page</a></div>
+      <div class="mast-links"><span class="tag">For version 0.28.10</span><a href="./">Install page</a></div>
     </div>
   </header>
 
@@ -457,6 +457,7 @@
         <li>Unpublished changes stay in the browser they were made in. <strong>Publish to team</strong> adds them to what's already published, so changes another admin published in the meantime stay. If you both changed the same template or setting, it asks which to keep.</li>
         <li>Opening the console brings in what other admins have published since your changes began, and yours stay waiting to publish.</li>
         <li>It checks what's published on GitHub itself (the site can be a minute or two behind), so the latest is what your changes go on top of. If another admin's publish replaces yours with a version made from an older copy, the console brings your changes back to publish again.</li>
+        <li><strong>Customer list</strong>, next to Publish to team, downloads <code>restack_customers.json</code>: the names of your published templates and nothing else. Load Command Center reads it to know which customers' loads need the POD sent with Restack. Download it again after you add or rename templates.</li>
       </ul>
 
       <h3 id="console-templates">Templates tab</h3>
